@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-
-
 use pyo3::prelude::*;
 use pyo3::{wrap_pyfunction};
 use arrow::record_batch::RecordBatch;
@@ -21,7 +19,7 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
 
 
 #[pymodule]
-fn protarrowrs(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _lib(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_a_table))?;
 
     Ok(())

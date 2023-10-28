@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=0.14,<0.15"]
+requires = ["setuptools", "setuptools-rust"]
 build-backend = "maturin"
 
 [project]
@@ -9,3 +9,69 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
 ]
 requires-python = ">=3.8"
+
+
+[tool.poetry]
+name = "protarrowrs"
+version = "0.0.0"
+description = "Convert from protobuf to arrow and back in rust"
+authors = ["Tradewell Tech <engineering@tradewelltech.co>"]
+maintainers = ["0x26res <0x26res@gmail.com>"]
+packages = [    { include = "protarrowrs" } ]
+include = ["protarrowrs/*",  "protarrowrslib/*", "protarrowrslib/src/*"]
+readme = "README.md"
+license = "Apache-2.0"
+repository = "https://github.com/tradewelltech/protarrowrs"
+documentation = "https://protarrowrs.readthedocs.io/en/latest/"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+keywords = ["apache-arrow", "protobuf", "data"]
+
+
+[tool.poetry.dependencies]
+python = ">=3.8"
+
+setuptools = "*"
+maturin = "*"
+pyarrow = "*"
+googleapis-common-protos = ">=1.53.0"
+protobuf = ">=3.20.1"
+setuptools-rust = "^0.10.6"
+
+[tool.poetry.group.dev.dependencies]
+black = ">=22.10.0"
+coverage = ">=6.5.0"
+flake8 = ">=5.0.4"
+git-changelog = ">=2.2.0"
+grpcio-tools = ">=1.46.0"
+inflection = ">=0.5.1"
+isort = ">=5.10.1"
+mkdocs = ">=1.4.2"
+mkdocs-material = ">=9.0.3"
+mkdocstrings = { version = ">=0.21.2", extras = ["python"] }
+pip-tools = ">=6.12.1"
+pre-commit = ">=2.20.0"
+pylint = ">=2.15.0"
+pytest = ">=7.2.0"
+pytest-benchmark = ">=4.0.0"
+pytest-xdist = ">=3.1.0"
+ruff = "*"
+maturin = "^1.3.1"
+
+[tool.maturin]
+module-name = "protarrowrs._lib"
+
+[tool.isort]
+profile = "black"
+src_paths = ["protarrowrs", "tests"]
+known_first_party = ["protarrowrs", "protarrow_protos" ]
+skip = [".gitignore"]
+
+
