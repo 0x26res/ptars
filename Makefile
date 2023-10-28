@@ -16,8 +16,7 @@ develop: env
 
 .PHONY: test
 test: develop
-	. env/bin/activate && \
-		python -m unittest test/test_protarrowrs.py
+	. env/bin/activate && python -m pytest test/
 
 .PHONY: build
 build: env
@@ -28,3 +27,8 @@ build: env
 dist: env
 	. env/bin/activate && \
 		docker run --rm -v $(shell pwd):/io ghcr.io/pyo3/maturin build --release --strip --out dist
+
+
+.PHONY: protoc
+dist: env
+	protoc

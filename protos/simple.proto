@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+
+import "google/protobuf/timestamp.proto";
+
+
+package messages;
+
+message SearchRequest {
+  string query = 1;
+  int32 page_number = 2;
+  int32 result_per_page = 3;
+}
+
+enum TestEnum {
+  HELLO = 0;
+  WORLD = 1;
+}
+
+message TestMessage {
+  double double_value = 1;
+  float float_value = 2;
+  int32 int32_value = 3;
+  int64 int64_value = 4;
+  uint32 uint32_value = 5;
+  uint64 uint64_value = 6;
+  sint32 sint32_value = 7;
+  sint64 sint64_value = 8;
+  fixed32 fixed32_value = 9;
+  fixed64 fixed64_value = 10;
+  sfixed32 sfixed32_value = 11;
+  sfixed64 sfixed64_value = 12;
+  bool bool_value = 13;
+  string string_value = 14;
+  bytes bytes_value = 15;
+  TestEnum enum_value = 16;
+
+  repeated double double_values = 20;
+  repeated float float_values = 21;
+  repeated int32 int32_values = 22;
+  repeated int64 int64_values = 23;
+  repeated uint32 uint32_values = 24;
+  repeated uint64 uint64_values = 25;
+  repeated sint32 sint32_values = 26;
+  repeated sint64 sint64_values = 27;
+  repeated fixed32 fixed32_values = 28;
+  repeated fixed64 fixed64_values = 29;
+  repeated sfixed32 sfixed32_values = 30;
+  repeated sfixed64 sfixed64_values = 31;
+  repeated bool bool_values = 32;
+  repeated string string_values = 33;
+  repeated bytes bytes_values = 34;
+  repeated TestEnum enum_values = 35;
+}
+
+message DataRow {
+  int64 id = 1;
+  double cost = 2;
+  repeated double cost_components = 3;
+  repeated bool bool_values = 32;
+  repeated string string_values = 33;
+  repeated TestEnum enum_values = 34;
+  SearchRequest request = 35;
+  repeated SearchRequest requests = 36;
+}
+
+enum ReturnCode {
+  OK = 0;
+  ERROR = 1;
+}
+
+message SearchResult {
+  ReturnCode return_code = 1;
+  string message = 2;
+}
+
+message NestedMessage {
+  ReturnCode return_code = 1;
+  DataRow data_row = 2;
+}
+
+message RepeatedNestedMessage {
+  repeated DataRow data_rows = 2;
+}
+
+message RepeatedNestedMessageSimple {
+  repeated SearchResult search_results = 1;
+}
+
+message OneofMessage {
+  oneof oneof_field {
+    int32 foo = 1;
+    int64 bar = 2;
+    SearchRequest search_request = 3;
+  }
+}
+
+message WithOptionalMessage {
+  // TODO: enable when ready
+  // optional int32 optional_int = 1;
+  int32 not_optional_int = 2;
+}
+
+message WithTimestamp {
+    google.protobuf.Timestamp timestamp = 1;
+    repeated google.protobuf.Timestamp timestamps = 2;
+}

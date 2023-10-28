@@ -44,6 +44,7 @@ pyarrow = "*"
 googleapis-common-protos = ">=1.53.0"
 protobuf = ">=3.20.1"
 setuptools-rust = "^0.10.6"
+grpcio-tools = ">=1.46.0"
 
 [tool.poetry.group.dev.dependencies]
 black = ">=22.10.0"
@@ -75,3 +76,5 @@ known_first_party = ["protarrowrs", "protarrow_protos" ]
 skip = [".gitignore"]
 
 
+[tool.bandit]
+skips = []

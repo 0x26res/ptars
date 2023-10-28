@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use pyo3::prelude::*;
-use pyo3::{wrap_pyfunction};
+use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
 use arrow_array::{Float32Array, Int32Array};
-use arrow::pyarrow::ToPyArrow;
+use protobuf::descriptor::FileDescriptorProto;
+use protobuf::Message;
+use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
+use pyo3::wrap_pyfunction;
 
-/// Returns the maps for the given process.
 #[pyfunction]
 fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
     let col_1 = Arc::new(Int32Array::from_iter([1, 2, 3])) as _;
@@ -16,11 +17,19 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
     return batch.to_pyarrow(py);
 }
 
+#[pyfunction]
+fn py_create(descriptors_bytes: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<()> {
+    for bytes in descriptors_bytes {
+        let im_msg = FileDescriptorProto::parse_from_bytes(bytes.as_slice()).unwrap();
 
+    }
+    return PyResult::Ok(())
+}
 
 #[pymodule]
 fn _lib(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_a_table))?;
+    m.add_wrapped(wrap_pyfunction!(py_create))?;
 
-    Ok(())
+    PyResult::Ok(())
 }
