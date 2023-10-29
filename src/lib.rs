@@ -1,14 +1,15 @@
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
-use arrow_array::{Float32Array, Int32Array};
+use arrow_array::{Array, Float32Array, Int32Array};
+use protobuf::{Message, MessageDyn};
 use protobuf::descriptor::FileDescriptorProto;
-use protobuf::reflect::{FileDescriptor, MessageDescriptor};
-use protobuf::Message;
-use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
+use protobuf::reflect::{FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectValueRef, RuntimeFieldType, RuntimeType};
 use pyo3::{pyclass, pymethods, wrap_pyfunction};
+use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
 
 #[pyclass]
 struct MessageHandler {
@@ -20,13 +21,67 @@ struct ProtoCache {
     cache: HashMap<String, FileDescriptor>,
 }
 
+fn read_i32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
+    if field.has_field(message.as_ref()) {
+        let value = field.get_singular(message.as_ref()).unwrap();
+        return if let ReflectValueRef::I32(x) = value {
+            x
+        } else {
+            0 // this should not happen
+        }
+    } else {
+        return 0
+    }
+}
+
+fn singular_field_to_array(field: &FieldDescriptor,
+                           runtime_type: &RuntimeType,
+                           messages: &Vec<Box<dyn MessageDyn>>) -> Result<Arc<dyn arrow::array::Array>, &'static str> {
+    return match runtime_type {
+        RuntimeType::I32 => {
+            let values: Vec<i32> = messages.iter().map(
+                |x| read_i32(x, field)
+            ).collect();
+            Ok(Arc::new(Int32Array::from_iter(values)))
+        }
+        RuntimeType::I64 => { Err("nested message not supported")}
+        RuntimeType::U32 => { Err("nested message not supported")}
+        RuntimeType::U64 => { Err("nested message not supported")}
+        RuntimeType::F32 => { Err("nested message not supported")}
+        RuntimeType::F64 => { Err("nested message not supported")}
+        RuntimeType::Bool => { Err("nested message not supported")}
+        RuntimeType::String => { Err("nested message not supported")}
+        RuntimeType::VecU8 => { Err("nested message not supported")}
+        RuntimeType::Enum(_) => { Err("nested message not supported")}
+        RuntimeType::Message(_) => { Err("nested message not supported")}
+    }
+}
+
+fn field_to_array(field: &FieldDescriptor, messages: &Vec<Box<dyn MessageDyn>>) -> Result<Arc<dyn arrow::array::Array>, &'static str> {
+    return match field.runtime_field_type() {
+        RuntimeFieldType::Singular(x) => {
+            singular_field_to_array(field, &x, messages)
+        }
+        RuntimeFieldType::Repeated(_) => {
+            Err("repeated not supported")
+        }
+        RuntimeFieldType::Map(_, _) => {
+            Err("repeated not supported")
+        }
+    }
+
+}
+
 #[pymethods]
 impl MessageHandler {
-    fn list_to_table(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let col_1 = Arc::new(Int32Array::from_iter([1, 2, 3])) as _;
-        let col_2 = Arc::new(Float32Array::from_iter([1., 6.3, 4.])) as _;
-
-        let batch = RecordBatch::try_from_iter([("col1", col_1), ("col_2", col_2)]).unwrap();
+    fn list_to_table(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
+        let messages: Vec<Box<dyn MessageDyn>> = values.iter().map(
+            |x| self.message_descriptor.parse_from_bytes(x.as_slice()).unwrap()
+        ).collect();
+        let arrays: Vec<(String, Arc<dyn Array>)> = self.message_descriptor.fields().map(
+            |x| (x.name().to_string(), field_to_array(&x, &messages).unwrap())
+        ).collect();
+        let batch = RecordBatch::try_from_iter(arrays).unwrap();
         return batch.to_pyarrow(py);
     }
 }
@@ -104,5 +159,6 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
 fn _lib(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_a_table))?;
     m.add_class::<ProtoCache>()?;
+    m.add_class::<MessageHandler>()?;
     PyResult::Ok(())
 }

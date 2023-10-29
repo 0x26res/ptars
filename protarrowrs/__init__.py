@@ -1,3 +1,3 @@
-from protarrowrs._lib import get_a_table
+from protarrowrs.internal import HandlerPool
 
-__all__ = ["get_a_table"]
+__all__ = ["HandlerPool"]
