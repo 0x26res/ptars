@@ -77,4 +77,4 @@ skip = [".gitignore"]
 
 
 [tool.bandit]
-skips = []
+skips = ["B101"]

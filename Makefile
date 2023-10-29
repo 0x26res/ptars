@@ -16,7 +16,7 @@ develop: env
 
 .PHONY: test
 test: develop
-	. env/bin/activate && python -m pytest test/
+	. env/bin/activate && RUST_BACKTRACE=1 python -m pytest test/
 
 .PHONY: build
 build: env
