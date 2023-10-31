@@ -7,3 +7,4 @@ __pycache__
 /dist
 /.cargo
 *.so
+/ptars_protos
