@@ -1,12 +1,9 @@
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
-use arrow_array::{
-    Array, Float32Array, Float64Array, Int32Array, Int64Array, UInt32Array, UInt64Array,
-};
+use arrow_array::{Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, UInt32Array, UInt64Array};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
     FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectValueRef, RuntimeFieldType,
@@ -32,7 +29,7 @@ fn read_i32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
         if let ReflectValueRef::I32(x) = value {
             x
         } else {
-            0 // this should not happen
+            0
         }
     } else {
         0
@@ -45,7 +42,7 @@ fn read_i64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i64 {
         if let ReflectValueRef::I64(x) = value {
             x
         } else {
-            0 // this should not happen
+            0
         }
     } else {
         0
@@ -58,7 +55,7 @@ fn read_u32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> u32 {
         if let ReflectValueRef::U32(x) = value {
             x
         } else {
-            0 // this should not happen
+            0
         }
     } else {
         0
@@ -71,7 +68,7 @@ fn read_u64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> u64 {
         if let ReflectValueRef::U64(x) = value {
             x
         } else {
-            0 // this should not happen
+            0
         }
     } else {
         0
@@ -84,7 +81,7 @@ fn read_f32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> f32 {
         if let ReflectValueRef::F32(x) = value {
             x
         } else {
-            0.0 // this should not happen
+            0.0
         }
     } else {
         0.0
@@ -97,7 +94,7 @@ fn read_f64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> f64 {
         if let ReflectValueRef::F64(x) = value {
             x
         } else {
-            0.0 // this should not happen
+            0.0
         }
     } else {
         0.0
@@ -147,13 +144,12 @@ fn singular_field_to_array(
             let values: Vec<f64> = messages.iter().map(|x| read_f64(x, field)).collect();
             Ok(Arc::new(Float64Array::from_iter(values)))
         }
-        //  RuntimeType::Bool => {
-        //     let values: Vec<bool> = messages.iter().map(
-        //         |x| read_bool(x, field)
-        //     ).collect();
-        //     Ok(Arc::new(BooleanArray::from_iter(values)))
-        // }
-        RuntimeType::Bool => Err("Bool message not supported"),
+         RuntimeType::Bool => {
+            let values: Vec<bool> = messages.iter().map(
+                |x| read_bool(x, field)
+            ).collect();
+            Ok(Arc::new(BooleanArray::from(values)))
+        }
         RuntimeType::String => Err("String message not supported"),
         RuntimeType::VecU8 => Err("Binary message not supported"),
         RuntimeType::Enum(_) => Err("Enum message not supported"),
@@ -230,7 +226,6 @@ impl ProtoCache {
         &mut self,
         message_name: String,
         file_descriptors_bytes: Vec<Vec<u8>>,
-        py: Python<'_>,
     ) -> PyResult<MessageHandler> {
         let file_descriptors_protos: Vec<FileDescriptorProto> = file_descriptors_bytes
             .iter()

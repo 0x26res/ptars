@@ -19,6 +19,7 @@ message SimpleMessage {
   fixed64 fixed64_value = 10;
   sfixed32 sfixed32_value = 11;
   sfixed64 sfixed64_value = 12;
+  bool bool_value = 13;
 
 }
 
