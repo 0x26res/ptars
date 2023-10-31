@@ -1,6 +1,6 @@
 # ptars
 
-Convert arrow to proto and back fast
+Protobuf to Arrow, using Rust
 
 ## Development
 
