@@ -3,7 +3,7 @@ requires = ["setuptools", "setuptools-rust"]
 build-backend = "maturin"
 
 [project]
-name = "protarrowrs"
+name = "ptars"
 classifiers = [
     "Programming Language :: Rust",
     "Operating System :: POSIX :: Linux",
@@ -12,17 +12,17 @@ requires-python = ">=3.8"
 
 
 [tool.poetry]
-name = "protarrowrs"
+name = "ptars"
 version = "0.0.0"
 description = "Convert from protobuf to arrow and back in rust"
 authors = ["Tradewell Tech <engineering@tradewelltech.co>"]
 maintainers = ["0x26res <0x26res@gmail.com>"]
-packages = [    { include = "protarrowrs" } ]
-include = ["protarrowrs/*",  "protarrowrslib/*", "protarrowrslib/src/*"]
+packages = [    { include = "ptars" } ]
+include = ["ptars/*",  "ptarslib/*", "ptarslib/src/*"]
 readme = "README.md"
 license = "Apache-2.0"
-repository = "https://github.com/tradewelltech/protarrowrs"
-documentation = "https://protarrowrs.readthedocs.io/en/latest/"
+repository = "https://github.com/tradewelltech/ptars"
+documentation = "https://ptars.readthedocs.io/en/latest/"
 classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: Apache Software License",
@@ -67,12 +67,12 @@ ruff = "*"
 maturin = "^1.3.1"
 
 [tool.maturin]
-module-name = "protarrowrs._lib"
+module-name = "ptars._lib"
 
 [tool.isort]
 profile = "black"
-src_paths = ["protarrowrs", "tests"]
-known_first_party = ["protarrowrs", "protarrow_protos" ]
+src_paths = ["ptars", "tests"]
+known_first_party = ["ptars", "ptars_protos" ]
 skip = [".gitignore"]
 
 

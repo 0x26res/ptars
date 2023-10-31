@@ -1,7 +1,7 @@
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 
-from protarrowrs._lib import MessageHandler, ProtoCache
+from ptars._lib import MessageHandler, ProtoCache
 
 
 def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:

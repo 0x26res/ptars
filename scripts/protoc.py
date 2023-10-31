@@ -11,7 +11,7 @@ _GOOGLE_COMMON_PROTOS_ROOT_DIR = pathlib.Path(
 ).parent.parent.parent.absolute()
 _GRPC_PROTOS_INCLUDE = pathlib.Path(grpc_tools.__file__).parent.absolute() / "_proto"
 _SRC_DIR = _ROOT_DIR / "protos"
-_OUT_DIR = _ROOT_DIR / "protarrow_protos"
+_OUT_DIR = _ROOT_DIR / "ptars_protos"
 
 
 def run_protoc(arguments: List[str]):

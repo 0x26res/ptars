@@ -1,4 +1,4 @@
-# protarrowrs
+# ptars
 
 Convert arrow to proto and back fast
 
@@ -22,8 +22,8 @@ export CARGO_BUILD_TARGET=x86_64-apple-darwin
 ```shell
 cargo build
 maturin develop
-python -c "import protarrowrs;print(protarrowrs.get_a_table())"
-python -c "import protarrowrslib;print(protarrowrslib.get_a_table())"
+python -c "import ptars;print(ptars.get_a_table())"
+python -c "import ptarslib;print(ptarslib.get_a_table())"
 ```
 
 

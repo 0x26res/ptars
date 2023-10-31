@@ -1,5 +1,5 @@
-from protarrow_protos import simple_pb2
-from protarrowrs import HandlerPool
+from ptars import HandlerPool
+from ptars_protos import simple_pb2
 
 
 def test_generate_proto():
