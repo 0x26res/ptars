@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
-use arrow_array::{Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, UInt32Array, UInt64Array};
+use arrow_array::{Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
     FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectValueRef, RuntimeFieldType,
@@ -114,6 +114,18 @@ fn read_bool(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> bool {
     };
 }
 
+fn read_string(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> String {
+    return if field.has_field(message.as_ref()) {
+        let value = field.get_singular(message.as_ref()).unwrap();
+        if let ReflectValueRef::String(x) = value {
+            x.to_string()
+        } else {
+            "".to_string()
+        }
+    } else {
+        "".to_string()
+    };
+}
 fn singular_field_to_array(
     field: &FieldDescriptor,
     runtime_type: &RuntimeType,
@@ -150,7 +162,12 @@ fn singular_field_to_array(
             ).collect();
             Ok(Arc::new(BooleanArray::from(values)))
         }
-        RuntimeType::String => Err("String message not supported"),
+        RuntimeType::String => {
+            let values: Vec<String> = messages.iter().map(
+                |x| read_string(x, field)
+            ).collect();
+            Ok(Arc::new(StringArray::from(values)))
+        }
         RuntimeType::VecU8 => Err("Binary message not supported"),
         RuntimeType::Enum(_) => Err("Enum message not supported"),
         RuntimeType::Message(_) => Err("nested message not supported"),

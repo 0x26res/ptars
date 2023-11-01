@@ -20,6 +20,8 @@ message SimpleMessage {
   sfixed32 sfixed32_value = 11;
   sfixed64 sfixed64_value = 12;
   bool bool_value = 13;
+  string string_value = 14;
+
 
 }
 
