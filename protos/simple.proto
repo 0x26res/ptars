@@ -21,7 +21,7 @@ message SimpleMessage {
   sfixed64 sfixed64_value = 12;
   bool bool_value = 13;
   string string_value = 14;
-
+  bytes bytes_value = 15;
 
 }
 

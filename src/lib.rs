@@ -1,9 +1,18 @@
 use std::collections::HashMap;
+use std::io::Bytes;
+use std::ops::Add;
 use std::sync::Arc;
 
+use arrow::array::{ArrayData, ArrayDataBuilder};
+use arrow::buffer::Buffer;
+use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
-use arrow_array::{Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, StringArray, UInt32Array, UInt64Array};
+use arrow_array::{
+    Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
+    StringArray, UInt32Array, UInt64Array,
+};
+use arrow_schema::DataType;
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
     FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectValueRef, RuntimeFieldType,
@@ -114,18 +123,42 @@ fn read_bool(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> bool {
     };
 }
 
-fn read_string(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> String {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::String(x) = value {
-            x.to_string()
-        } else {
-            "".to_string()
-        }
-    } else {
-        "".to_string()
-    };
+fn pass_builder(array_data: ArrayDataBuilder) -> ArrayDataBuilder {
+    return array_data.add_buffer(Buffer::from("123"));
 }
+
+fn read_string(
+    message: &Box<dyn MessageDyn>,
+    field: &FieldDescriptor,
+    values: &mut String,
+    offsets: &mut Vec<i32>,
+) -> () {
+    let value = field.get_singular(message.as_ref()).unwrap();
+    if let ReflectValueRef::String(x) = value {
+        values.push_str(x);
+        offsets.push(i32::from_usize(x.len()).unwrap())
+    } else {
+        panic!("Wrong type {value}");
+    }
+}
+
+fn read_binary(
+    message: &Box<dyn MessageDyn>,
+    field: &FieldDescriptor,
+    values: &mut Vec<u8>,
+    offsets: &mut Vec<i32>,
+) -> () {
+    let value = field.get_singular(message.as_ref()).unwrap();
+    if let ReflectValueRef::Bytes(x) = value {
+        for b in x {
+            values.push(b.clone());
+        }
+        offsets.push(i32::from_usize(x.len()).unwrap())
+    } else {
+        panic!("Wrong type {value}");
+    }
+}
+
 fn singular_field_to_array(
     field: &FieldDescriptor,
     runtime_type: &RuntimeType,
@@ -156,19 +189,58 @@ fn singular_field_to_array(
             let values: Vec<f64> = messages.iter().map(|x| read_f64(x, field)).collect();
             Ok(Arc::new(Float64Array::from_iter(values)))
         }
-         RuntimeType::Bool => {
-            let values: Vec<bool> = messages.iter().map(
-                |x| read_bool(x, field)
-            ).collect();
+        RuntimeType::Bool => {
+            let values: Vec<bool> = messages.iter().map(|x| read_bool(x, field)).collect();
             Ok(Arc::new(BooleanArray::from(values)))
         }
         RuntimeType::String => {
-            let values: Vec<String> = messages.iter().map(
-                |x| read_string(x, field)
-            ).collect();
-            Ok(Arc::new(StringArray::from(values)))
+            // TODO: specify capacity
+            let mut values = String::new();
+            let mut offsets: Vec<i32> = Vec::new();
+            let mut nulls: Vec<bool> = Vec::new();
+            offsets.push(0);
+            for message in messages {
+                if field.has_field(message.as_ref()) {
+                    read_string(message, field, &mut values, &mut offsets);
+                    nulls.push(true);
+                } else {
+                    nulls.push(true);
+                    offsets.push(0);
+                }
+            }
+
+            let builder: ArrayDataBuilder = ArrayData::builder(DataType::Utf8)
+                .len(messages.len())
+                .add_buffer(Buffer::from(offsets.to_byte_slice()))
+                .add_buffer(Buffer::from(values.as_str()))
+                .null_bit_buffer(Option::Some(Buffer::from_iter(nulls)));
+            let array_data = builder.build().unwrap();
+            Ok(Arc::new(StringArray::from(array_data)))
         }
-        RuntimeType::VecU8 => Err("Binary message not supported"),
+        RuntimeType::VecU8 => {
+            // TODO: specify capacity
+            let mut values: Vec<u8> = Vec::new();
+            let mut offsets: Vec<i32> = Vec::new();
+            let mut nulls: Vec<bool> = Vec::new();
+            offsets.push(0);
+            for message in messages {
+                if field.has_field(message.as_ref()) {
+                    read_binary(message, field, &mut values, &mut offsets);
+                    nulls.push(true);
+                } else {
+                    nulls.push(true);
+                    offsets.push(0);
+                }
+            }
+
+            let builder: ArrayDataBuilder = ArrayData::builder(DataType::Binary)
+                .len(messages.len())
+                .add_buffer(Buffer::from(offsets.to_byte_slice()))
+                .add_buffer(Buffer::from_iter(values))
+                .null_bit_buffer(Option::Some(Buffer::from_iter(nulls)));
+            let array_data = builder.build().unwrap();
+            Ok(Arc::new(BinaryArray::from(array_data)))
+        }
         RuntimeType::Enum(_) => Err("Enum message not supported"),
         RuntimeType::Message(_) => Err("nested message not supported"),
     };

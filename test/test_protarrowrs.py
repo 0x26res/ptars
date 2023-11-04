@@ -27,6 +27,7 @@ def test_generate_proto():
             sfixed64_value=12,
             bool_value=True,
             string_value="14",
+            bytes_value=b"15",
         ),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
@@ -36,3 +37,4 @@ def test_generate_proto():
     assert table["uint32_value"].to_pylist() == [456, 789, 5]
     assert table["bool_value"].to_pylist() == [False, False, True]
     assert table["string_value"].to_pylist() == ["", "", "14"]
+    assert table["bytes_value"].to_pylist() == [b"", b"", b"15"]
