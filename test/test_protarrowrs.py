@@ -29,6 +29,7 @@ def test_generate_proto():
             string_value="14",
             bytes_value=b"15",
             enum_value=1,
+            int32_values=[1, 2, 3],
         ),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
@@ -40,3 +41,4 @@ def test_generate_proto():
     assert table["string_value"].to_pylist() == ["", "", "14"]
     assert table["bytes_value"].to_pylist() == [b"", b"", b"15"]
     assert table["enum_value"].to_pylist() == [0, 0, 1]
+    assert table["int32_values"].to_pylist() == [[], [], [1, 2, 3]]

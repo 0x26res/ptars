@@ -10,13 +10,13 @@ use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
 use arrow_array::{
     Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    StringArray, UInt32Array, UInt64Array,
+    ListArray, StringArray, UInt32Array, UInt64Array,
 };
-use arrow_schema::DataType;
+use arrow_schema::{DataType, Field};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectValueRef, RuntimeFieldType,
-    RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
+    RuntimeFieldType, RuntimeType,
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
@@ -43,6 +43,21 @@ fn read_i32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     } else {
         0
     };
+}
+
+fn read_i32_repeated(
+    message: &Box<dyn MessageDyn>,
+    field: &FieldDescriptor,
+    values: &mut Vec<i32>,
+    offsets: &mut Vec<i32>,
+) {
+    if field.has_field(message.as_ref()) {
+        let value: ReflectRepeatedRef = field.get_repeated(message.as_ref());
+        for index in 0..value.len() {
+            values.push(value.get(index).to_i32().unwrap())
+        }
+    }
+    offsets.push(i32::from_usize(values.len()).unwrap())
 }
 
 fn read_i64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i64 {
@@ -176,7 +191,7 @@ fn singular_field_to_array(
     field: &FieldDescriptor,
     runtime_type: &RuntimeType,
     messages: &Vec<Box<dyn MessageDyn>>,
-) -> Result<Arc<dyn arrow::array::Array>, &'static str> {
+) -> Result<Arc<dyn Array>, &'static str> {
     return match runtime_type {
         RuntimeType::I32 => {
             let values: Vec<i32> = messages.iter().map(|x| read_i32(x, field)).collect();
@@ -262,13 +277,40 @@ fn singular_field_to_array(
     };
 }
 
+fn repeated_field_to_array(
+    field: &FieldDescriptor,
+    runtime_type: &RuntimeType,
+    messages: &Vec<Box<dyn MessageDyn>>,
+) -> Result<Arc<dyn Array>, &'static str> {
+    return match runtime_type {
+        RuntimeType::I32 => {
+            let mut values: Vec<i32> = Vec::new();
+            let mut offsets: Vec<i32> = Vec::new();
+            offsets.push(0);
+            for message in messages {
+                read_i32_repeated(message, field, &mut values, &mut offsets);
+            }
+            let list_data_type =
+                DataType::List(Arc::new(Field::new("item", DataType::Int32, false)));
+            let list_data = ArrayData::builder(list_data_type)
+                .len(3)
+                .add_buffer(Buffer::from_iter(offsets))
+                .add_child_data(Int32Array::from_iter(values).to_data())
+                .build()
+                .unwrap();
+            Ok(Arc::new(ListArray::from(list_data)))
+        }
+        _ => Err("BAD TYPE"),
+    };
+}
+
 fn field_to_array(
     field: &FieldDescriptor,
     messages: &Vec<Box<dyn MessageDyn>>,
-) -> Result<Arc<dyn arrow::array::Array>, &'static str> {
+) -> Result<Arc<dyn Array>, &'static str> {
     return match field.runtime_field_type() {
         RuntimeFieldType::Singular(x) => singular_field_to_array(field, &x, messages),
-        RuntimeFieldType::Repeated(_) => Err("repeated not supported"),
+        RuntimeFieldType::Repeated(x) => repeated_field_to_array(field, &x, messages),
         RuntimeFieldType::Map(_, _) => Err("repeated not supported"),
     };
 }

@@ -24,6 +24,7 @@ message SimpleMessage {
   bytes bytes_value = 15;
   TestEnum enum_value = 16;
 
+  repeated int32 int32_values = 22;
 
 }
 
