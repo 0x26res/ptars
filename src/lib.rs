@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::io::Bytes;
-use std::ops::Add;
 use std::sync::Arc;
 
 use arrow::array::{ArrayData, ArrayDataBuilder};
@@ -9,8 +7,8 @@ use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
 use arrow_array::{
-    Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    ListArray, StringArray, UInt32Array, UInt64Array,
+    Array, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array,
+    Int64Array, ListArray, StringArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field};
 use protobuf::descriptor::FileDescriptorProto;
@@ -141,7 +139,7 @@ fn read_bool(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> bool {
 fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     return if field.has_field(message.as_ref()) {
         let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::Enum(x, n) = value {
+        if let ReflectValueRef::Enum(_x, n) = value {
             n
         } else {
             0
@@ -215,7 +213,7 @@ fn singular_field_to_array(
         }
         RuntimeType::F64 => {
             let values: Vec<f64> = messages.iter().map(|x| read_f64(x, field)).collect();
-            Ok(Arc::new(Float64Array::from_iter(values)))
+            Ok(Arc::new(Float64Array::from(values)))
         }
         RuntimeType::Bool => {
             let values: Vec<bool> = messages.iter().map(|x| read_bool(x, field)).collect();
@@ -277,30 +275,89 @@ fn singular_field_to_array(
     };
 }
 
+fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
+    field: &FieldDescriptor,
+    messages: &'b Vec<Box<dyn MessageDyn>>,
+    data_type: DataType,
+    extractor: &dyn Fn(&ReflectValueRef<'b>) -> Option<T>,
+) -> Result<Arc<dyn Array>, &'static str> {
+    let mut values: Vec<T> = Vec::new();
+    let mut offsets: Vec<i32> = Vec::new();
+    offsets.push(0);
+    for message in messages {
+        if field.has_field(message.as_ref()) {
+            let repeated_ref: ReflectRepeatedRef = field.get_repeated(message.as_ref());
+            for index in 0..repeated_ref.len() {
+                let value_ref = repeated_ref.get(index);
+                values.push(extractor(&value_ref).unwrap());
+            }
+        }
+        offsets.push(i32::from_usize(values.len()).unwrap());
+    }
+    let list_data_type = DataType::List(Arc::new(Field::new("item", data_type, false)));
+    let list_data = ArrayData::builder(list_data_type)
+        .len(3)
+        .add_buffer(Buffer::from_iter(offsets))
+        .add_child_data(A::from(values).to_data())
+        .build()
+        .unwrap();
+    return Ok(Arc::new(ListArray::from(list_data)));
+}
+
 fn repeated_field_to_array(
     field: &FieldDescriptor,
     runtime_type: &RuntimeType,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<Arc<dyn Array>, &'static str> {
     return match runtime_type {
-        RuntimeType::I32 => {
-            let mut values: Vec<i32> = Vec::new();
-            let mut offsets: Vec<i32> = Vec::new();
-            offsets.push(0);
-            for message in messages {
-                read_i32_repeated(message, field, &mut values, &mut offsets);
-            }
-            let list_data_type =
-                DataType::List(Arc::new(Field::new("item", DataType::Int32, false)));
-            let list_data = ArrayData::builder(list_data_type)
-                .len(3)
-                .add_buffer(Buffer::from_iter(offsets))
-                .add_child_data(Int32Array::from_iter(values).to_data())
-                .build()
-                .unwrap();
-            Ok(Arc::new(ListArray::from(list_data)))
-        }
-        _ => Err("BAD TYPE"),
+        RuntimeType::I32 => read_repeated_primitive::<i32, Int32Array>(
+            field,
+            messages,
+            DataType::Int32,
+            &ReflectValueRef::to_i32,
+        ),
+        RuntimeType::I64 => read_repeated_primitive::<i64, Int64Array>(
+            field,
+            messages,
+            DataType::Int64,
+            &ReflectValueRef::to_i64,
+        ),
+
+        RuntimeType::U32 => read_repeated_primitive::<u32, UInt32Array>(
+            field,
+            messages,
+            DataType::UInt32,
+            &ReflectValueRef::to_u32,
+        ),
+        RuntimeType::U64 => read_repeated_primitive::<u64, UInt64Array>(
+            field,
+            messages,
+            DataType::UInt64,
+            &ReflectValueRef::to_u64,
+        ),
+        RuntimeType::F32 => read_repeated_primitive::<f32, Float32Array>(
+            field,
+            messages,
+            DataType::Float32,
+            &ReflectValueRef::to_f32,
+        ),
+        RuntimeType::F64 => read_repeated_primitive::<f64, Float64Array>(
+            field,
+            messages,
+            DataType::Float64,
+            &ReflectValueRef::to_f64,
+        ),
+        RuntimeType::Bool => read_repeated_primitive::<bool, BooleanArray>(
+            field,
+            messages,
+            DataType::Boolean,
+            &ReflectValueRef::to_bool,
+        ),
+        //RuntimeType::Bool => Err("Bool not supported"),
+        RuntimeType::String => Err("String not supported"),
+        RuntimeType::VecU8 => Err("VecU8 not supported"),
+        RuntimeType::Enum(_) => Err("Enum not supported"),
+        RuntimeType::Message(_) => Err("Message not supported"),
     };
 }
 

@@ -24,8 +24,20 @@ message SimpleMessage {
   bytes bytes_value = 15;
   TestEnum enum_value = 16;
 
-  repeated int32 int32_values = 22;
 
+  repeated double double_values = 20;
+  repeated float float_values = 21;
+  repeated int32 int32_values = 22;
+  repeated int64 int64_values = 23;
+  repeated uint32 uint32_values = 24;
+  repeated uint64 uint64_values = 25;
+  repeated sint32 sint32_values = 26;
+  repeated sint64 sint64_values = 27;
+  repeated fixed32 fixed32_values = 28;
+  repeated fixed64 fixed64_values = 29;
+  repeated sfixed32 sfixed32_values = 30;
+  repeated sfixed64 sfixed64_values = 31;
+  repeated bool bool_values = 32;
 }
 
 message SearchRequest {
