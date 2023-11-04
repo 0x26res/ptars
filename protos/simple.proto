@@ -22,6 +22,8 @@ message SimpleMessage {
   bool bool_value = 13;
   string string_value = 14;
   bytes bytes_value = 15;
+  TestEnum enum_value = 16;
+
 
 }
 
@@ -32,8 +34,9 @@ message SearchRequest {
 }
 
 enum TestEnum {
-  HELLO = 0;
-  WORLD = 1;
+  UNKNOWN_TEST_ENUM = 0;
+  HELLO = 1;
+  WORLD = 2;
 }
 
 message TestMessage {

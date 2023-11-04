@@ -123,6 +123,19 @@ fn read_bool(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> bool {
     };
 }
 
+fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
+    return if field.has_field(message.as_ref()) {
+        let value = field.get_singular(message.as_ref()).unwrap();
+        if let ReflectValueRef::Enum(x, n) = value {
+            n
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+}
+
 fn pass_builder(array_data: ArrayDataBuilder) -> ArrayDataBuilder {
     return array_data.add_buffer(Buffer::from("123"));
 }
@@ -241,7 +254,10 @@ fn singular_field_to_array(
             let array_data = builder.build().unwrap();
             Ok(Arc::new(BinaryArray::from(array_data)))
         }
-        RuntimeType::Enum(_) => Err("Enum message not supported"),
+        RuntimeType::Enum(_) => {
+            let values: Vec<i32> = messages.iter().map(|x| read_enum(x, field)).collect();
+            Ok(Arc::new(Int32Array::from(values)))
+        }
         RuntimeType::Message(_) => Err("nested message not supported"),
     };
 }

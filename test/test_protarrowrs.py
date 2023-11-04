@@ -28,6 +28,7 @@ def test_generate_proto():
             bool_value=True,
             string_value="14",
             bytes_value=b"15",
+            enum_value=1,
         ),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
@@ -38,3 +39,4 @@ def test_generate_proto():
     assert table["bool_value"].to_pylist() == [False, False, True]
     assert table["string_value"].to_pylist() == ["", "", "14"]
     assert table["bytes_value"].to_pylist() == [b"", b"", b"15"]
+    assert table["enum_value"].to_pylist() == [0, 0, 1]
