@@ -32,6 +32,9 @@ def test_generate_proto():
             int32_values=[1, 2, 3],
             int64_values=[1, 2, 3],
             bool_values=[True, False, True],
+            search_request=simple_pb2.SearchRequest(
+                query="hello", page_number=0, result_per_page=10
+            ),
         ),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
@@ -46,3 +49,8 @@ def test_generate_proto():
     assert table["int32_values"].to_pylist() == [[], [], [1, 2, 3]]
     assert table["int64_values"].to_pylist() == [[], [], [1, 2, 3]]
     assert table["bool_values"].to_pylist() == [[], [], [True, False, True]]
+    assert table["search_request"].to_pylist() == [
+        None,
+        None,
+        {"query": "hello", "page_number": 0, "result_per_page": 10},
+    ]

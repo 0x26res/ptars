@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use arrow::array::{ArrayData, ArrayDataBuilder};
@@ -8,13 +9,13 @@ use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
 use arrow_array::{
     Array, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array,
-    Int64Array, ListArray, StringArray, UInt32Array, UInt64Array,
+    Int64Array, ListArray, StringArray, StructArray, UInt32Array, UInt64Array,
 };
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType, Field, FieldRef};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
-    RuntimeFieldType, RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, MessageRef, ReflectRepeatedRef,
+    ReflectValueRef, RuntimeFieldType, RuntimeType,
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
@@ -271,8 +272,43 @@ fn singular_field_to_array(
             let values: Vec<i32> = messages.iter().map(|x| read_enum(x, field)).collect();
             Ok(Arc::new(Int32Array::from(values)))
         }
-        RuntimeType::Message(_) => Err("nested message not supported"),
+        RuntimeType::Message(x) => Ok(nested_messages_to_array(field, x, messages)),
     };
+}
+
+fn nested_messages_to_array(
+    field: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &Vec<Box<dyn MessageDyn>>,
+) -> Arc<dyn Array> {
+    let mut nested_messages: Vec<Box<dyn MessageDyn>> = Vec::new();
+    let mut is_valid: Vec<bool> = Vec::new();
+    for message in messages {
+        nested_messages.push(
+            field
+                .get_singular_field_or_default(message.as_ref())
+                .to_message()
+                .unwrap()
+                .clone_box(),
+        );
+        is_valid.push(field.has_field(message.as_ref()));
+    }
+    let arrays = fields_to_arrays(&nested_messages, message_descriptor);
+    // TODO: deal with nullable
+
+    let arrays_with_types: Vec<(Arc<Field>, Arc<dyn Array>)> = arrays
+        .iter()
+        .map(|x| {
+            (
+                Arc::new(Field::new(x.0.clone(), x.1.data_type().clone(), false)),
+                x.1.clone(),
+            )
+        })
+        .collect();
+    return Arc::new(StructArray::from((
+        arrays_with_types,
+        Buffer::from_iter(is_valid),
+    )));
 }
 
 fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
@@ -372,6 +408,16 @@ fn field_to_array(
     };
 }
 
+fn fields_to_arrays(
+    messages: &Vec<Box<dyn MessageDyn>>,
+    message_descriptor: &MessageDescriptor,
+) -> Vec<(String, Arc<dyn Array>)> {
+    return message_descriptor
+        .fields()
+        .map(|x| (x.name().to_string(), field_to_array(&x, &messages).unwrap()))
+        .collect();
+}
+
 #[pymethods]
 impl MessageHandler {
     fn list_to_table(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
@@ -383,11 +429,8 @@ impl MessageHandler {
                     .unwrap()
             })
             .collect();
-        let arrays: Vec<(String, Arc<dyn Array>)> = self
-            .message_descriptor
-            .fields()
-            .map(|x| (x.name().to_string(), field_to_array(&x, &messages).unwrap()))
-            .collect();
+        let arrays: Vec<(String, Arc<dyn Array>)> =
+            fields_to_arrays(&messages, &self.message_descriptor);
         let batch = RecordBatch::try_from_iter(arrays).unwrap();
         return batch.to_pyarrow(py);
     }
