@@ -11,7 +11,7 @@ def test_generate_proto():
             int64_value=123,
             uint32_value=456,
         ),
-        simple_pb2.SimpleMessage(int64_value=0, uint32_value=789),
+        simple_pb2.SimpleMessage(int64_value=0, uint32_value=789, search_request={}),
         simple_pb2.SimpleMessage(
             double_value=1.0,
             float_value=2.0,
@@ -51,6 +51,6 @@ def test_generate_proto():
     assert table["bool_values"].to_pylist() == [[], [], [True, False, True]]
     assert table["search_request"].to_pylist() == [
         None,
-        None,
+        {"query": "", "page_number": 0, "result_per_page": 0},
         {"query": "hello", "page_number": 0, "result_per_page": 10},
     ]
