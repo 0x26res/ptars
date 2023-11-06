@@ -1,10 +1,20 @@
 syntax = "proto3";
 
-
 import "google/protobuf/timestamp.proto";
 
-
 package messages;
+
+message SearchRequest {
+  string query = 1;
+  int32 page_number = 2;
+  int32 result_per_page = 3;
+}
+
+enum TestEnum {
+  UNKNOWN_TEST_ENUM = 0;
+  HELLO = 1;
+  WORLD = 2;
+}
 
 message SimpleMessage {
   double double_value = 1;
@@ -38,18 +48,8 @@ message SimpleMessage {
   repeated sfixed32 sfixed32_values = 30;
   repeated sfixed64 sfixed64_values = 31;
   repeated bool bool_values = 32;
-}
 
-message SearchRequest {
-  string query = 1;
-  int32 page_number = 2;
-  int32 result_per_page = 3;
-}
-
-enum TestEnum {
-  UNKNOWN_TEST_ENUM = 0;
-  HELLO = 1;
-  WORLD = 2;
+  SearchRequest search_request = 40;
 }
 
 message TestMessage {
