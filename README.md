@@ -27,6 +27,18 @@ pytest test
 ```
 
 
+## TODO
+
+- [ ] make singluar primitive generic
+- [ ] repeated messages
+- [ ] add rust unit tests
+- [ ] publish package
+- [ ] add configuration for enums
+- [ ] maps
+- [ ] timestamp, date, wrapped types, duration
+- [ ] reuse protarrow tests
+- [ ] arrow to proto 
+
 ## Resources
 
 - [Blog on how to develop](https://blog.yossarian.net/2020/08/02/Writing-and-publishing-a-python-module-in-rust?utm_source=pocket_saves) and [Corresponding repo](https://github.com/woodruffw/procmaps.py)

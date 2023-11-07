@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use arrow::array::{ArrayData, ArrayDataBuilder};
@@ -8,14 +7,14 @@ use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
 use arrow_array::{
-    Array, ArrowPrimitiveType, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array,
-    Int64Array, ListArray, StringArray, StructArray, UInt32Array, UInt64Array,
+    Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
+    ListArray, StringArray, StructArray, UInt32Array, UInt64Array,
 };
-use arrow_schema::{DataType, Field, FieldRef};
+use arrow_schema::{DataType, Field};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, MessageRef, ReflectRepeatedRef,
-    ReflectValueRef, RuntimeFieldType, RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
+    RuntimeFieldType, RuntimeType,
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
@@ -31,112 +30,6 @@ struct ProtoCache {
     cache: HashMap<String, FileDescriptor>,
 }
 
-fn read_i32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::I32(x) = value {
-            x
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-}
-
-fn read_i32_repeated(
-    message: &Box<dyn MessageDyn>,
-    field: &FieldDescriptor,
-    values: &mut Vec<i32>,
-    offsets: &mut Vec<i32>,
-) {
-    if field.has_field(message.as_ref()) {
-        let value: ReflectRepeatedRef = field.get_repeated(message.as_ref());
-        for index in 0..value.len() {
-            values.push(value.get(index).to_i32().unwrap())
-        }
-    }
-    offsets.push(i32::from_usize(values.len()).unwrap())
-}
-
-fn read_i64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i64 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::I64(x) = value {
-            x
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-}
-
-fn read_u32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> u32 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::U32(x) = value {
-            x
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-}
-
-fn read_u64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> u64 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::U64(x) = value {
-            x
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-}
-
-fn read_f32(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> f32 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::F32(x) = value {
-            x
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    };
-}
-
-fn read_f64(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> f64 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::F64(x) = value {
-            x
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    };
-}
-
-fn read_bool(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> bool {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::Bool(x) = value {
-            x
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-}
-
 fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     return if field.has_field(message.as_ref()) {
         let value = field.get_singular(message.as_ref()).unwrap();
@@ -148,10 +41,6 @@ fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     } else {
         0
     };
-}
-
-fn pass_builder(array_data: ArrayDataBuilder) -> ArrayDataBuilder {
-    return array_data.add_buffer(Buffer::from("123"));
 }
 
 fn read_string(
@@ -192,34 +81,20 @@ fn singular_field_to_array(
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<Arc<dyn Array>, &'static str> {
     return match runtime_type {
-        RuntimeType::I32 => {
-            let values: Vec<i32> = messages.iter().map(|x| read_i32(x, field)).collect();
-            Ok(Arc::new(Int32Array::from_iter(values)))
-        }
-        RuntimeType::U32 => {
-            let values: Vec<u32> = messages.iter().map(|x| read_u32(x, field)).collect();
-            Ok(Arc::new(UInt32Array::from_iter(values)))
-        }
-        RuntimeType::I64 => {
-            let values: Vec<i64> = messages.iter().map(|x| read_i64(x, field)).collect();
-            Ok(Arc::new(Int64Array::from_iter(values)))
-        }
-        RuntimeType::U64 => {
-            let values: Vec<u64> = messages.iter().map(|x| read_u64(x, field)).collect();
-            Ok(Arc::new(UInt64Array::from_iter(values)))
-        }
-        RuntimeType::F32 => {
-            let values: Vec<f32> = messages.iter().map(|x| read_f32(x, field)).collect();
-            Ok(Arc::new(Float32Array::from_iter(values)))
-        }
-        RuntimeType::F64 => {
-            let values: Vec<f64> = messages.iter().map(|x| read_f64(x, field)).collect();
-            Ok(Arc::new(Float64Array::from(values)))
-        }
-        RuntimeType::Bool => {
-            let values: Vec<bool> = messages.iter().map(|x| read_bool(x, field)).collect();
-            Ok(Arc::new(BooleanArray::from(values)))
-        }
+        RuntimeType::I32 =>
+            Ok(read_primitive::<i32, Int32Array>(messages, field, &ReflectValueRef::to_i32, 0)),
+        RuntimeType::U32 =>
+             Ok(read_primitive::<u32, UInt32Array>(messages, field, &ReflectValueRef::to_u32, 0)),
+        RuntimeType::I64 =>
+            Ok(read_primitive::<i64, Int64Array>(messages, field, &ReflectValueRef::to_i64, 0)),
+        RuntimeType::U64 =>
+            Ok(read_primitive::<u64, UInt64Array>(messages, field, &ReflectValueRef::to_u64, 0)),
+        RuntimeType::F32 =>
+            Ok(read_primitive::<f32, Float32Array>(messages, field, &ReflectValueRef::to_f32, 0.0)),
+        RuntimeType::F64 =>
+            Ok(read_primitive::<f64, Float64Array>(messages, field, &ReflectValueRef::to_f64, 0.0)),
+        RuntimeType::Bool =>
+            Ok(read_primitive::<bool, BooleanArray>(messages, field, &ReflectValueRef::to_bool, false)),
         RuntimeType::String => {
             // TODO: specify capacity
             let mut values = String::new();
@@ -294,21 +169,24 @@ fn nested_messages_to_array(
         is_valid.push(field.has_field(message.as_ref()));
     }
     let arrays = fields_to_arrays(&nested_messages, message_descriptor);
-    // TODO: deal with nullable
+    return Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))));
+}
 
-    let arrays_with_types: Vec<(Arc<Field>, Arc<dyn Array>)> = arrays
-        .iter()
-        .map(|x| {
-            (
-                Arc::new(Field::new(x.0.clone(), x.1.data_type().clone(), false)),
-                x.1.clone(),
-            )
-        })
-        .collect();
-    return Arc::new(StructArray::from((
-        arrays_with_types,
-        Buffer::from_iter(is_valid),
-    )));
+fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
+    messages: &'b Vec<Box<dyn MessageDyn>>,
+    field: &FieldDescriptor,
+    extractor: &dyn Fn(&ReflectValueRef<'b>) -> Option<T>,
+    default: T,
+) -> Arc<dyn Array> {
+    let mut values: Vec<T> = Vec::new();
+    for message in messages {
+        let value = field.get_singular(message.as_ref());
+        match value {
+            None => values.push(default.clone()),
+            Some(x) => values.push(extractor(&x).unwrap()),
+        }
+    }
+    return Arc::new(A::from(values));
 }
 
 fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
@@ -408,13 +286,45 @@ fn field_to_array(
     };
 }
 
+fn is_nullable(field: &FieldDescriptor) -> bool {
+    match field.runtime_field_type() {
+        RuntimeFieldType::Singular(runtime_type) => match runtime_type {
+            RuntimeType::Message(_) => true,
+            _ => false,
+        },
+
+        RuntimeFieldType::Repeated(_) => false,
+        RuntimeFieldType::Map(_, _) => false,
+    }
+}
+
+fn field_to_tuple(
+    field: &FieldDescriptor,
+    messages: &Vec<Box<dyn MessageDyn>>,
+) -> Result<(Arc<Field>, Arc<dyn Array>), &'static str> {
+    let results = field_to_array(field, messages);
+    return match results {
+        Ok(array) => {
+            return Ok((
+                Arc::new(Field::new(
+                    field.name(),
+                    array.data_type().clone(),
+                    is_nullable(field),
+                )),
+                array,
+            ))
+        }
+        Err(x) => Err(x),
+    };
+}
+
 fn fields_to_arrays(
     messages: &Vec<Box<dyn MessageDyn>>,
     message_descriptor: &MessageDescriptor,
-) -> Vec<(String, Arc<dyn Array>)> {
+) -> Vec<(Arc<Field>, Arc<dyn Array>)> {
     return message_descriptor
         .fields()
-        .map(|x| (x.name().to_string(), field_to_array(&x, &messages).unwrap()))
+        .map(|x| field_to_tuple(&x, &messages).unwrap())
         .collect();
 }
 
@@ -429,9 +339,9 @@ impl MessageHandler {
                     .unwrap()
             })
             .collect();
-        let arrays: Vec<(String, Arc<dyn Array>)> =
+        let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
             fields_to_arrays(&messages, &self.message_descriptor);
-        let batch = RecordBatch::try_from_iter(arrays).unwrap();
+        let batch = RecordBatch::from(StructArray::from(arrays));
         return batch.to_pyarrow(py);
     }
 }
