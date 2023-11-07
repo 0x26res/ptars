@@ -36,21 +36,23 @@ def test_generate_proto():
                 query="hello", page_number=0, result_per_page=10
             ),
         ),
+        simple_pb2.SimpleMessage(),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
     table = handler.list_to_table(message_payloads)
 
-    assert table["int64_value"].to_pylist() == [123, 0, 4]
-    assert table["uint32_value"].to_pylist() == [456, 789, 5]
-    assert table["bool_value"].to_pylist() == [False, False, True]
-    assert table["string_value"].to_pylist() == ["", "", "14"]
-    assert table["bytes_value"].to_pylist() == [b"", b"", b"15"]
-    assert table["enum_value"].to_pylist() == [0, 0, 1]
-    assert table["int32_values"].to_pylist() == [[], [], [1, 2, 3]]
-    assert table["int64_values"].to_pylist() == [[], [], [1, 2, 3]]
-    assert table["bool_values"].to_pylist() == [[], [], [True, False, True]]
+    assert table["int64_value"].to_pylist() == [123, 0, 4, 0]
+    assert table["uint32_value"].to_pylist() == [456, 789, 5, 0]
+    assert table["bool_value"].to_pylist() == [False, False, True, False]
+    assert table["string_value"].to_pylist() == ["", "", "14", ""]
+    assert table["bytes_value"].to_pylist() == [b"", b"", b"15", b""]
+    assert table["enum_value"].to_pylist() == [0, 0, 1, 0]
+    assert table["int32_values"].to_pylist() == [[], [], [1, 2, 3], []]
+    assert table["int64_values"].to_pylist() == [[], [], [1, 2, 3], []]
+    assert table["bool_values"].to_pylist() == [[], [], [True, False, True], []]
     assert table["search_request"].to_pylist() == [
         None,
         {"query": "", "page_number": 0, "result_per_page": 0},
         {"query": "hello", "page_number": 0, "result_per_page": 10},
+        None,
     ]

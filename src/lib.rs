@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{ArrayData, ArrayDataBuilder};
+use arrow::array::ArrayData;
 use arrow::buffer::Buffer;
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
@@ -30,6 +30,44 @@ struct ProtoCache {
     cache: HashMap<String, FileDescriptor>,
 }
 
+struct StringBuilder {
+    values: String,
+    offsets: Vec<i32>,
+}
+
+impl StringBuilder {
+    pub fn new() -> Self {
+        Self {
+            values: String::new(),
+            offsets: Vec::new(),
+        }
+    }
+
+    fn append(&mut self, message: &dyn MessageDyn, field: &FieldDescriptor) {
+        self.offsets
+            .push(i32::from_usize(self.values.len()).unwrap());
+        match field.get_singular(message) {
+            None => {}
+            Some(x) => self.values.push_str(x.to_str().unwrap()),
+        }
+    }
+
+    fn build(&mut self) -> Arc<dyn Array> {
+        let size = self.offsets.len();
+        println!("!!!! {size}");
+        self.offsets
+            .push(i32::from_usize(self.values.len()).unwrap());
+
+        let array_data = ArrayData::builder(DataType::Utf8)
+            .len(size)
+            .add_buffer(Buffer::from(self.offsets.to_byte_slice()))
+            .add_buffer(Buffer::from(self.values.as_str()))
+            .build()
+            .unwrap();
+        return Arc::new(StringArray::from(array_data));
+    }
+}
+
 fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     return if field.has_field(message.as_ref()) {
         let value = field.get_singular(message.as_ref()).unwrap();
@@ -41,21 +79,6 @@ fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     } else {
         0
     };
-}
-
-fn read_string(
-    message: &Box<dyn MessageDyn>,
-    field: &FieldDescriptor,
-    values: &mut String,
-    offsets: &mut Vec<i32>,
-) -> () {
-    let value = field.get_singular(message.as_ref()).unwrap();
-    if let ReflectValueRef::String(x) = value {
-        values.push_str(x);
-        offsets.push(i32::from_usize(x.len()).unwrap())
-    } else {
-        panic!("Wrong type {value}");
-    }
 }
 
 fn read_binary(
@@ -81,66 +104,71 @@ fn singular_field_to_array(
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<Arc<dyn Array>, &'static str> {
     return match runtime_type {
-        RuntimeType::I32 =>
-            Ok(read_primitive::<i32, Int32Array>(messages, field, &ReflectValueRef::to_i32, 0)),
-        RuntimeType::U32 =>
-             Ok(read_primitive::<u32, UInt32Array>(messages, field, &ReflectValueRef::to_u32, 0)),
-        RuntimeType::I64 =>
-            Ok(read_primitive::<i64, Int64Array>(messages, field, &ReflectValueRef::to_i64, 0)),
-        RuntimeType::U64 =>
-            Ok(read_primitive::<u64, UInt64Array>(messages, field, &ReflectValueRef::to_u64, 0)),
-        RuntimeType::F32 =>
-            Ok(read_primitive::<f32, Float32Array>(messages, field, &ReflectValueRef::to_f32, 0.0)),
-        RuntimeType::F64 =>
-            Ok(read_primitive::<f64, Float64Array>(messages, field, &ReflectValueRef::to_f64, 0.0)),
-        RuntimeType::Bool =>
-            Ok(read_primitive::<bool, BooleanArray>(messages, field, &ReflectValueRef::to_bool, false)),
+        RuntimeType::I32 => Ok(read_primitive::<i32, Int32Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_i32,
+            0,
+        )),
+        RuntimeType::U32 => Ok(read_primitive::<u32, UInt32Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_u32,
+            0,
+        )),
+        RuntimeType::I64 => Ok(read_primitive::<i64, Int64Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_i64,
+            0,
+        )),
+        RuntimeType::U64 => Ok(read_primitive::<u64, UInt64Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_u64,
+            0,
+        )),
+        RuntimeType::F32 => Ok(read_primitive::<f32, Float32Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_f32,
+            0.0,
+        )),
+        RuntimeType::F64 => Ok(read_primitive::<f64, Float64Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_f64,
+            0.0,
+        )),
+        RuntimeType::Bool => Ok(read_primitive::<bool, BooleanArray>(
+            messages,
+            field,
+            &ReflectValueRef::to_bool,
+            false,
+        )),
         RuntimeType::String => {
-            // TODO: specify capacity
-            let mut values = String::new();
-            let mut offsets: Vec<i32> = Vec::new();
-            let mut nulls: Vec<bool> = Vec::new();
-            offsets.push(0);
+            let mut builder = StringBuilder::new();
             for message in messages {
-                if field.has_field(message.as_ref()) {
-                    read_string(message, field, &mut values, &mut offsets);
-                    nulls.push(true);
-                } else {
-                    nulls.push(true);
-                    offsets.push(0);
-                }
+                builder.append(message.as_ref(), field)
             }
-
-            let builder: ArrayDataBuilder = ArrayData::builder(DataType::Utf8)
-                .len(messages.len())
-                .add_buffer(Buffer::from(offsets.to_byte_slice()))
-                .add_buffer(Buffer::from(values.as_str()))
-                .null_bit_buffer(Option::Some(Buffer::from_iter(nulls)));
-            let array_data = builder.build().unwrap();
-            Ok(Arc::new(StringArray::from(array_data)))
+            return Ok(builder.build());
         }
         RuntimeType::VecU8 => {
-            // TODO: specify capacity
             let mut values: Vec<u8> = Vec::new();
             let mut offsets: Vec<i32> = Vec::new();
-            let mut nulls: Vec<bool> = Vec::new();
             offsets.push(0);
             for message in messages {
                 if field.has_field(message.as_ref()) {
                     read_binary(message, field, &mut values, &mut offsets);
-                    nulls.push(true);
-                } else {
-                    nulls.push(true);
-                    offsets.push(0);
                 }
+                offsets.push(i32::from_usize(values.len()).unwrap());
             }
-
-            let builder: ArrayDataBuilder = ArrayData::builder(DataType::Binary)
+            let array_data = ArrayData::builder(DataType::Binary)
                 .len(messages.len())
                 .add_buffer(Buffer::from(offsets.to_byte_slice()))
                 .add_buffer(Buffer::from_iter(values))
-                .null_bit_buffer(Option::Some(Buffer::from_iter(nulls)));
-            let array_data = builder.build().unwrap();
+                .build()
+                .unwrap();
             Ok(Arc::new(BinaryArray::from(array_data)))
         }
         RuntimeType::Enum(_) => {
@@ -169,6 +197,12 @@ fn nested_messages_to_array(
         is_valid.push(field.has_field(message.as_ref()));
     }
     let arrays = fields_to_arrays(&nested_messages, message_descriptor);
+    // for array in arrays {
+    //     let  name = array.0.name().clone();
+    //     let size = array.1.len();
+    //     println!("!!!! {name} {size}");
+    // }
+    // return Arc::new(BooleanArray::from(is_valid))
     return Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))));
 }
 
@@ -210,7 +244,7 @@ fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
     }
     let list_data_type = DataType::List(Arc::new(Field::new("item", data_type, false)));
     let list_data = ArrayData::builder(list_data_type)
-        .len(3)
+        .len(messages.len())
         .add_buffer(Buffer::from_iter(offsets))
         .add_child_data(A::from(values).to_data())
         .build()
@@ -267,7 +301,6 @@ fn repeated_field_to_array(
             DataType::Boolean,
             &ReflectValueRef::to_bool,
         ),
-        //RuntimeType::Bool => Err("Bool not supported"),
         RuntimeType::String => Err("String not supported"),
         RuntimeType::VecU8 => Err("VecU8 not supported"),
         RuntimeType::Enum(_) => Err("Enum not supported"),

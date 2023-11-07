@@ -29,7 +29,6 @@ pytest test
 
 ## TODO
 
-- [ ] make singluar primitive generic
 - [ ] repeated messages
 - [ ] add rust unit tests
 - [ ] publish package
