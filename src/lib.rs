@@ -132,20 +132,6 @@ impl BinaryBuilder {
     }
 }
 
-
-fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
-    return if field.has_field(message.as_ref()) {
-        let value = field.get_singular(message.as_ref()).unwrap();
-        if let ReflectValueRef::Enum(_x, n) = value {
-            n
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-}
-
 fn singular_field_to_array(
     field: &FieldDescriptor,
     runtime_type: &RuntimeType,
@@ -208,10 +194,12 @@ fn singular_field_to_array(
             }
             Ok(builder.build())
         }
-        RuntimeType::Enum(_) => {
-            let values: Vec<i32> = messages.iter().map(|x| read_enum(x, field)).collect();
-            Ok(Arc::new(Int32Array::from(values)))
-        }
+        RuntimeType::Enum(_) => Ok(read_primitive::<i32, Int32Array>(
+            messages,
+            field,
+            &ReflectValueRef::to_enum_value,
+            0,
+        )),
         RuntimeType::Message(x) => Ok(nested_messages_to_array(field, x, messages)),
     };
 }
@@ -380,8 +368,37 @@ fn repeated_field_to_array(
                 .unwrap();
             return Ok(Arc::new(ListArray::from(list_data)));
         }
-        RuntimeType::Enum(_) => Err("Enum not supported"),
-        RuntimeType::Message(_) => Err("Message not supported"),
+        RuntimeType::Enum(_) => read_repeated_primitive::<i32, Int32Array>(
+            field,
+            messages,
+            DataType::Int32,
+            &ReflectValueRef::to_enum_value,
+        ),
+        RuntimeType::Message(message_descriptor) => {
+            let mut repeated_messages: Vec<Box<dyn MessageDyn>> = Vec::new();
+            let mut offsets: Vec<i32> = Vec::new();
+            offsets.push(0);
+            for message in messages {
+                if field.has_field(message.as_ref()) {
+                    let repeated_ref: ReflectRepeatedRef = field.get_repeated(message.as_ref());
+                    for index in 0..repeated_ref.len() {
+                        let value_ref = repeated_ref.get(index);
+                        repeated_messages.push(value_ref.to_message().unwrap().clone_box())
+                    }
+                }
+                offsets.push(i32::from_usize(repeated_messages.len()).unwrap());
+            }
+            let struct_array = Arc::new(StructArray::from(fields_to_arrays(&repeated_messages, message_descriptor)));
+            let list_data_type =
+                DataType::List(Arc::new(Field::new("item", struct_array.data_type().clone(), false)));
+            let list_data: ArrayData = ArrayData::builder(list_data_type)
+                .len(messages.len())
+                .add_buffer(Buffer::from_iter(offsets))
+                .add_child_data(struct_array.to_data())
+                .build()
+                .unwrap();
+            return Ok(Arc::new(ListArray::from(list_data)));
+        },
     };
 }
 

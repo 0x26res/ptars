@@ -1,3 +1,5 @@
+import pyarrow as pa
+
 from ptars import HandlerPool
 from ptars_protos import simple_pb2
 
@@ -6,12 +8,21 @@ def test_generate_proto():
     pool = HandlerPool()
 
     handler = pool.get_for_message(simple_pb2.SimpleMessage.DESCRIPTOR)
+    simple_pb2.SearchRequest()
+    search_request = simple_pb2.SearchRequest(
+        query="hello", page_number=0, result_per_page=10
+    )
     protos = [
         simple_pb2.SimpleMessage(
             int64_value=123,
             uint32_value=456,
         ),
-        simple_pb2.SimpleMessage(int64_value=0, uint32_value=789, search_request={}),
+        simple_pb2.SimpleMessage(
+            int64_value=0,
+            uint32_value=789,
+            search_request={},
+            search_requests=[search_request],
+        ),
         simple_pb2.SimpleMessage(
             double_value=1.0,
             float_value=2.0,
@@ -32,11 +43,10 @@ def test_generate_proto():
             int32_values=[1, 2, 3],
             int64_values=[1, 2, 3],
             bool_values=[True, False, True],
-            search_request=simple_pb2.SearchRequest(
-                query="hello", page_number=0, result_per_page=10
-            ),
+            search_request=search_request,
             string_values=["1", "B", "ABC"],
             bytes_values=[b"1", b"B", b"ABC", b""],
+            search_requests=[{}, {}, {}, {}],
         ),
         simple_pb2.SimpleMessage(),
     ]
@@ -60,3 +70,10 @@ def test_generate_proto():
     ]
     assert table["string_values"].to_pylist() == [[], [], ["1", "B", "ABC"], []]
     assert table["bytes_values"].to_pylist() == [[], [], [b"1", b"B", b"ABC", b""], []]
+    assert pa.types.is_list(table["search_requests"].type)
+    assert table["search_requests"].to_pylist() == [
+        [],
+        [{"query": "hello", "page_number": 0, "result_per_page": 10}],
+        [{"query": "", "page_number": 0, "result_per_page": 0}] * 4,
+        [],
+    ]

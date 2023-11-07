@@ -52,6 +52,7 @@ message SimpleMessage {
   repeated bytes bytes_values = 34;
 
   SearchRequest search_request = 40;
+  repeated SearchRequest search_requests = 41;
 }
 
 message TestMessage {
