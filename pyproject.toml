@@ -75,6 +75,12 @@ src_paths = ["ptars", "tests"]
 known_first_party = ["ptars", "ptars_protos" ]
 skip = [".gitignore"]
 
-
 [tool.bandit]
 skips = ["B101"]
+
+[tool.ruff]
+select = ["E", "F", "C", "I"]
+# ignore = ["E501", "C901"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ptars", "ptars_proto"]

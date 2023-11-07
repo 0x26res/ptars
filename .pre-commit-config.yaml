@@ -13,13 +13,8 @@ repos:
     hooks:
     - id: black
       name: black (python)
-  - repo: https://github.com/pycqa/isort
-    rev: 5.12.0
-    hooks:
-      - id: isort
-        name: isort (python)
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.0.290
+    rev: v0.1.4
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
