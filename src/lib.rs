@@ -11,14 +11,14 @@ use arrow_array::{
     ListArray, StringArray, StructArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field};
+use protobuf::{Message, MessageDyn};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectFieldRef, ReflectRepeatedRef,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef,
     ReflectValueRef, RuntimeFieldType, RuntimeType,
 };
-use protobuf::{Message, MessageDyn};
-use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
 use pyo3::{pyclass, pymethods, wrap_pyfunction};
+use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
 
 #[pyclass]
 struct MessageHandler {
@@ -64,7 +64,6 @@ impl StringBuilder {
 
     fn build(&mut self) -> Arc<dyn Array> {
         let size = self.offsets.len();
-        println!("!!!! {size}");
         self.offsets
             .push(i32::from_usize(self.values.len()).unwrap());
 
@@ -78,6 +77,62 @@ impl StringBuilder {
     }
 }
 
+
+struct BinaryBuilder {
+    values: Vec<u8>,
+    offsets: Vec<i32>,
+}
+
+impl BinaryBuilder {
+    pub fn new() -> Self {
+        Self {
+            values: Vec::new(),
+            offsets: Vec::new(),
+        }
+    }
+
+    fn append(&mut self, message: &dyn MessageDyn, field: &FieldDescriptor) {
+        self.offsets
+            .push(i32::from_usize(self.values.len()).unwrap());
+        match field.get_singular(message) {
+            None => {}
+            Some(x) => {
+                for c in x.to_bytes().unwrap() {
+                    self.values.push(c.clone())
+                }
+            }
+        }
+    }
+
+    fn append_ref(&mut self, reflect_value_ref: ReflectValueRef) {
+        self.offsets
+            .push(i32::from_usize(self.values.len()).unwrap());
+        for c in reflect_value_ref.to_bytes().unwrap() {
+            self.values.push(c.clone())
+        }
+    }
+
+    fn len(&self) -> usize {
+        return self.offsets.len();
+    }
+
+    fn build(&mut self) -> Arc<dyn Array> {
+        let size = self.offsets.len();
+        self.offsets
+            .push(i32::from_usize(self.values.len()).unwrap());
+
+        // TODO: look into avoiding copy here
+        let array_data = ArrayData::builder(DataType::Binary)
+            .len(size)
+            .add_buffer(Buffer::from(self.offsets.to_byte_slice()))
+            .add_buffer(Buffer::from_iter(self.values.clone()))
+            .build()
+            .unwrap();
+        return Arc::new(BinaryArray::from(array_data));
+    }
+}
+
+
 fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     return if field.has_field(message.as_ref()) {
         let value = field.get_singular(message.as_ref()).unwrap();
@@ -89,23 +144,6 @@ fn read_enum(message: &Box<dyn MessageDyn>, field: &FieldDescriptor) -> i32 {
     } else {
         0
     };
-}
-
-fn read_binary(
-    message: &Box<dyn MessageDyn>,
-    field: &FieldDescriptor,
-    values: &mut Vec<u8>,
-    offsets: &mut Vec<i32>,
-) -> () {
-    let value = field.get_singular(message.as_ref()).unwrap();
-    if let ReflectValueRef::Bytes(x) = value {
-        for b in x {
-            values.push(b.clone());
-        }
-        offsets.push(i32::from_usize(x.len()).unwrap())
-    } else {
-        panic!("Wrong type {value}");
-    }
 }
 
 fn singular_field_to_array(
@@ -164,22 +202,11 @@ fn singular_field_to_array(
             return Ok(builder.build());
         }
         RuntimeType::VecU8 => {
-            let mut values: Vec<u8> = Vec::new();
-            let mut offsets: Vec<i32> = Vec::new();
-            offsets.push(0);
+            let mut builder = BinaryBuilder::new();
             for message in messages {
-                if field.has_field(message.as_ref()) {
-                    read_binary(message, field, &mut values, &mut offsets);
-                }
-                offsets.push(i32::from_usize(values.len()).unwrap());
+                builder.append(message.as_ref(), field);
             }
-            let array_data = ArrayData::builder(DataType::Binary)
-                .len(messages.len())
-                .add_buffer(Buffer::from(offsets.to_byte_slice()))
-                .add_buffer(Buffer::from_iter(values))
-                .build()
-                .unwrap();
-            Ok(Arc::new(BinaryArray::from(array_data)))
+            Ok(builder.build())
         }
         RuntimeType::Enum(_) => {
             let values: Vec<i32> = messages.iter().map(|x| read_enum(x, field)).collect();
@@ -329,7 +356,30 @@ fn repeated_field_to_array(
                 .unwrap();
             return Ok(Arc::new(ListArray::from(list_data)));
         }
-        RuntimeType::VecU8 => Err("VecU8 not supported"),
+        RuntimeType::VecU8 => {
+            let mut builder = BinaryBuilder::new();
+            let mut offsets: Vec<i32> = Vec::new();
+            offsets.push(0);
+            for message in messages {
+                if field.has_field(message.as_ref()) {
+                    let repeated_ref: ReflectRepeatedRef = field.get_repeated(message.as_ref());
+                    for index in 0..repeated_ref.len() {
+                        let value_ref = repeated_ref.get(index);
+                        builder.append_ref(value_ref)
+                    }
+                }
+                offsets.push(i32::from_usize(builder.len()).unwrap());
+            }
+            let list_data_type =
+                DataType::List(Arc::new(Field::new("item", DataType::Binary, false)));
+            let list_data = ArrayData::builder(list_data_type)
+                .len(messages.len())
+                .add_buffer(Buffer::from_iter(offsets))
+                .add_child_data(builder.build().to_data())
+                .build()
+                .unwrap();
+            return Ok(Arc::new(ListArray::from(list_data)));
+        }
         RuntimeType::Enum(_) => Err("Enum not supported"),
         RuntimeType::Message(_) => Err("Message not supported"),
     };

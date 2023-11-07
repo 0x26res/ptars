@@ -36,6 +36,7 @@ def test_generate_proto():
                 query="hello", page_number=0, result_per_page=10
             ),
             string_values=["1", "B", "ABC"],
+            bytes_values=[b"1", b"B", b"ABC", b""],
         ),
         simple_pb2.SimpleMessage(),
     ]
@@ -58,3 +59,4 @@ def test_generate_proto():
         None,
     ]
     assert table["string_values"].to_pylist() == [[], [], ["1", "B", "ABC"], []]
+    assert table["bytes_values"].to_pylist() == [[], [], [b"1", b"B", b"ABC", b""], []]

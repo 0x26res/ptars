@@ -30,6 +30,7 @@ pytest test
 ## TODO
 
 - [ ] repeated messages
+- [ ] more generic 
 - [ ] add rust unit tests
 - [ ] publish package
 - [ ] add configuration for enums
