@@ -35,6 +35,7 @@ def test_generate_proto():
             search_request=simple_pb2.SearchRequest(
                 query="hello", page_number=0, result_per_page=10
             ),
+            string_values=["1", "B", "ABC"],
         ),
         simple_pb2.SimpleMessage(),
     ]
@@ -56,3 +57,4 @@ def test_generate_proto():
         {"query": "hello", "page_number": 0, "result_per_page": 10},
         None,
     ]
+    assert table["string_values"].to_pylist() == [[], [], ["1", "B", "ABC"], []]

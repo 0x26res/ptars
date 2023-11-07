@@ -48,6 +48,8 @@ message SimpleMessage {
   repeated sfixed32 sfixed32_values = 30;
   repeated sfixed64 sfixed64_values = 31;
   repeated bool bool_values = 32;
+  repeated string string_values = 33;
+
 
   SearchRequest search_request = 40;
 }

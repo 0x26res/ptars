@@ -13,8 +13,8 @@ use arrow_array::{
 use arrow_schema::{DataType, Field};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
-    RuntimeFieldType, RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectFieldRef, ReflectRepeatedRef,
+    ReflectValueRef, RuntimeFieldType, RuntimeType,
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
@@ -50,6 +50,16 @@ impl StringBuilder {
             None => {}
             Some(x) => self.values.push_str(x.to_str().unwrap()),
         }
+    }
+
+    fn append_ref(&mut self, reflect_value_ref: ReflectValueRef) {
+        self.offsets
+            .push(i32::from_usize(self.values.len()).unwrap());
+        self.values.push_str(reflect_value_ref.to_str().unwrap())
+    }
+
+    fn len(&self) -> usize {
+        return self.offsets.len();
     }
 
     fn build(&mut self) -> Arc<dyn Array> {
@@ -197,12 +207,6 @@ fn nested_messages_to_array(
         is_valid.push(field.has_field(message.as_ref()));
     }
     let arrays = fields_to_arrays(&nested_messages, message_descriptor);
-    // for array in arrays {
-    //     let  name = array.0.name().clone();
-    //     let size = array.1.len();
-    //     println!("!!!! {name} {size}");
-    // }
-    // return Arc::new(BooleanArray::from(is_valid))
     return Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))));
 }
 
@@ -301,7 +305,30 @@ fn repeated_field_to_array(
             DataType::Boolean,
             &ReflectValueRef::to_bool,
         ),
-        RuntimeType::String => Err("String not supported"),
+        RuntimeType::String => {
+            let mut string_builder = StringBuilder::new();
+            let mut offsets: Vec<i32> = Vec::new();
+            offsets.push(0);
+            for message in messages {
+                if field.has_field(message.as_ref()) {
+                    let repeated_ref: ReflectRepeatedRef = field.get_repeated(message.as_ref());
+                    for index in 0..repeated_ref.len() {
+                        let value_ref = repeated_ref.get(index);
+                        string_builder.append_ref(value_ref)
+                    }
+                }
+                offsets.push(i32::from_usize(string_builder.len()).unwrap());
+            }
+            let list_data_type =
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)));
+            let list_data = ArrayData::builder(list_data_type)
+                .len(messages.len())
+                .add_buffer(Buffer::from_iter(offsets))
+                .add_child_data(string_builder.build().to_data())
+                .build()
+                .unwrap();
+            return Ok(Arc::new(ListArray::from(list_data)));
+        }
         RuntimeType::VecU8 => Err("VecU8 not supported"),
         RuntimeType::Enum(_) => Err("Enum not supported"),
         RuntimeType::Message(_) => Err("Message not supported"),
