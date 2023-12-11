@@ -10,7 +10,7 @@ Protobuf to Arrow, using Rust
 python3 -m venv --clear env
 source env/bin/activate
 poetry install
-python ./script/protoc.py
+python ./scripts/protoc.py
 ```
 ### Special case for ARM mac
 
@@ -21,9 +21,7 @@ export CARGO_BUILD_TARGET=x86_64-apple-darwin
 ```
 
 ```shell
-cargo build
-maturin develop
-pytest test
+cargo build && maturin develop && pytest test
 ```
 
 

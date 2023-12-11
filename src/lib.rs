@@ -221,6 +221,8 @@ fn nested_messages_to_array(
         );
         is_valid.push(field.has_field(message.as_ref()));
     }
+    println!("!!! {}", message_descriptor.full_name().to_string());
+
     let arrays = fields_to_arrays(&nested_messages, message_descriptor);
     return Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))));
 }
