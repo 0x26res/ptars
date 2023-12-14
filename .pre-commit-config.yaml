@@ -22,6 +22,7 @@ repos:
     rev: 1.7.5
     hooks:
       - id: bandit
+        files: "^ptars/.*.py$"
         additional_dependencies:
           - ".[toml]"
         args: ["--config=pyproject.toml"]

@@ -1,7 +1,14 @@
+from test.random_generator import generate_messages
+
 import pyarrow as pa
+import pytest
+from google.protobuf.message import Message
 
 from ptars import HandlerPool
 from ptars_protos import simple_pb2
+from ptars_protos.bench_pb2 import ExampleMessage
+
+MESSAGES = [ExampleMessage]
 
 
 def test_generate_proto():
@@ -51,7 +58,7 @@ def test_generate_proto():
         simple_pb2.SimpleMessage(),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
-    table = handler.list_to_table(message_payloads)
+    table = handler.list_to_record_batch(message_payloads)
 
     assert table["int64_value"].to_pylist() == [123, 0, 4, 0]
     assert table["uint32_value"].to_pylist() == [456, 789, 5, 0]
@@ -77,3 +84,15 @@ def test_generate_proto():
         [{"query": "", "page_number": 0, "result_per_page": 0}] * 4,
         [],
     ]
+
+
+@pytest.mark.parametrize("message_type", MESSAGES)
+def test_back_and_forth(message_type: type[Message]):
+    messages = generate_messages(message_type, 10)
+    payloads = [message.SerializeToString() for message in messages]
+
+    pool = HandlerPool()
+    handler = pool.get_for_message(message_type.DESCRIPTOR)
+    table = handler.list_to_record_batch(payloads)
+
+    assert isinstance(table, pa.RecordBatch)

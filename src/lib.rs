@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::ArrayData;
-use arrow::buffer::Buffer;
+use arrow::array::{ArrayData};
+use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
@@ -221,10 +221,13 @@ fn nested_messages_to_array(
         );
         is_valid.push(field.has_field(message.as_ref()));
     }
-    println!("!!! {}", message_descriptor.full_name().to_string());
-
     let arrays = fields_to_arrays(&nested_messages, message_descriptor);
-    return Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))));
+    return if arrays.is_empty() {
+        Arc::new(StructArray::new_empty_fields(nested_messages.len(), Some(NullBuffer::from_iter(is_valid))))
+    }
+    else {
+        Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
+    }
 }
 
 fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
@@ -376,6 +379,7 @@ fn repeated_field_to_array(
             DataType::Int32,
             &ReflectValueRef::to_enum_value,
         ),
+
         RuntimeType::Message(message_descriptor) => {
             let mut repeated_messages: Vec<Box<dyn MessageDyn>> = Vec::new();
             let mut offsets: Vec<i32> = Vec::new();
@@ -390,7 +394,13 @@ fn repeated_field_to_array(
                 }
                 offsets.push(i32::from_usize(repeated_messages.len()).unwrap());
             }
-            let struct_array = Arc::new(StructArray::from(fields_to_arrays(&repeated_messages, message_descriptor)));
+
+            let arrays = fields_to_arrays(&repeated_messages, message_descriptor);
+            let struct_array: Arc<StructArray>  = if arrays.is_empty() {
+                Arc::new(StructArray::new_empty_fields(repeated_messages.len(), None))
+            }  else {
+                Arc::new(StructArray::from(arrays))
+            };
             let list_data_type =
                 DataType::List(Arc::new(Field::new("item", struct_array.data_type().clone(), false)));
             let list_data: ArrayData = ArrayData::builder(list_data_type)
@@ -411,7 +421,7 @@ fn field_to_array(
     return match field.runtime_field_type() {
         RuntimeFieldType::Singular(x) => singular_field_to_array(field, &x, messages),
         RuntimeFieldType::Repeated(x) => repeated_field_to_array(field, &x, messages),
-        RuntimeFieldType::Map(_, _) => Err("repeated not supported"),
+        RuntimeFieldType::Map(_, _) => Err("map not supported"),
     };
 }
 
@@ -459,7 +469,7 @@ fn fields_to_arrays(
 
 #[pymethods]
 impl MessageHandler {
-    fn list_to_table(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
+    fn list_to_record_batch(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
         let messages: Vec<Box<dyn MessageDyn>> = values
             .iter()
             .map(|x| {
@@ -470,7 +480,12 @@ impl MessageHandler {
             .collect();
         let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
             fields_to_arrays(&messages, &self.message_descriptor);
-        let batch = RecordBatch::from(StructArray::from(arrays));
+        let struct_array = if arrays.is_empty() {
+            StructArray::new_empty_fields(messages.len(), None)
+        } else {
+            StructArray::from(arrays)
+        };
+        let batch = RecordBatch::from(StructArray::from(struct_array));
         return batch.to_pyarrow(py);
     }
 }
