@@ -1,15 +1,14 @@
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 
-use arrow::array::{ArrayData};
+use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
-use arrow_array::{
-    Array, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    ListArray, StringArray, StructArray, UInt32Array, UInt64Array,
-};
+use arrow_array::{Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, ListArray, PrimitiveArray, Scalar, StringArray, StructArray, TimestampNanosecondArray, UInt32Array, UInt64Array};
+use arrow_array::types::Int64Type;
 use arrow_schema::{DataType, Field};
 use protobuf::{Message, MessageDyn};
 use protobuf::descriptor::FileDescriptorProto;
@@ -204,8 +203,32 @@ fn singular_field_to_array(
     };
 }
 
+fn convert_timestamps(
+    arrays: &Vec<(Arc<Field>, Arc<dyn Array>)>
+) -> Arc<TimestampNanosecondArray> {
+    let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
+    let seconds:  Arc<dyn Array> = arrays[0].clone().1;
+    let nanos:  Arc<dyn Array> = arrays[1].clone().1;
+    let casted = arrow::compute::kernels::cast(
+        &nanos,
+        &DataType::Int64,
+    ).unwrap();
+    let multiplied = arrow::compute::kernels::numeric::mul(
+        &casted,
+        &scalar,
+    ).unwrap();
+    let total: ArrayRef = arrow::compute::kernels::numeric::add(
+        &multiplied,
+        &seconds,
+    ).unwrap();
+
+    Arc::new(
+        Int64Array::from(total.deref().to_data()).reinterpret_cast()
+    )
+}
+
 fn nested_messages_to_array(
-    field: &FieldDescriptor,
+    field: & FieldDescriptor,
     message_descriptor: &MessageDescriptor,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Arc<dyn Array> {
@@ -221,13 +244,14 @@ fn nested_messages_to_array(
         );
         is_valid.push(field.has_field(message.as_ref()));
     }
-    let arrays = fields_to_arrays(&nested_messages, message_descriptor);
+    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> = fields_to_arrays(&nested_messages, message_descriptor);
     return if arrays.is_empty() {
         Arc::new(StructArray::new_empty_fields(nested_messages.len(), Some(NullBuffer::from_iter(is_valid))))
-    }
-    else {
+    } else if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+        convert_timestamps(&arrays)
+    } else {
         Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
-    }
+    };
 }
 
 fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
@@ -396,9 +420,9 @@ fn repeated_field_to_array(
             }
 
             let arrays = fields_to_arrays(&repeated_messages, message_descriptor);
-            let struct_array: Arc<StructArray>  = if arrays.is_empty() {
+            let struct_array: Arc<StructArray> = if arrays.is_empty() {
                 Arc::new(StructArray::new_empty_fields(repeated_messages.len(), None))
-            }  else {
+            } else {
                 Arc::new(StructArray::from(arrays))
             };
             let list_data_type =
@@ -410,7 +434,7 @@ fn repeated_field_to_array(
                 .build()
                 .unwrap();
             return Ok(Arc::new(ListArray::from(list_data)));
-        },
+        }
     };
 }
 
@@ -451,7 +475,7 @@ fn field_to_tuple(
                     is_nullable(field),
                 )),
                 array,
-            ))
+            ));
         }
         Err(x) => Err(x),
     };
