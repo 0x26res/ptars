@@ -7,17 +7,21 @@ use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
-use arrow_array::{Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, ListArray, PrimitiveArray, Scalar, StringArray, StructArray, TimestampNanosecondArray, UInt32Array, UInt64Array};
 use arrow_array::types::Int64Type;
+use arrow_array::{
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
+    ListArray, PrimitiveArray, Scalar, StringArray, StructArray, TimestampNanosecondArray,
+    UInt32Array, UInt64Array,
+};
 use arrow_schema::{DataType, Field};
-use protobuf::{Message, MessageDyn};
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef,
-    ReflectValueRef, RuntimeFieldType, RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
+    RuntimeFieldType, RuntimeType,
 };
-use pyo3::{pyclass, pymethods, wrap_pyfunction};
+use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
+use pyo3::{pyclass, pymethods, wrap_pyfunction};
 
 #[pyclass]
 struct MessageHandler {
@@ -75,7 +79,6 @@ impl StringBuilder {
         return Arc::new(StringArray::from(array_data));
     }
 }
-
 
 struct BinaryBuilder {
     values: Vec<u8>,
@@ -203,32 +206,19 @@ fn singular_field_to_array(
     };
 }
 
-fn convert_timestamps(
-    arrays: &Vec<(Arc<Field>, Arc<dyn Array>)>
-) -> Arc<TimestampNanosecondArray> {
+fn convert_timestamps(arrays: &Vec<(Arc<Field>, Arc<dyn Array>)>) -> Arc<TimestampNanosecondArray> {
     let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
-    let seconds:  Arc<dyn Array> = arrays[0].clone().1;
-    let nanos:  Arc<dyn Array> = arrays[1].clone().1;
-    let casted = arrow::compute::kernels::cast(
-        &nanos,
-        &DataType::Int64,
-    ).unwrap();
-    let multiplied = arrow::compute::kernels::numeric::mul(
-        &casted,
-        &scalar,
-    ).unwrap();
-    let total: ArrayRef = arrow::compute::kernels::numeric::add(
-        &multiplied,
-        &seconds,
-    ).unwrap();
+    let seconds: Arc<dyn Array> = arrays[0].clone().1;
+    let nanos: Arc<dyn Array> = arrays[1].clone().1;
+    let casted = arrow::compute::kernels::cast(&nanos, &DataType::Int64).unwrap();
+    let multiplied = arrow::compute::kernels::numeric::mul(&casted, &scalar).unwrap();
+    let total: ArrayRef = arrow::compute::kernels::numeric::add(&multiplied, &seconds).unwrap();
 
-    Arc::new(
-        Int64Array::from(total.deref().to_data()).reinterpret_cast()
-    )
+    Arc::new(Int64Array::from(total.deref().to_data()).reinterpret_cast())
 }
 
 fn nested_messages_to_array(
-    field: & FieldDescriptor,
+    field: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Arc<dyn Array> {
@@ -244,9 +234,13 @@ fn nested_messages_to_array(
         );
         is_valid.push(field.has_field(message.as_ref()));
     }
-    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> = fields_to_arrays(&nested_messages, message_descriptor);
+    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
+        fields_to_arrays(&nested_messages, message_descriptor);
     return if arrays.is_empty() {
-        Arc::new(StructArray::new_empty_fields(nested_messages.len(), Some(NullBuffer::from_iter(is_valid))))
+        Arc::new(StructArray::new_empty_fields(
+            nested_messages.len(),
+            Some(NullBuffer::from_iter(is_valid)),
+        ))
     } else if message_descriptor.full_name() == "google.protobuf.Timestamp" {
         convert_timestamps(&arrays)
     } else {
@@ -425,8 +419,11 @@ fn repeated_field_to_array(
             } else {
                 Arc::new(StructArray::from(arrays))
             };
-            let list_data_type =
-                DataType::List(Arc::new(Field::new("item", struct_array.data_type().clone(), false)));
+            let list_data_type = DataType::List(Arc::new(Field::new(
+                "item",
+                struct_array.data_type().clone(),
+                false,
+            )));
             let list_data: ArrayData = ArrayData::builder(list_data_type)
                 .len(messages.len())
                 .add_buffer(Buffer::from_iter(offsets))
