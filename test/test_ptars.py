@@ -96,3 +96,5 @@ def test_back_and_forth(message_type: type[Message]):
     table = handler.list_to_record_batch(payloads)
 
     assert isinstance(table, pa.RecordBatch)
+    print(table["date_value"].to_pylist())
+    print([m.date_value for m in messages])

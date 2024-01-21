@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::iter::zip;
 use std::ops::Deref;
+use std::os::unix::raw::off_t;
 use std::sync::Arc;
 
 use arrow::array::ArrayData;
@@ -7,13 +9,15 @@ use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::ToPyArrow;
 use arrow::record_batch::RecordBatch;
+use arrow_array::builder::Int32Builder;
 use arrow_array::types::Int64Type;
 use arrow_array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    ListArray, PrimitiveArray, Scalar, StringArray, StructArray, TimestampNanosecondArray,
-    UInt32Array, UInt64Array,
+    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array,
+    Int32Array, Int64Array, ListArray, PrimitiveArray, Scalar, StringArray, StructArray,
+    TimestampNanosecondArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field};
+use chrono::Datelike;
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
     FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
@@ -22,6 +26,8 @@ use protobuf::reflect::{
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
 use pyo3::{pyclass, pymethods, wrap_pyfunction};
+
+static CE_OFFSET: i32 = 719163;
 
 #[pyclass]
 struct MessageHandler {
@@ -206,6 +212,50 @@ fn singular_field_to_array(
     };
 }
 
+fn read_i32(message: &dyn MessageDyn, field_descriptor: &FieldDescriptor) -> i32 {
+    return match field_descriptor.get_singular(message) {
+        None => 0,
+        Some(x) => x.to_i32().unwrap(),
+    };
+}
+
+fn convert_date(
+    messages: &Vec<Box<dyn MessageDyn>>,
+    is_valid: &Vec<bool>,
+    message_descriptor: &MessageDescriptor,
+) -> Arc<Date32Array> {
+    let year_descriptor = message_descriptor.field_by_name("year").unwrap();
+    let month_descriptor = message_descriptor.field_by_name("month").unwrap();
+    let day_descriptor = message_descriptor.field_by_name("day").unwrap();
+
+    let mut builder = Int32Builder::new();
+    for (message, message_valid) in zip(messages, is_valid) {
+        if *message_valid {
+            let year: i32 = read_i32(message.deref(), &year_descriptor);
+            let month: i32 = read_i32(message.deref(), &month_descriptor);
+            let day: i32 = read_i32(message.deref(), &day_descriptor);
+
+            if (year == 0) && (month == 0) && (day == 0) {
+                builder.append_value(0)
+            } else {
+                builder.append_value(
+                    chrono::NaiveDate::from_ymd_opt(
+                        year,
+                        u32::try_from(month).unwrap(),
+                        u32::try_from(day).unwrap(),
+                    )
+                    .unwrap()
+                    .num_days_from_ce()
+                        - CE_OFFSET,
+                )
+            }
+        } else {
+            builder.append_null()
+        }
+    }
+    Arc::new(builder.finish().reinterpret_cast())
+}
+
 fn convert_timestamps(arrays: &Vec<(Arc<Field>, Arc<dyn Array>)>) -> Arc<TimestampNanosecondArray> {
     let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
@@ -234,18 +284,22 @@ fn nested_messages_to_array(
         );
         is_valid.push(field.has_field(message.as_ref()));
     }
-    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
-        fields_to_arrays(&nested_messages, message_descriptor);
-    return if arrays.is_empty() {
-        Arc::new(StructArray::new_empty_fields(
-            nested_messages.len(),
-            Some(NullBuffer::from_iter(is_valid)),
-        ))
-    } else if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-        convert_timestamps(&arrays)
+    if message_descriptor.full_name() == "google.type.Date" {
+        return convert_date(&nested_messages, &is_valid, &message_descriptor);
     } else {
-        Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
-    };
+        let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
+            fields_to_arrays(&nested_messages, message_descriptor);
+        return if arrays.is_empty() {
+            Arc::new(StructArray::new_empty_fields(
+                nested_messages.len(),
+                Some(NullBuffer::from_iter(is_valid)),
+            ))
+        } else if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+            convert_timestamps(&arrays)
+        } else {
+            Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
+        };
+    }
 }
 
 fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
