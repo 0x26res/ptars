@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Deref;
 use std::os::unix::raw::off_t;
+use std::panic::resume_unwind;
 use std::sync::Arc;
 
 use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
-use arrow::pyarrow::ToPyArrow;
+use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::builder::Int32Builder;
 use arrow_array::types::Int64Type;
@@ -25,7 +26,7 @@ use protobuf::reflect::{
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
-use pyo3::{pyclass, pymethods, wrap_pyfunction};
+use pyo3::{pyclass, pymethods, wrap_pyfunction, PyAny};
 
 static CE_OFFSET: i32 = 719163;
 
@@ -562,6 +563,12 @@ impl MessageHandler {
         };
         let batch = RecordBatch::from(StructArray::from(struct_array));
         return batch.to_pyarrow(py);
+    }
+
+    fn record_batch_to_array(&self, record_batch: &PyAny, py: Python<'_>) -> PyResult<PyObject> {
+        let arrow_record_batch = RecordBatch::from_pyarrow(&record_batch);
+        let results = BinaryBuilder::new().build();
+        return results.to_data().to_pyarrow(py);
     }
 }
 

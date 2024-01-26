@@ -27,6 +27,7 @@ cargo build && maturin develop && RUST_BACKTRACE=1  pytest test
 
 ## TODO
 
+- [ ] arrow to proto
 - [ ] repeated messages
 - [ ] more generic 
 - [ ] add rust unit tests
@@ -35,7 +36,7 @@ cargo build && maturin develop && RUST_BACKTRACE=1  pytest test
 - [ ] maps
 - [ ] timestamp, date, wrapped types, duration
 - [ ] reuse protarrow tests
-- [ ] arrow to proto 
+ 
 
 ## Resources
 

@@ -93,8 +93,17 @@ def test_back_and_forth(message_type: type[Message]):
 
     pool = HandlerPool()
     handler = pool.get_for_message(message_type.DESCRIPTOR)
-    table = handler.list_to_record_batch(payloads)
+    record_batch = handler.list_to_record_batch(payloads)
 
-    assert isinstance(table, pa.RecordBatch)
-    print(table["date_value"].to_pylist())
+    assert isinstance(record_batch, pa.RecordBatch)
+    print(record_batch["date_value"].to_pylist())
     print([m.date_value for m in messages])
+
+
+def test_arrow_to_proto():
+    record_batch = pa.record_batch([[1, 2, 3]], ["col1"])
+    pool = HandlerPool()
+    handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
+    array = handler.record_batch_to_array(record_batch)
+    assert isinstance(array, pa.Array)
+    assert array.type == pa.binary()

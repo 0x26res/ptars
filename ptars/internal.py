@@ -28,6 +28,7 @@ class HandlerPool:
         self._pool = {}
 
     def get_for_message(self, descriptor: Descriptor) -> MessageHandler:
+        assert isinstance(descriptor, Descriptor)
         try:
             self._pool[descriptor.full_name]
         except KeyError:
