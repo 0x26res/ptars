@@ -6,7 +6,7 @@ all:
 env:
 	test -d env || python3 -m venv env
 	. env/bin/activate && \
-		python -m pip install maturin pytest
+		python -m pip install maturin pytest pyarrow googleapis-common-protos protobuf grpcio-tools
 
 
 .PHONY: develop
@@ -30,5 +30,5 @@ dist: env
 
 
 .PHONY: protoc
-dist: env
-	protoc
+protoc: env
+	. env/bin/activate && python scripts/protoc.py

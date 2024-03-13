@@ -22,8 +22,6 @@ jobs:
     strategy:
       matrix:
         python:
-          - "3.8"
-          - "3.9"
           - "3.10"
           - "3.11"
     runs-on: ubuntu-latest
@@ -35,7 +33,9 @@ jobs:
         python-version: ${{ matrix.python }}
 
     - name: Build
-      run: make develop
+      run: |
+        make develop
+        make protoc
 
     - name: Test
       run: make test

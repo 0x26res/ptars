@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Deref;
-use std::os::unix::raw::off_t;
-use std::panic::resume_unwind;
 use std::sync::Arc;
 
 use arrow::array::ArrayData;
@@ -69,7 +67,7 @@ impl StringBuilder {
     }
 
     fn len(&self) -> usize {
-        return self.offsets.len();
+        self.offsets.len()
     }
 
     fn build(&mut self) -> Arc<dyn Array> {
@@ -83,7 +81,7 @@ impl StringBuilder {
             .add_buffer(Buffer::from(self.values.as_str()))
             .build()
             .unwrap();
-        return Arc::new(StringArray::from(array_data));
+        Arc::new(StringArray::from(array_data))
     }
 }
 
@@ -107,7 +105,7 @@ impl BinaryBuilder {
             None => {}
             Some(x) => {
                 for c in x.to_bytes().unwrap() {
-                    self.values.push(c.clone())
+                    self.values.push(*c)
                 }
             }
         }
@@ -117,12 +115,12 @@ impl BinaryBuilder {
         self.offsets
             .push(i32::from_usize(self.values.len()).unwrap());
         for c in reflect_value_ref.to_bytes().unwrap() {
-            self.values.push(c.clone())
+            self.values.push(*c)
         }
     }
 
     fn len(&self) -> usize {
-        return self.offsets.len();
+        self.offsets.len()
     }
 
     fn build(&mut self) -> Arc<dyn Array> {
@@ -137,7 +135,7 @@ impl BinaryBuilder {
             .add_buffer(Buffer::from_iter(self.values.clone()))
             .build()
             .unwrap();
-        return Arc::new(BinaryArray::from(array_data));
+        Arc::new(BinaryArray::from(array_data))
     }
 }
 
@@ -146,7 +144,7 @@ fn singular_field_to_array(
     runtime_type: &RuntimeType,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<Arc<dyn Array>, &'static str> {
-    return match runtime_type {
+    match runtime_type {
         RuntimeType::I32 => Ok(read_primitive::<i32, Int32Array>(
             messages,
             field,
@@ -194,7 +192,7 @@ fn singular_field_to_array(
             for message in messages {
                 builder.append(message.as_ref(), field)
             }
-            return Ok(builder.build());
+            Ok(builder.build())
         }
         RuntimeType::VecU8 => {
             let mut builder = BinaryBuilder::new();
@@ -210,7 +208,7 @@ fn singular_field_to_array(
             0,
         )),
         RuntimeType::Message(x) => Ok(nested_messages_to_array(field, x, messages)),
-    };
+    }
 }
 
 fn read_i32(message: &dyn MessageDyn, field_descriptor: &FieldDescriptor) -> i32 {
@@ -257,7 +255,7 @@ fn convert_date(
     Arc::new(builder.finish().reinterpret_cast())
 }
 
-fn convert_timestamps(arrays: &Vec<(Arc<Field>, Arc<dyn Array>)>) -> Arc<TimestampNanosecondArray> {
+fn convert_timestamps(arrays: &[(Arc<Field>, Arc<dyn Array>)]) -> Arc<TimestampNanosecondArray> {
     let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
     let nanos: Arc<dyn Array> = arrays[1].clone().1;
@@ -286,11 +284,11 @@ fn nested_messages_to_array(
         is_valid.push(field.has_field(message.as_ref()));
     }
     if message_descriptor.full_name() == "google.type.Date" {
-        return convert_date(&nested_messages, &is_valid, &message_descriptor);
+        convert_date(&nested_messages, &is_valid, message_descriptor)
     } else {
         let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
             fields_to_arrays(&nested_messages, message_descriptor);
-        return if arrays.is_empty() {
+        if arrays.is_empty() {
             Arc::new(StructArray::new_empty_fields(
                 nested_messages.len(),
                 Some(NullBuffer::from_iter(is_valid)),
@@ -299,7 +297,7 @@ fn nested_messages_to_array(
             convert_timestamps(&arrays)
         } else {
             Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
-        };
+        }
     }
 }
 
@@ -317,7 +315,7 @@ fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
             Some(x) => values.push(extractor(&x).unwrap()),
         }
     }
-    return Arc::new(A::from(values));
+    Arc::new(A::from(values))
 }
 
 fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
@@ -346,7 +344,7 @@ fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
         .add_child_data(A::from(values).to_data())
         .build()
         .unwrap();
-    return Ok(Arc::new(ListArray::from(list_data)));
+    Ok(Arc::new(ListArray::from(list_data)))
 }
 
 fn repeated_field_to_array(
@@ -494,20 +492,16 @@ fn field_to_array(
     field: &FieldDescriptor,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<Arc<dyn Array>, &'static str> {
-    return match field.runtime_field_type() {
+    match field.runtime_field_type() {
         RuntimeFieldType::Singular(x) => singular_field_to_array(field, &x, messages),
         RuntimeFieldType::Repeated(x) => repeated_field_to_array(field, &x, messages),
         RuntimeFieldType::Map(_, _) => Err("map not supported"),
-    };
+    }
 }
 
 fn is_nullable(field: &FieldDescriptor) -> bool {
     match field.runtime_field_type() {
-        RuntimeFieldType::Singular(runtime_type) => match runtime_type {
-            RuntimeType::Message(_) => true,
-            _ => false,
-        },
-
+        RuntimeFieldType::Singular(runtime_type) => matches!(runtime_type, RuntimeType::Message(_)),
         RuntimeFieldType::Repeated(_) => false,
         RuntimeFieldType::Map(_, _) => false,
     }
@@ -539,7 +533,7 @@ fn fields_to_arrays(
 ) -> Vec<(Arc<Field>, Arc<dyn Array>)> {
     return message_descriptor
         .fields()
-        .map(|x| field_to_tuple(&x, &messages).unwrap())
+        .map(|x| field_to_tuple(&x, messages).unwrap())
         .collect();
 }
 
@@ -561,14 +555,14 @@ impl MessageHandler {
         } else {
             StructArray::from(arrays)
         };
-        let batch = RecordBatch::from(StructArray::from(struct_array));
-        return batch.to_pyarrow(py);
+        let batch = RecordBatch::from(struct_array);
+        batch.to_pyarrow(py)
     }
 
     fn record_batch_to_array(&self, record_batch: &PyAny, py: Python<'_>) -> PyResult<PyObject> {
-        let arrow_record_batch = RecordBatch::from_pyarrow(&record_batch);
+        let _arrow_record_batch = RecordBatch::from_pyarrow(record_batch);
         let results = BinaryBuilder::new().build();
-        return results.to_data().to_pyarrow(py);
+        results.to_data().to_pyarrow(py)
     }
 }
 
@@ -618,7 +612,7 @@ impl ProtoCache {
         let file_descriptors: Vec<FileDescriptor> = file_descriptors_protos
             .iter()
             .rev()
-            .map(|x| self.get_or_create(&x))
+            .map(|x| self.get_or_create(x))
             .collect();
 
         let message_descriptor: MessageDescriptor = file_descriptors
@@ -627,7 +621,7 @@ impl ProtoCache {
             .message_by_full_name(message_name.as_str())
             .unwrap();
 
-        return PyResult::Ok(MessageHandler { message_descriptor });
+        Ok(MessageHandler { message_descriptor })
     }
 }
 
@@ -637,7 +631,7 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
     let col_2 = Arc::new(Float32Array::from_iter([1., 6.3, 4.])) as _;
 
     let batch = RecordBatch::try_from_iter([("col1", col_1), ("col_2", col_2)]).unwrap();
-    return batch.to_pyarrow(py);
+    batch.to_pyarrow(py)
 }
 
 #[pymodule]
@@ -676,6 +670,26 @@ mod tests {
         ])
         .reinterpret_cast();
 
+        assert_eq!(results.as_ref(), &expected)
+    }
+
+    #[test]
+    fn test_convert_timestamps_empty() {
+        let seconds_field = Arc::new(Field::new("seconds", DataType::Int64, true));
+        let nanos_field = Arc::new(Field::new("nanos", DataType::Int32, true));
+
+        let seconds_array: Arc<dyn Array> =
+            Arc::new(arrow::array::Int64Array::from(Vec::<i64>::new()));
+        let nanos_array: Arc<dyn Array> =
+            Arc::new(arrow::array::Int32Array::from(Vec::<i32>::new()));
+
+        let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
+
+        let results = convert_timestamps(&arrays);
+        assert_eq!(results.len(), 0);
+
+        let expected: TimestampNanosecondArray =
+            arrow::array::Int64Array::from(Vec::<i64>::new()).reinterpret_cast();
         assert_eq!(results.as_ref(), &expected)
     }
 }
