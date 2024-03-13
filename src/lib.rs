@@ -262,8 +262,8 @@ fn convert_timestamps(arrays: &Vec<(Arc<Field>, Arc<dyn Array>)>) -> Arc<Timesta
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
     let nanos: Arc<dyn Array> = arrays[1].clone().1;
     let casted = arrow::compute::kernels::cast(&nanos, &DataType::Int64).unwrap();
-    let multiplied = arrow::compute::kernels::numeric::mul(&casted, &scalar).unwrap();
-    let total: ArrayRef = arrow::compute::kernels::numeric::add(&multiplied, &seconds).unwrap();
+    let multiplied = arrow::compute::kernels::numeric::mul(&seconds, &scalar).unwrap();
+    let total: ArrayRef = arrow::compute::kernels::numeric::add(&multiplied, &casted).unwrap();
 
     Arc::new(Int64Array::from(total.deref().to_data()).reinterpret_cast())
 }
@@ -646,4 +646,36 @@ fn _lib(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<ProtoCache>()?;
     m.add_class::<MessageHandler>()?;
     PyResult::Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_timestamps() {
+        let seconds_field = Arc::new(Field::new("seconds", DataType::Int64, true));
+        let nanos_field = Arc::new(Field::new("nanos", DataType::Int32, true));
+
+        //let seconds = vec![1710330693i64, 1710330702i64];
+        let seconds_array: Arc<dyn Array> = Arc::new(arrow::array::Int64Array::from(vec![
+            1710330693i64,
+            1710330702i64,
+        ]));
+        let nanos_array: Arc<dyn Array> =
+            Arc::new(arrow::array::Int32Array::from(vec![1_000, 123_456_789]));
+
+        let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
+
+        let results = convert_timestamps(&arrays);
+        assert_eq!(results.len(), 2);
+
+        let expected: TimestampNanosecondArray = arrow::array::Int64Array::from(vec![
+            1710330693i64 * 1_000_000_000i64 + 1_000i64,
+            1710330702i64 * 1_000_000_000i64 + 123_456_789i64,
+        ])
+        .reinterpret_cast();
+
+        assert_eq!(results.as_ref(), &expected)
+    }
 }
