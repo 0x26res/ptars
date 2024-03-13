@@ -33,7 +33,9 @@ jobs:
         python-version: ${{ matrix.python }}
 
     - name: Build
-      run: make develop
+      run: |
+        make develop
+        make protoc
 
     - name: Test
       run: make test

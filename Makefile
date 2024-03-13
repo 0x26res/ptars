@@ -31,4 +31,4 @@ dist: env
 
 .PHONY: protoc
 dist: env
-	protoc
+	. env/bin/activate && python scripts/protoc.py
