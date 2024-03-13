@@ -678,4 +678,24 @@ mod tests {
 
         assert_eq!(results.as_ref(), &expected)
     }
+
+    #[test]
+    fn test_convert_timestamps_empty() {
+        let seconds_field = Arc::new(Field::new("seconds", DataType::Int64, true));
+        let nanos_field = Arc::new(Field::new("nanos", DataType::Int32, true));
+
+        let seconds_array: Arc<dyn Array> =
+            Arc::new(arrow::array::Int64Array::from(Vec::<i64>::new()));
+        let nanos_array: Arc<dyn Array> =
+            Arc::new(arrow::array::Int32Array::from(Vec::<i32>::new()));
+
+        let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
+
+        let results = convert_timestamps(&arrays);
+        assert_eq!(results.len(), 0);
+
+        let expected: TimestampNanosecondArray =
+            arrow::array::Int64Array::from(Vec::<i64>::new()).reinterpret_cast();
+        assert_eq!(results.as_ref(), &expected)
+    }
 }
