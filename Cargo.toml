@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.20.0" }
 arrow = { version = "50.0.0", features = ["pyarrow"] }
-arrow-array = { version = "50.0.0" }
+arrow-array = { version = "51.0.0" }
 arrow-schema = { version = "50.0.0" }
 protobuf = { version = "3.3.0" }
 chrono = { version = "0.4.31" }
