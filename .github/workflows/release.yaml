@@ -1,19 +1,10 @@
 name: "[ptars] Release"
-run-name: "Release ${{ inputs.tag }} / ${{ inputs.sha }}"
 
 on:
   release:
     types: [ published ]
     branches: [ master ]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "The version to tag, without the leading 'v'. If omitted, will initiate a dry run (no uploads)."
-        type: string
-      sha:
-        description: "The full sha of the commit to be released. If omitted, the latest commit on the default branch will be used."
-        default: ""
-        type: string
   pull_request:
     paths:
       - pyproject.toml
@@ -37,8 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -63,8 +52,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -84,7 +71,7 @@ jobs:
           path: dist
       - name: "Archive binary"
         run: |
-          ARCHIVE_FILE=ptars-${{ inputs.tag }}-aarch64-apple-darwin.tar.gz
+          ARCHIVE_FILE=ptars-*-aarch64-apple-darwin.tar.gz
           tar czvf $ARCHIVE_FILE -C target/aarch64-apple-darwin/release ptars
           shasum -a 256 $ARCHIVE_FILE > $ARCHIVE_FILE.sha256
       - name: "Upload binary"
@@ -101,7 +88,6 @@ jobs:
     needs:
       - macos-universal
     # If you don't set an input tag, it's a dry run (no uploads).
-    if: ${{ inputs.tag }}
     environment:
       name: release
     permissions:
