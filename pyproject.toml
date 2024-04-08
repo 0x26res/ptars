@@ -73,7 +73,7 @@ module-name = "ptars._lib"
 bindings = "pyo3"
 python-packages = ["ptars"]
 python-source = "python"
-exclude = ["python/test/**", ".**", "sdist/**"]
+exclude = ["python/test/**", ".**", "sdist/**", ".github/**"]
 
 [tool.isort]
 profile = "black"
