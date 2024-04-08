@@ -35,6 +35,7 @@ jobs:
           args: --out dist
       - name: "Test sdist"
         run: |
+          tar -ztvf dist/${{ env.PACKAGE_NAME }}-*.tar.gz
           pip install dist/${{ env.PACKAGE_NAME }}-*.tar.gz --force-reinstall
           python -c "import ptars"
       - name: "Upload sdist"

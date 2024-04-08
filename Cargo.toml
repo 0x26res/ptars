@@ -13,8 +13,14 @@ license = "Apache-2.0"
 publish = false # handled by GitHub Actions
 push = true
 
+
+[package.metadata.maturin]
+name = "ptars._lib"
+
+
 [lib]
 crate-type = ["cdylib"]
+name = "ptars"
 
 [dependencies]
 pyo3 = { version = "0.20.3" }

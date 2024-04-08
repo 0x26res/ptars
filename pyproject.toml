@@ -70,6 +70,10 @@ maturin = "^1.3.1"
 
 [tool.maturin]
 module-name = "ptars._lib"
+bindings = "pyo3"
+python-packages = ["ptars"]
+python-source = "python"
+exclude = ["python/test/**", ".**", "sdist/**"]
 
 [tool.isort]
 profile = "black"
