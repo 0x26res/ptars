@@ -17,7 +17,7 @@ push = true
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20.0" }
+pyo3 = { version = "0.20.3" }
 arrow = { version = "51.0.0", features = ["pyarrow"] }
 arrow-array = { version = "51.0.0" }
 arrow-schema = { version = "51.0.0" }
