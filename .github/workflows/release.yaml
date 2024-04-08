@@ -1,4 +1,5 @@
 name: "[ptars] Release"
+run-name: "Release ${{ inputs.tag }} / ${{ inputs.sha }}"
 
 on:
   release:
