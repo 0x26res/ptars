@@ -47,58 +47,50 @@ jobs:
           name: wheels-sdist
           path: dist
 
-
-  macos-universal:
+  macos:
     runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          architecture: x64
-      - name: "Build wheels - universal2"
+          python-version: ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Build wheels - x86_64
         uses: PyO3/maturin-action@v1
         with:
-          args: --release --locked --target universal2-apple-darwin --out dist
-      - name: "Test wheel - universal2"
+          target: x86_64
+          args: -i python --release --out dist
+      - name: Install build wheel - x86_64
         run: |
-          pip install dist/${{ env.PACKAGE_NAME }}-*universal2.whl --force-reinstall
-          python -c "import ptars"
-      - name: "Upload wheels"
-        uses: actions/upload-artifact@v4
+          pip install --force-reinstall dist/ptars*.whl
+          cd ~ && python -c 'import ptars'
+      - name: Build wheels - universal2
+        uses: PyO3/maturin-action@v1
         with:
-          name: wheels-aarch64-apple-darwin
+          args: -i python --release --universal2 --out dist
+      - name: Install build wheel - universal2
+        run: |
+          pip install --force-reinstall dist/ptars*_universal2.whl
+          cd ~ && python -c 'import ptars'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
           path: dist
-      - name: "Archive binary"
-        run: |
-          ARCHIVE_FILE=ptars-*-aarch64-apple-darwin.tar.gz
-          tar czvf $ARCHIVE_FILE -C target/aarch64-apple-darwin/release ptars
-          shasum -a 256 $ARCHIVE_FILE > $ARCHIVE_FILE.sha256
-      - name: "Upload binary"
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-aarch64-apple-darwin
-          path: |
-            *.tar.gz
-            *.sha256
 
   upload-release:
-    name: Upload to PyPI
+    name: Upload Release to PyPI
     runs-on: ubuntu-latest
-    needs:
-      - macos-universal
-    # If you don't set an input tag, it's a dry run (no uploads).
-    environment:
-      name: release
-    permissions:
-      # For pypi trusted publishing
-      id-token: write
+    needs: [macos]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          path: wheels
-          merge-multiple: true
+          name: wheels
       - name: Publish to PyPi
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
