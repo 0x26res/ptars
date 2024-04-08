@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "setuptools-rust", "maturin"]
+requires = ["setuptools", "setuptools-rust", "maturin", "protobuf"]
 build-backend = "maturin"
 
 [project]
@@ -41,10 +41,9 @@ python = ">=3.8"
 setuptools = "*"
 maturin = "*"
 pyarrow = "*"
-googleapis-common-protos = ">=1.53.0"
 protobuf = ">=3.20.1"
 setuptools-rust = "^0.10.6"
-grpcio-tools = ">=1.46.0"
+
 
 [tool.poetry.group.dev.dependencies]
 black = ">=22.10.0"
@@ -52,6 +51,7 @@ coverage = ">=6.5.0"
 flake8 = ">=5.0.4"
 git-changelog = ">=2.2.0"
 grpcio-tools = ">=1.46.0"
+googleapis-common-protos = ">=1.53.0"
 inflection = ">=0.5.1"
 isort = ">=5.10.1"
 mkdocs = ">=1.4.2"
