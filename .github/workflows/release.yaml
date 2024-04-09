@@ -135,5 +135,4 @@ jobs:
           skip-existing: true
           packages-dir: wheels
           verbose: true
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.PYPI_API_TOKEN }}
