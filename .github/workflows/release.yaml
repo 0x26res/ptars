@@ -93,10 +93,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [macos]
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
           name: wheels
           path: wheels
+      - name: List wheels
+        shell: bash
+        run: |
+          ls -ltr wheels/
       - name: Publish to PyPi
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
