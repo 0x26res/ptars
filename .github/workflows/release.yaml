@@ -82,7 +82,8 @@ jobs:
       matrix:
         python-version:
           - "3.11"
-        target: [x64, x86]
+        target:
+          - x64
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -143,7 +144,8 @@ jobs:
           [
             { version: "3.11", abi: "cp311-cp311" },
           ]
-        target: [aarch64, armv7]
+        target:  # TODO: armv7 not supported by pyarrow yet
+          - aarch64
     steps:
       - uses: actions/checkout@v3
       - name: Build Wheels
