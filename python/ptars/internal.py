@@ -1,3 +1,7 @@
+import warnings
+
+import pyarrow as pa
+from google._upb._message import Message, MessageMeta
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 
@@ -33,9 +37,17 @@ class HandlerPool:
         self._pool = {}
 
     def get_for_message(self, descriptor: Descriptor) -> MessageHandler:
+        if isinstance(descriptor, MessageMeta):
+            warnings.warn(
+                f"Received {MessageMeta.__name__} instead of {Descriptor.__name__}"
+            )
+            descriptor = descriptor.DESCRIPTOR
+        if not isinstance(descriptor, Descriptor):
+            raise TypeError(f"Expecting {Descriptor.__name__}")
+
         assert isinstance(descriptor, Descriptor)
         try:
-            self._pool[descriptor.full_name]
+            return self._pool[descriptor.full_name]
         except KeyError:
             file_descriptor = descriptor.file
 
@@ -46,3 +58,9 @@ class HandlerPool:
             )
             self._pool[descriptor.full_name] = message_handler
             return message_handler
+
+    def messages_to_record_batch(
+        self, messages: list[Message], descriptor: Descriptor
+    ) -> pa.RecordBatch:
+        handler = self.get_for_message(descriptor)
+        return handler.list_to_record_batch([m.SerializeToString() for m in messages])
