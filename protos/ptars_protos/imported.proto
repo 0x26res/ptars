@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "google/type/date.proto";
+
+
+enum ImportedEnum {
+  UNKNOWN_CORE_ENUM = 0;
+  CORE_ENUM_FOO = 1;
+  CORE_ENUM_BAR = 2;
+}
+
+message ImportedMessage {
+  string string_value = 1;
+  ImportedEnum imported_enum = 2;
+  google.protobuf.DoubleValue double_value = 3;
+  google.type.Date date  = 4;
+  google.protobuf.Timestamp timestamp  = 5;
+}
