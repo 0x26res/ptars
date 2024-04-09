@@ -106,6 +106,86 @@ jobs:
           name: wheels
           path: dist
 
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+        target: [x86_64, i686]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build Wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: -i python${{ matrix.python-version }} --release --out dist
+      - name: Install build wheel
+        if: matrix.target == 'x86_64'
+        run: |
+          pip install --force-reinstall dist/ptars*.whl
+          cd ~ && python -c 'import ptars'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+
+  linux-cross:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python:
+          [
+            { version: "3.11", abi: "cp311-cp311" },
+          ]
+        target: [aarch64, armv7]
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build Wheels
+        uses: PyO3/maturin-action@v1
+        env:
+          PYO3_CROSS_LIB_DIR: /opt/python/${{ matrix.python.abi }}/lib
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: -i python${{matrix.python.version}} --release --out dist
+      - uses: uraimo/run-on-arch-action@v2.2.0
+        name: Install build wheel
+        with:
+          arch: ${{ matrix.target }}
+          distro: ubuntu20.04
+          githubToken: ${{ github.token }}
+          # Mount the dist directory as /artifacts in the container
+          dockerRunArgs: |
+            --volume "${PWD}/dist:/artifacts"
+          install: |
+            apt update -y
+            apt install -y gcc musl-dev python3-dev # this is needed for psutil
+            apt install -y --no-install-recommends software-properties-common
+            add-apt-repository ppa:deadsnakes/ppa
+            apt update -y
+            PYTHON=python${{ matrix.python.version }}
+            apt install -y $PYTHON $PYTHON-distutils $PYTHON-venv
+          run: |
+            ls -lrth /artifacts
+            PYTHON=python${{ matrix.python.version }}
+            $PYTHON --version
+            $PYTHON -m venv venv
+            source venv/bin/activate
+            pip install --upgrade pip setuptools wheel
+            pip install --force-reinstall dist/ptars*.whl
+            cd ~ && python -c 'import ptars'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+
   upload-release:
     name: Upload Release to PyPI
     runs-on: ubuntu-latest
@@ -113,6 +193,8 @@ jobs:
       - sdist
       - macos
       - windows
+      - linux
+      - linux-cross
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v3
