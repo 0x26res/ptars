@@ -257,7 +257,7 @@ fn convert_date(
 
 fn convert_timestamps(
     arrays: &[(Arc<Field>, Arc<dyn Array>)],
-    is_valid: &Vec<bool>,
+    is_valid: &[bool],
 ) -> Arc<TimestampNanosecondArray> {
     let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
@@ -266,7 +266,7 @@ fn convert_timestamps(
     let multiplied = arrow::compute::kernels::numeric::mul(&seconds, &scalar).unwrap();
     let total: ArrayRef = arrow::compute::kernels::numeric::add(&multiplied, &casted).unwrap();
 
-    let is_valid_array = BooleanArray::from(is_valid.clone());
+    let is_valid_array = BooleanArray::from(is_valid.to_owned());
     let is_null = arrow::compute::not(&is_valid_array).unwrap();
     let total_nullable = arrow::compute::nullif(&total, &is_null).unwrap();
     Arc::new(Int64Array::from(total_nullable.deref().to_data()).reinterpret_cast())
