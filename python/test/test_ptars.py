@@ -1,8 +1,10 @@
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from ptars import HandlerPool
+from ptars._lib import MessageHandler
 from ptars_protos import simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
 from python.test.random_generator import generate_messages
@@ -10,10 +12,17 @@ from python.test.random_generator import generate_messages
 MESSAGES = [ExampleMessage]
 
 
-def test_generate_proto():
-    pool = HandlerPool()
+@pytest.fixture()
+def pool():
+    return HandlerPool()
 
-    handler = pool.get_for_message(simple_pb2.SimpleMessage.DESCRIPTOR)
+
+@pytest.fixture()
+def simple_message_handler(pool: HandlerPool) -> MessageHandler:
+    return pool.get_for_message(simple_pb2.SimpleMessage.DESCRIPTOR)
+
+
+def test_generate_proto(simple_message_handler):
     simple_pb2.SearchRequest()
     search_request = simple_pb2.SearchRequest(
         query="hello", page_number=0, result_per_page=10
@@ -57,7 +66,7 @@ def test_generate_proto():
         simple_pb2.SimpleMessage(),
     ]
     message_payloads = [p.SerializeToString() for p in protos]
-    table = handler.list_to_record_batch(message_payloads)
+    table = simple_message_handler.list_to_record_batch(message_payloads)
 
     assert table["int64_value"].to_pylist() == [123, 0, 4, 0]
     assert table["uint32_value"].to_pylist() == [456, 789, 5, 0]
@@ -86,23 +95,40 @@ def test_generate_proto():
 
 
 @pytest.mark.parametrize("message_type", MESSAGES)
-def test_back_and_forth(message_type: type[Message]):
+def test_back_and_forth(message_type: type[Message], pool):
+    handler = pool.get_for_message(message_type.DESCRIPTOR)
+
     messages = generate_messages(message_type, 10)
     payloads = [message.SerializeToString() for message in messages]
 
-    pool = HandlerPool()
-    handler = pool.get_for_message(message_type.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
 
     assert isinstance(record_batch, pa.RecordBatch)
-    print(record_batch["date_value"].to_pylist())
-    print([m.date_value for m in messages])
+    # print(record_batch["date_value"].to_pylist())
+    # print([m.date_value for m in messages])
 
 
-def test_arrow_to_proto():
+def test_arrow_to_proto(pool):
     record_batch = pa.record_batch([[1, 2, 3]], ["col1"])
-    pool = HandlerPool()
     handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
     array = handler.record_batch_to_array(record_batch)
     assert isinstance(array, pa.Array)
     assert array.type == pa.binary()
+
+
+def test_timestamp_missing(pool):
+    handler = pool.get_for_message(simple_pb2.WithTimestamp.DESCRIPTOR)
+    messages = [
+        simple_pb2.WithTimestamp(
+            timestamp=Timestamp(seconds=1712660619, nanos=123456789)
+        ),
+        simple_pb2.WithTimestamp(),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+    record_batch = handler.list_to_record_batch(payloads)
+
+    assert record_batch["timestamp"].is_null().to_pylist() == [False, True]
+    assert record_batch["timestamp"].cast(pa.int64()).to_pylist() == [
+        1712660619123456789,
+        None,
+    ]
