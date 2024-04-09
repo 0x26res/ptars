@@ -17,49 +17,44 @@ concurrency:
 
 env:
   PACKAGE_NAME: ptars
-  PYTHON_VERSION: "3.11"
   CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 10
   CARGO_TERM_COLOR: always
   RUSTUP_MAX_RETRIES: 10
 
 jobs:
-#  sdist:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/setup-python@v5
-#        with:
-#          python-version: ${{ env.PYTHON_VERSION }}
-#      - name: "Build sdist"
-#        uses: PyO3/maturin-action@v1
-#        with:
-#          command: sdist
-#          args: --out dist
-#      - name: "Test sdist"
-#        run: |
-#          tar -ztvf dist/${{ env.PACKAGE_NAME }}-*.tar.gz
-#          pip install dist/${{ env.PACKAGE_NAME }}-*.tar.gz --force-reinstall
-#          python -c "import ptars"
-#      - name: "Upload sdist"
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: wheels-sdist
-#          path: dist
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: "Build sdist"
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: "Test sdist"
+        run: |
+          tar -ztvf dist/${{ env.PACKAGE_NAME }}-*.tar.gz
+          pip install dist/${{ env.PACKAGE_NAME }}-*.tar.gz --force-reinstall
+          python -c "import ptars"
+      - name: "Upload sdist"
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist
 
   macos:
     runs-on: macos-latest
     strategy:
       matrix:
         python-version:
-          #- "3.8"
-          #- "3.9"
-          #- "3.10"
           - "3.11"
-          #- "3.12"
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - uses: dtolnay/rust-toolchain@stable
@@ -91,7 +86,7 @@ jobs:
   upload-release:
     name: Upload Release to PyPI
     runs-on: ubuntu-latest
-    needs: [macos]
+    needs: [macos, sdist]
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
