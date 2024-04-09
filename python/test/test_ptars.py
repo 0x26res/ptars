@@ -155,5 +155,7 @@ def test_example():
     pool = HandlerPool()
     handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
-    print()
-    print(record_batch.to_pandas().to_markdown(sys.stdout, index=False))
+    try:
+        record_batch.to_pandas().to_markdown(sys.stdout, index=False)
+    except ImportError:
+        pass
