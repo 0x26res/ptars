@@ -41,7 +41,7 @@ jobs:
           pip install dist/${{ env.PACKAGE_NAME }}-*.tar.gz --force-reinstall
           python -c "import ptars"
       - name: "Upload sdist"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: wheels
           path: dist
@@ -78,7 +78,36 @@ jobs:
           pip install --force-reinstall dist/ptars*_universal2.whl
           cd ~ && python -c 'import ptars'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.11"
+        target: [x64, x86]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.target }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: -i python --release --out dist
+      - name: Install build wheel
+        shell: bash
+        run: |
+          pip install --force-reinstall dist/ptars*.whl
+          cd ~ && python -c 'import ptars'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
         with:
           name: wheels
           path: dist
@@ -89,7 +118,7 @@ jobs:
     needs: [macos, sdist]
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           name: wheels
           path: wheels
