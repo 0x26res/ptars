@@ -1,15 +1,9 @@
 name: "[ptars] Release"
 
 on:
-  release:
-    types: [ published ]
-    branches: [ master ]
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - pyproject.toml
-      - Cargo.toml
-      - .github/workflows/release.yaml
+  push:
+    tags:
+      - v*
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
