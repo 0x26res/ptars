@@ -255,7 +255,10 @@ fn convert_date(
     Arc::new(builder.finish().reinterpret_cast())
 }
 
-fn convert_timestamps(arrays: &[(Arc<Field>, Arc<dyn Array>)]) -> Arc<TimestampNanosecondArray> {
+fn convert_timestamps(
+    arrays: &[(Arc<Field>, Arc<dyn Array>)],
+    is_valid: &Vec<bool>,
+) -> Arc<TimestampNanosecondArray> {
     let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
     let nanos: Arc<dyn Array> = arrays[1].clone().1;
@@ -263,7 +266,10 @@ fn convert_timestamps(arrays: &[(Arc<Field>, Arc<dyn Array>)]) -> Arc<TimestampN
     let multiplied = arrow::compute::kernels::numeric::mul(&seconds, &scalar).unwrap();
     let total: ArrayRef = arrow::compute::kernels::numeric::add(&multiplied, &casted).unwrap();
 
-    Arc::new(Int64Array::from(total.deref().to_data()).reinterpret_cast())
+    let is_valid_array = BooleanArray::from(is_valid.clone());
+    let is_null = arrow::compute::not(&is_valid_array).unwrap();
+    let total_nullable = arrow::compute::nullif(&total, &is_null).unwrap();
+    Arc::new(Int64Array::from(total_nullable.deref().to_data()).reinterpret_cast())
 }
 
 fn nested_messages_to_array(
@@ -294,7 +300,7 @@ fn nested_messages_to_array(
                 Some(NullBuffer::from_iter(is_valid)),
             ))
         } else if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-            convert_timestamps(&arrays)
+            convert_timestamps(&arrays, &is_valid)
         } else {
             Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
         }
@@ -656,22 +662,31 @@ mod tests {
         let seconds_array: Arc<dyn Array> = Arc::new(arrow::array::Int64Array::from(vec![
             1710330693i64,
             1710330702i64,
+            0i64,
         ]));
         let nanos_array: Arc<dyn Array> =
-            Arc::new(arrow::array::Int32Array::from(vec![1_000, 123_456_789]));
+            Arc::new(arrow::array::Int32Array::from(vec![1_000, 123_456_789, 0]));
 
         let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
 
-        let results = convert_timestamps(&arrays);
-        assert_eq!(results.len(), 2);
+        let valid = vec![true, true, false];
+        let results = convert_timestamps(&arrays, &valid);
+        assert_eq!(results.len(), 3);
 
         let expected: TimestampNanosecondArray = arrow::array::Int64Array::from(vec![
             1710330693i64 * 1_000_000_000i64 + 1_000i64,
             1710330702i64 * 1_000_000_000i64 + 123_456_789i64,
+            0,
         ])
         .reinterpret_cast();
 
-        assert_eq!(results.as_ref(), &expected)
+        let mask = BooleanArray::from(vec![false, false, true]);
+        let expected_with_null = arrow::compute::nullif(&expected, &mask).unwrap();
+
+        assert_eq!(
+            results.as_ref().to_data(),
+            expected_with_null.as_ref().to_data()
+        )
     }
 
     #[test]
@@ -685,8 +700,8 @@ mod tests {
             Arc::new(arrow::array::Int32Array::from(Vec::<i32>::new()));
 
         let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
-
-        let results = convert_timestamps(&arrays);
+        let valid: Vec<bool> = vec![];
+        let results = convert_timestamps(&arrays, &valid);
         assert_eq!(results.len(), 0);
 
         let expected: TimestampNanosecondArray =
