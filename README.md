@@ -1,46 +1,80 @@
+[![PyPI Version][pypi-image]][pypi-url]
+[![Python Version][versions-image]][versions-url]
+[![Github Stars][stars-image]][stars-url]
+[![codecov][codecov-image]][codecov-url]
+[![Build Status][build-image]][build-url]
+[![License][license-image]][license-url]
+[![Downloads][downloads-image]][downloads-url]
+[![Downloads][downloads-month-image]][downloads-month-url]
+[![Code style: black][codestyle-image]][codestyle-url]
+[![snyk][snyk-image]][snyk-url]
+
+
 # ptars
 
 Protobuf to Arrow, using Rust
 
-## Development
 
-### Set up venv
+## Example
 
-```shell
-python3 -m venv --clear env
-source env/bin/activate
-poetry install
-python ./scripts/protoc.py
-```
-### Special case for ARM mac
+Take a protobuf:
 
-Add this to your bash/rc profile
-
-```shell
-export CARGO_BUILD_TARGET=x86_64-apple-darwin
+```protobuf
+message SearchRequest {
+  string query = 1;
+  int32 page_number = 2;
+  int32 result_per_page = 3;
+}
 ```
 
-```shell
-cargo build && maturin develop && RUST_BACKTRACE=1  pytest test
+And convert serialized messages directly to `pyarrow.RecordBatch`:
+
+```python
+messages = [
+    SearchRequest(
+        query="protobuf to arrow",
+        page_number=0,
+        result_per_page=10,
+    ),
+    SearchRequest(
+        query="protobuf to arrow",
+        page_number=1,
+        result_per_page=10,
+    ),
+]
+payloads = [message.SerializeToString() for message in messages]
+
+pool = HandlerPool()
+handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+record_batch = handler.list_to_record_batch(payloads)
 ```
 
 
-## TODO
+| query             |   page_number |   result_per_page |
+|:------------------|--------------:|------------------:|
+| protobuf to arrow |             0 |                10 |
+| protobuf to arrow |             1 |                10 |
 
-- [ ] arrow to proto
-- [ ] repeated messages
-- [ ] more generic 
-- [ ] add rust unit tests
-- [ ] publish package
-- [ ] add configuration for enums
-- [ ] maps
-- [ ] timestamp, date, wrapped types, duration
-- [ ] reuse protarrow tests
- 
 
-## Resources
 
-- [Blog on how to develop](https://blog.yossarian.net/2020/08/02/Writing-and-publishing-a-python-module-in-rust?utm_source=pocket_saves) and [Corresponding repo](https://github.com/woodruffw/procmaps.py)
-- [PyO3 get started](https://pyo3.rs/v0.4.1/) and  [Pyo3 with poetry](https://github.com/nbigaouette/python-poetry-rust-wheel/)
-- [Maturin "Mixed Source"](https://www.maturin.rs/#mixed-rustpython-projects)
-- [arrow builder example](https://github.com/apache/arrow-rs/blob/master/arrow/examples/builders.rs)
+
+[pypi-image]: https://img.shields.io/pypi/v/ptars
+[pypi-url]: https://pypi.org/project/ptars/
+[build-image]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml/badge.svg
+[build-url]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml
+[stars-image]: https://img.shields.io/github/stars/0x26res/ptars
+[stars-url]: https://github.com/0x26res/ptars
+[versions-image]: https://img.shields.io/pypi/pyversions/ptars
+[versions-url]: https://pypi.org/project/ptars/
+[license-image]: http://img.shields.io/:license-Apache%202-blue.svg
+[license-url]: https://github.com/0x26res/ptars/blob/master/LICENSE
+[codecov-image]: https://codecov.io/gh/0x26res/ptars/branch/master/graph/badge.svg?token=XMFH27IL70
+[codecov-url]: https://codecov.io/gh/0x26res/ptars
+[downloads-image]: https://pepy.tech/badge/ptars
+[downloads-url]: https://static.pepy.tech/badge/ptars
+[downloads-month-image]: https://pepy.tech/badge/ptars/month
+[downloads-month-url]: https://static.pepy.tech/badge/ptars/month
+[codestyle-image]: https://img.shields.io/badge/code%20style-black-000000.svg
+[codestyle-url]: https://github.com/ambv/black
+[snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
+[snyk-url]: https://snyk.io/advisor/python/ptars

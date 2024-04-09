@@ -1,3 +1,5 @@
+import sys
+
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
@@ -7,6 +9,7 @@ from ptars import HandlerPool
 from ptars._lib import MessageHandler
 from ptars_protos import simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
+from ptars_protos.simple_pb2 import SearchRequest
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]
@@ -132,3 +135,27 @@ def test_timestamp_missing(pool):
         1712660619123456789,
         None,
     ]
+
+
+def test_example():
+    messages = [
+        SearchRequest(
+            query="protobuf to arrow",
+            page_number=0,
+            result_per_page=10,
+        ),
+        SearchRequest(
+            query="protobuf to arrow",
+            page_number=1,
+            result_per_page=10,
+        ),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+
+    pool = HandlerPool()
+    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+    record_batch = handler.list_to_record_batch(payloads)
+    try:
+        record_batch.to_pandas().to_markdown(sys.stdout, index=False)
+    except ImportError:
+        pass
