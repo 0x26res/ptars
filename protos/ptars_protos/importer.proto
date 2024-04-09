@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+import "ptars_protos/imported.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "google/type/date.proto";
+
+
+message ImporterMessage {
+  string string_value = 1;
+  ImportedEnum imported_enum = 2;
+  google.protobuf.DoubleValue double_value = 3;
+  google.type.Date date  = 4;
+  google.protobuf.Timestamp timestamp  = 5;
+  ImportedMessage imported_message = 6;
+}

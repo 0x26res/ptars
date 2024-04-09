@@ -38,7 +38,7 @@ def main():
         "--proto_path={}".format(_GOOGLE_COMMON_PROTOS_ROOT_DIR),
         "--proto_path={}".format(_GRPC_PROTOS_INCLUDE),
         "--proto_path={}".format(_SRC_DIR),
-        "--python_out={}".format(_OUT_DIR),
+        "--python_out={}".format(_ROOT_DIR),
     ] + proto_files
     print(" ".join(proto_args))
     run_protoc(proto_args)

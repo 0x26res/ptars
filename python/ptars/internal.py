@@ -14,16 +14,21 @@ def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:
     return file_descriptor.SerializeToString()
 
 
-def get_dependencies(
+def _get_dependencies(
     file_descriptor: FileDescriptor, results: list[FileDescriptor] = None
 ) -> list[FileDescriptor]:
+    """
+    Return list of FileDescriptor that this file depends on, including this one.
+
+    Results are in topological order (least dependent first).
+    """
     if results is None:
         results = []
-    results.append(file_descriptor)
     for dependency in file_descriptor.dependencies:
         if dependency not in results:
-            get_dependencies(dependency, results)
-    return results
+            _get_dependencies(dependency, results)
+    results.append(file_descriptor)
+    return results[::-1]
 
 
 class HandlerPool:
@@ -46,7 +51,7 @@ class HandlerPool:
         except KeyError:
             file_descriptor = descriptor.file
 
-            dependencies = get_dependencies(file_descriptor)
+            dependencies = _get_dependencies(file_descriptor)
             payloads = [_file_descriptor_to_bytes(d) for d in dependencies]
             message_handler = self._proto_cache.create_for_message(
                 "." + descriptor.full_name, payloads
