@@ -24,28 +24,28 @@ env:
   RUSTUP_MAX_RETRIES: 10
 
 jobs:
-  sdist:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: "Build sdist"
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
-      - name: "Test sdist"
-        run: |
-          tar -ztvf dist/${{ env.PACKAGE_NAME }}-*.tar.gz
-          pip install dist/${{ env.PACKAGE_NAME }}-*.tar.gz --force-reinstall
-          python -c "import ptars"
-      - name: "Upload sdist"
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-sdist
-          path: dist
+#  sdist:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: actions/setup-python@v5
+#        with:
+#          python-version: ${{ env.PYTHON_VERSION }}
+#      - name: "Build sdist"
+#        uses: PyO3/maturin-action@v1
+#        with:
+#          command: sdist
+#          args: --out dist
+#      - name: "Test sdist"
+#        run: |
+#          tar -ztvf dist/${{ env.PACKAGE_NAME }}-*.tar.gz
+#          pip install dist/${{ env.PACKAGE_NAME }}-*.tar.gz --force-reinstall
+#          python -c "import ptars"
+#      - name: "Upload sdist"
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: wheels-sdist
+#          path: dist
 
   macos:
     runs-on: macos-latest
@@ -96,6 +96,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: wheels
+          path: wheels
       - name: Publish to PyPi
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
