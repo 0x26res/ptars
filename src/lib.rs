@@ -565,6 +565,17 @@ impl MessageHandler {
         batch.to_pyarrow(py)
     }
 
+    fn just_convert(&self, values: Vec<Vec<u8>>, _py: Python<'_>) {
+        let _unused: Vec<Box<dyn MessageDyn>> = values
+            .iter()
+            .map(|x| {
+                self.message_descriptor
+                    .parse_from_bytes(x.as_slice())
+                    .unwrap()
+            })
+            .collect();
+    }
+
     fn record_batch_to_array(&self, record_batch: &PyAny, py: Python<'_>) -> PyResult<PyObject> {
         let _arrow_record_batch = RecordBatch::from_pyarrow(record_batch);
 
