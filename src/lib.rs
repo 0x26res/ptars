@@ -6,6 +6,7 @@ use std::sync::Arc;
 use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
+use arrow::ipc::List;
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::builder::Int32Builder;
@@ -543,6 +544,13 @@ fn fields_to_arrays(
         .collect();
 }
 
+fn extract_array(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &Vec<Box<dyn Message>>,
+) {
+}
+
 #[pymethods]
 impl MessageHandler {
     fn list_to_record_batch(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
@@ -577,8 +585,20 @@ impl MessageHandler {
     }
 
     fn record_batch_to_array(&self, record_batch: &PyAny, py: Python<'_>) -> PyResult<PyObject> {
-        let _arrow_record_batch = RecordBatch::from_pyarrow(record_batch);
+        let arrow_record_batch: RecordBatch = RecordBatch::from_pyarrow(record_batch).unwrap();
+        let records: Vec<Box<dyn Message>> = (0..arrow_record_batch.num_rows())
+            .map(|_| self.message_descriptor.new_instance())
+            .collect::<Vec<Box<dyn Message>>>();
 
+        self.message_descriptor
+            .fields()
+            .for_each(|field: FieldDescriptor| {
+                let column: Option<&ArrayRef> = arrow_record_batch.column_by_name(field.name());
+                match column {
+                    None => {}
+                    Some(_) => {}
+                }
+            });
         let results = BinaryBuilder::new().build();
         results.to_data().to_pyarrow(py)
     }
