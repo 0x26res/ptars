@@ -20,7 +20,7 @@ export CARGO_BUILD_TARGET=x86_64-apple-darwin
 ## Testing
 
 ```shell
-cargo build && maturin develop && RUST_BACKTRACE=1  pytest test
+cargo build && maturin develop && RUST_BACKTRACE=1 pytest python/test
 ```
 
 
