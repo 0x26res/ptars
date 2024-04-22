@@ -85,7 +85,7 @@ jobs:
         target:
           - x64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -114,7 +114,7 @@ jobs:
         python-version: ["3.11"]
         target: [x86_64, i686]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -147,7 +147,7 @@ jobs:
         target:  # TODO: armv7 not supported by pyarrow yet
           - aarch64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build Wheels
         uses: PyO3/maturin-action@v1
         env:
