@@ -24,6 +24,14 @@ cargo build && maturin develop && RUST_BACKTRACE=1 pytest python/test
 ```
 
 
+## Releasing
+
+- Update the version in [Cargo.toml](./Cargo.toml)
+- Update cargo lock file `cargo generate-lockfile`
+- Update the version in [pyproject.toml](./pyproject.toml)
+- Update the poetry lock file `poetry lock --no-update`
+- Tag and push the tag (don't forget to preprend a `v` to the version when tagging)
+
 ## TODO
 
 - [ ] arrow to proto
