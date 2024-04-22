@@ -199,7 +199,7 @@ jobs:
       - linux-cross
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: wheels
           path: wheels
