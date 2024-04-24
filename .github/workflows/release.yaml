@@ -85,8 +85,8 @@ jobs:
         target:
           - x64
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           architecture: ${{ matrix.target }}
@@ -114,9 +114,9 @@ jobs:
         python-version: ["3.11"]
         target: [x86_64, i686]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Build Wheels
@@ -147,7 +147,7 @@ jobs:
         target:  # TODO: armv7 not supported by pyarrow yet
           - aarch64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build Wheels
         uses: PyO3/maturin-action@v1
         env:
@@ -156,7 +156,7 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: auto
           args: -i python${{matrix.python.version}} --release --out dist
-      - uses: uraimo/run-on-arch-action@v2.2.0
+      - uses: uraimo/run-on-arch-action@v2.7.2
         name: Install build wheel
         with:
           arch: ${{ matrix.target }}
