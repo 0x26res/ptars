@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Deref;
@@ -6,7 +7,6 @@ use std::sync::Arc;
 use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
-use arrow::ipc::List;
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::builder::Int32Builder;
@@ -20,8 +20,8 @@ use arrow_schema::{DataType, Field};
 use chrono::Datelike;
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
-    RuntimeFieldType, RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueBox,
+    ReflectValueRef, RuntimeFieldType, RuntimeType,
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
@@ -544,11 +544,75 @@ fn fields_to_arrays(
         .collect();
 }
 
+// fn extract_singular_primitive<T, A: From<Vec<T>> + Array>(
+//     array: &ArrayRef,
+//     field_descriptor: &FieldDescriptor,
+//     messages: &Vec<Box<dyn MessageDyn>>,
+//     to_reflect_value: fn(T) -> ReflectValueBox,
+// ) {
+//     let casted_array: &A = array.as_any().downcast_ref::<A>().unwrap();
+//     casted_array.iter().enumerate().for_each(|(index, value)|
+//         match value {
+//             None => {}
+//             Some(x) => {
+//                 field_descriptor.set_singular_field(
+//                     messages.get(index).unwrap(),
+//                     to_reflect_value(x),
+//                 )
+//             }
+//         }
+//     )
+// }
+
+fn extract_singular_array(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &Vec<Box<dyn MessageDyn>>,
+    runtime_type: &RuntimeType,
+) {
+    match runtime_type {
+        RuntimeType::I32 => {
+            let integers: &Int32Array = array.as_any().downcast_ref().unwrap();
+            integers
+                .iter()
+                .enumerate()
+                .for_each(|(index, value)| match value {
+                    None => {}
+                    Some(x) => {
+                        let mut message: &Box<dyn MessageDyn> = messages.get(index).unwrap();
+                        field_descriptor.set_singular_field(&*message, ReflectValueBox::I32(x))
+                    }
+                })
+        }
+        RuntimeType::I64 => {
+            // extract_singular_primitive::<i64, Int64Array>(
+            //     &array, &field_descriptor, &messages, ReflectValueRef::I64,
+            // )
+        }
+        RuntimeType::U32 => {}
+        RuntimeType::U64 => {}
+        RuntimeType::F32 => {}
+        RuntimeType::F64 => {}
+        RuntimeType::Bool => {}
+        RuntimeType::String => {}
+        RuntimeType::VecU8 => {}
+        RuntimeType::Enum(_) => {}
+        RuntimeType::Message(_) => {}
+    }
+}
+
 fn extract_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &Vec<Box<dyn Message>>,
+    messages: &Vec<Box<dyn MessageDyn>>,
 ) {
+    match field_descriptor.runtime_field_type() {
+        RuntimeFieldType::Singular(x) => {
+            extract_singular_array(&array, &field_descriptor, &messages, &x)
+        }
+        RuntimeFieldType::Repeated(_) => {}
+        RuntimeFieldType::Map(_, _) => {}
+    }
 }
 
 #[pymethods]
@@ -586,17 +650,18 @@ impl MessageHandler {
 
     fn record_batch_to_array(&self, record_batch: &PyAny, py: Python<'_>) -> PyResult<PyObject> {
         let arrow_record_batch: RecordBatch = RecordBatch::from_pyarrow(record_batch).unwrap();
-        let records: Vec<Box<dyn Message>> = (0..arrow_record_batch.num_rows())
+        let messages: Vec<Box<dyn MessageDyn>> = (0..arrow_record_batch.num_rows())
             .map(|_| self.message_descriptor.new_instance())
-            .collect::<Vec<Box<dyn Message>>>();
+            .collect::<Vec<Box<dyn MessageDyn>>>();
 
         self.message_descriptor
             .fields()
-            .for_each(|field: FieldDescriptor| {
-                let column: Option<&ArrayRef> = arrow_record_batch.column_by_name(field.name());
+            .for_each(|field_descriptor: FieldDescriptor| {
+                let column: Option<&ArrayRef> =
+                    arrow_record_batch.column_by_name(field_descriptor.name());
                 match column {
                     None => {}
-                    Some(_) => {}
+                    Some(column) => extract_array(column, &field_descriptor, &messages),
                 }
             });
         let results = BinaryBuilder::new().build();
