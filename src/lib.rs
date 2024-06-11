@@ -24,7 +24,7 @@ use protobuf::reflect::{
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
-use pyo3::{pyclass, pymethods, wrap_pyfunction, PyAny};
+use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
 
 static CE_OFFSET: i32 = 719163;
 
@@ -576,9 +576,12 @@ impl MessageHandler {
             .collect();
     }
 
-    fn record_batch_to_array(&self, record_batch: &PyAny, py: Python<'_>) -> PyResult<PyObject> {
-        let _arrow_record_batch = RecordBatch::from_pyarrow(record_batch);
-
+    fn record_batch_to_array(
+        &self,
+        record_batch: &Bound<PyAny>,
+        py: Python<'_>,
+    ) -> PyResult<PyObject> {
+        let _arrow_record_batch = RecordBatch::from_pyarrow_bound(record_batch);
         let results = BinaryBuilder::new().build();
         results.to_data().to_pyarrow(py)
     }
@@ -653,7 +656,7 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
 }
 
 #[pymodule]
-fn _lib(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _lib(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_a_table))?;
     m.add_class::<ProtoCache>()?;
     m.add_class::<MessageHandler>()?;
