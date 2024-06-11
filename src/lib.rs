@@ -581,8 +581,7 @@ impl MessageHandler {
         record_batch: &Bound<PyAny>,
         py: Python<'_>,
     ) -> PyResult<PyObject> {
-        let _arrow_record_batch = RecordBatch::from_pyarrow_bound(&record_batch);
-
+        let _arrow_record_batch = RecordBatch::from_pyarrow_bound(record_batch);
         let results = BinaryBuilder::new().build();
         results.to_data().to_pyarrow(py)
     }
