@@ -1,7 +1,7 @@
-use std::any::Any;
 use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Deref;
+use std::panic::resume_unwind;
 use std::sync::Arc;
 
 use arrow::array::ArrayData;
@@ -118,6 +118,13 @@ impl BinaryBuilder {
         for c in reflect_value_ref.to_bytes().unwrap() {
             self.values.push(*c)
         }
+    }
+
+    fn append_message(&mut self, message: &Box<dyn MessageDyn>) {
+        let bytes = message.write_to_bytes_dyn().unwrap();
+        self.offsets.push(i32::from_usize(bytes.len()).unwrap());
+        println!("APPENDING {}", bytes.len());
+        self.values.extend(bytes);
     }
 
     fn len(&self) -> usize {
@@ -544,26 +551,6 @@ fn fields_to_arrays(
         .collect();
 }
 
-// fn extract_singular_primitive<T, A: From<Vec<T>> + Array>(
-//     array: &ArrayRef,
-//     field_descriptor: &FieldDescriptor,
-//     messages: &Vec<Box<dyn MessageDyn>>,
-//     to_reflect_value: fn(T) -> ReflectValueBox,
-// ) {
-//     let casted_array: &A = array.as_any().downcast_ref::<A>().unwrap();
-//     casted_array.iter().enumerate().for_each(|(index, value)|
-//         match value {
-//             None => {}
-//             Some(x) => {
-//                 field_descriptor.set_singular_field(
-//                     messages.get(index).unwrap(),
-//                     to_reflect_value(x),
-//                 )
-//             }
-//         }
-//     )
-// }
-
 fn extract_singular_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
@@ -572,6 +559,7 @@ fn extract_singular_array(
 ) {
     match runtime_type {
         RuntimeType::I32 => {
+            println!("{}", field_descriptor.name());
             let integers: &Int32Array = array.as_any().downcast_ref().unwrap();
             integers
                 .iter()
@@ -579,8 +567,17 @@ fn extract_singular_array(
                 .for_each(|(index, value)| match value {
                     None => {}
                     Some(x) => {
-                        let mut message: &Box<dyn MessageDyn> = messages.get(index).unwrap();
-                        field_descriptor.set_singular_field(&*message, ReflectValueBox::I32(x))
+                        // let mut m: Box<dyn MessageDyn> = m.new_instance();
+                        let mut message: Box<dyn MessageDyn> =
+                            messages.get(index).unwrap().clone_box();
+                        // let m: &mut dyn MessageDyn = &mut *m;
+                        let m: &mut dyn MessageDyn = &mut *message;
+                        // needs a &mut dyn MessageDyn
+                        println!("SETTING {}  {}", x, index);
+                        field_descriptor.set_singular_field(m, ReflectValueBox::I32(x));
+                        let v = field_descriptor.get_singular(m).unwrap();
+                        println!("SET TO {}  {}", v, index);
+                        println!("SIZE {}  {}", m.write_to_bytes_dyn().unwrap().len(), index);
                     }
                 })
         }
@@ -606,6 +603,7 @@ fn extract_array(
     field_descriptor: &FieldDescriptor,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) {
+    println!("!!!  {}", field_descriptor.name());
     match field_descriptor.runtime_field_type() {
         RuntimeFieldType::Singular(x) => {
             extract_singular_array(&array, &field_descriptor, &messages, &x)
@@ -664,8 +662,9 @@ impl MessageHandler {
                     Some(column) => extract_array(column, &field_descriptor, &messages),
                 }
             });
-        let results = BinaryBuilder::new().build();
-        results.to_data().to_pyarrow(py)
+        let mut results = BinaryBuilder::new();
+        messages.iter().for_each(|x| results.append_message(&x));
+        results.build().to_data().to_pyarrow(py)
     }
 }
 

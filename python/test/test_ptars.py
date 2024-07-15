@@ -112,11 +112,24 @@ def test_back_and_forth(message_type: type[Message], pool):
 
 
 def test_arrow_to_proto(pool):
-    record_batch = pa.record_batch([[1, 2, 3]], ["col1"])
+    record_batch = pa.record_batch([pa.array([1, 2, 3], pa.int32())], ["int32_value"])
     handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
     array = handler.record_batch_to_array(record_batch)
     assert isinstance(array, pa.Array)
     assert array.type == pa.binary()
+    assert len(array) == 3
+    m = ExampleMessage()
+    payload = array.to_pylist()[0]
+    m.FromString(payload)
+    assert len(payload) == 21
+    assert m == ExampleMessage(int32_value=1)
+
+    messages = [ExampleMessage.FromString(b.as_py()) for b in array]
+    assert messages == [
+        ExampleMessage(int32_value=1),
+        ExampleMessage(int32_value=2),
+        ExampleMessage(int32_value=3),
+    ]
 
 
 def test_timestamp_missing(pool):
