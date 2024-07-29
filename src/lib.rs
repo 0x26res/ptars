@@ -568,16 +568,30 @@ fn extract_singular_array(
                     None => {}
                     Some(x) => {
                         // let mut m: Box<dyn MessageDyn> = m.new_instance();
-                        let mut message: Box<dyn MessageDyn> =
-                            messages.get(index).unwrap().clone_box();
+                        let mut message: &dyn MessageDyn = messages.get(index).unwrap().as_ref();
                         // let m: &mut dyn MessageDyn = &mut *m;
-                        let m: &mut dyn MessageDyn = &mut *message;
+                        let m: &mut dyn MessageDyn = &mut message;
                         // needs a &mut dyn MessageDyn
                         println!("SETTING {}  {}", x, index);
                         field_descriptor.set_singular_field(m, ReflectValueBox::I32(x));
                         let v = field_descriptor.get_singular(m).unwrap();
                         println!("SET TO {}  {}", v, index);
                         println!("SIZE {}  {}", m.write_to_bytes_dyn().unwrap().len(), index);
+                        println!(
+                            "SIZE MESSAGE {}  {}",
+                            message.write_to_bytes_dyn().unwrap().len(),
+                            index
+                        );
+                        println!(
+                            "SIZE ARRAY {}  {}",
+                            messages
+                                .get(index)
+                                .unwrap()
+                                .write_to_bytes_dyn()
+                                .unwrap()
+                                .len(),
+                            index
+                        );
                     }
                 })
         }
