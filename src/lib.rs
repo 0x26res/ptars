@@ -569,10 +569,6 @@ fn set_primitive<P: ArrowPrimitiveType>(
         })
 }
 
-fn i64_rvb(value: i64) -> ReflectValueBox {
-    return ReflectValueBox::I64(value);
-}
-
 fn extract_singular_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
