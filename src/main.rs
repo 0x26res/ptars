@@ -4,6 +4,7 @@ use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::FileDescriptor;
 use protobuf::reflect::ReflectValueBox;
 use protobuf::MessageDyn;
+use tempfile;
 
 fn main() {
     // Here we define `.proto` file source, we are not generating rust sources for it.
@@ -42,6 +43,16 @@ fn main() {
     // Set field.
     aaa_field.set_singular_field(&mut *mmm, ReflectValueBox::I32(42));
 
+    let mut boxes: Vec<Box<dyn MessageDyn>> = Vec::new();
+    boxes.push(mmm.clone());
+    let mmm2: &mut dyn MessageDyn = boxes.get_mut(0).unwrap().as_mut();
+    //let _mmm4: &mut Box<dyn MessageDyn> = boxes.get(0).unwrap().as_mut();
+    //let mut mmm3 : Box<dyn MessageDyn>= mmm2.clone();
+    aaa_field.set_singular_field(&mut *mmm2, ReflectValueBox::I32(45));
+
+    aaa_field.set_singular_field(&mut *mmm.clone(), ReflectValueBox::I32(45));
+    aaa_field.set_singular_field(&mut *mmm.clone_box(), ReflectValueBox::I32(45));
+
     // Now serialize it to binary format.
     // field number = 1
     // wire_type = 0 (varint)
@@ -51,4 +62,7 @@ fn main() {
 
     // Print it as text format.
     assert_eq!("aaa: 42", protobuf::text_format::print_to_string(&*mmm));
+    assert_eq!("aaa: 45", protobuf::text_format::print_to_string(&*mmm2));
+    let _mmm4: &dyn MessageDyn = boxes.get(0).unwrap().as_ref();
+    assert_eq!("aaa: 45", protobuf::text_format::print_to_string(_mmm4));
 }
