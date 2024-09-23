@@ -25,7 +25,7 @@ use protobuf::reflect::{
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
-use pyo3::{pyclass, pymethods, wrap_pyfunction, PyAny};
+use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
 
 static CE_OFFSET: i32 = 719163;
 
@@ -751,7 +751,7 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
 }
 
 #[pymodule]
-fn _lib(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _lib(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pyfunction!(get_a_table))?;
     m.add_class::<ProtoCache>()?;
     m.add_class::<MessageHandler>()?;
