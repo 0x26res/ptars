@@ -188,3 +188,9 @@ def test_example():
         record_batch.to_pandas().to_markdown(sys.stdout, index=False)
     except ImportError:
         pass
+
+    array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
+    messages_back: list[SearchRequest] = [
+        SearchRequest.FromString(s.as_py()) for s in array
+    ]
+    assert messages_back == messages

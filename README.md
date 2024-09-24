@@ -1,3 +1,5 @@
+# ptars
+
 [![PyPI Version][pypi-image]][pypi-url]
 [![Python Version][versions-image]][versions-url]
 [![Github Stars][stars-image]][stars-url]
@@ -9,11 +11,7 @@
 [![Code style: black][codestyle-image]][codestyle-url]
 [![snyk][snyk-image]][snyk-url]
 
-
-# ptars
-
 Protobuf to Arrow, using Rust
-
 
 ## Example
 
@@ -30,6 +28,9 @@ message SearchRequest {
 And convert serialized messages directly to `pyarrow.RecordBatch`:
 
 ```python
+from ptars import HandlerPool
+
+
 messages = [
     SearchRequest(
         query="protobuf to arrow",
@@ -49,14 +50,19 @@ handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
 record_batch = handler.list_to_record_batch(payloads)
 ```
 
-
 | query             |   page_number |   result_per_page |
 |:------------------|--------------:|------------------:|
 | protobuf to arrow |             0 |                10 |
 | protobuf to arrow |             1 |                10 |
 
+You can also convert a `pyarrow.RecordBatch` back to serialized protobuf messages:
 
-
+```python
+array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
+messages_back: list[SearchRequest] = [
+    SearchRequest.FromString(s.as_py()) for s in array
+]
+```
 
 [pypi-image]: https://img.shields.io/pypi/v/ptars
 [pypi-url]: https://pypi.org/project/ptars/

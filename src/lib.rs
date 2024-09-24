@@ -118,7 +118,7 @@ impl BinaryBuilder {
         }
     }
 
-    fn append_message(&mut self, message: &Box<dyn MessageDyn>) {
+    fn append_message(&mut self, message: &dyn MessageDyn) {
         let bytes = message.write_to_bytes_dyn().unwrap();
         let offset = i32::from_usize(self.values.len()).unwrap();
         self.offsets.push(offset);
@@ -552,7 +552,7 @@ fn fields_to_arrays(
 
 fn set_primitive<P: ArrowPrimitiveType>(
     array: &ArrayRef,
-    messages: &mut Vec<Box<dyn MessageDyn>>,
+    messages: &mut [Box<dyn MessageDyn>],
     field_descriptor: &FieldDescriptor,
     rvb_creator: &dyn Fn(P::Native) -> ReflectValueBox,
 ) {
@@ -574,7 +574,7 @@ fn set_primitive<P: ArrowPrimitiveType>(
 fn extract_singular_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &mut Vec<Box<dyn MessageDyn>>,
+    messages: &mut [Box<dyn MessageDyn>],
     runtime_type: &RuntimeType,
 ) {
     match runtime_type {
@@ -672,11 +672,11 @@ fn extract_singular_array(
 fn extract_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &mut Vec<Box<dyn MessageDyn>>,
+    messages: &mut [Box<dyn MessageDyn>],
 ) {
     match field_descriptor.runtime_field_type() {
         RuntimeFieldType::Singular(x) => {
-            extract_singular_array(&array, &field_descriptor, messages, &x)
+            extract_singular_array(array, field_descriptor, messages, &x)
         }
         RuntimeFieldType::Repeated(_) => {}
         RuntimeFieldType::Map(_, _) => {}
@@ -738,7 +738,9 @@ impl MessageHandler {
                 }
             });
         let mut results = BinaryBuilder::new();
-        messages.iter().for_each(|x| results.append_message(&x));
+        messages
+            .iter()
+            .for_each(|x| results.append_message(x.deref()));
         results.build().to_data().to_pyarrow(py)
     }
 }
