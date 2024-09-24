@@ -9,18 +9,17 @@ use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::builder::Int32Builder;
-use arrow_array::types::Int64Type;
 use arrow_array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array,
-    Int32Array, Int64Array, ListArray, PrimitiveArray, Scalar, StringArray, StructArray,
-    TimestampNanosecondArray, UInt32Array, UInt64Array,
+    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Date32Array, Float32Array,
+    Float64Array, Int32Array, Int64Array, ListArray, PrimitiveArray, Scalar, StringArray,
+    StructArray, TimestampNanosecondArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
 use protobuf::descriptor::FileDescriptorProto;
 use protobuf::reflect::{
-    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueRef,
-    RuntimeFieldType, RuntimeType,
+    FieldDescriptor, FileDescriptor, MessageDescriptor, ReflectRepeatedRef, ReflectValueBox,
+    ReflectValueRef, RuntimeFieldType, RuntimeType,
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
@@ -117,6 +116,13 @@ impl BinaryBuilder {
         for c in reflect_value_ref.to_bytes().unwrap() {
             self.values.push(*c)
         }
+    }
+
+    fn append_message(&mut self, message: &dyn MessageDyn) {
+        let bytes = message.write_to_bytes_dyn().unwrap();
+        let offset = i32::from_usize(self.values.len()).unwrap();
+        self.offsets.push(offset);
+        self.values.extend(bytes);
     }
 
     fn len(&self) -> usize {
@@ -259,7 +265,8 @@ fn convert_timestamps(
     arrays: &[(Arc<Field>, Arc<dyn Array>)],
     is_valid: &[bool],
 ) -> Arc<TimestampNanosecondArray> {
-    let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
+    let scalar: Scalar<PrimitiveArray<arrow_array::types::Int64Type>> =
+        Int64Array::new_scalar(1_000_000_000);
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
     let nanos: Arc<dyn Array> = arrays[1].clone().1;
     let casted = arrow::compute::kernels::cast(&nanos, &DataType::Int64).unwrap();
@@ -543,6 +550,139 @@ fn fields_to_arrays(
         .collect();
 }
 
+fn set_primitive<P: ArrowPrimitiveType>(
+    array: &ArrayRef,
+    messages: &mut [Box<dyn MessageDyn>],
+    field_descriptor: &FieldDescriptor,
+    rvb_creator: &dyn Fn(P::Native) -> ReflectValueBox,
+) {
+    array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<P>>()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .for_each(|(index, value)| match value {
+            None => {}
+            Some(x) => {
+                let element: &mut dyn MessageDyn = messages.get_mut(index).unwrap().as_mut();
+                field_descriptor.set_singular_field(&mut *element, rvb_creator(x));
+            }
+        })
+}
+
+fn extract_singular_array(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [Box<dyn MessageDyn>],
+    runtime_type: &RuntimeType,
+) {
+    match runtime_type {
+        RuntimeType::I32 => {
+            set_primitive::<arrow_array::types::Int32Type>(
+                array,
+                messages,
+                field_descriptor,
+                &ReflectValueBox::I32,
+            );
+        }
+        RuntimeType::U32 => {
+            set_primitive::<arrow_array::types::UInt32Type>(
+                array,
+                messages,
+                field_descriptor,
+                &ReflectValueBox::U32,
+            );
+        }
+        RuntimeType::I64 => set_primitive::<arrow_array::types::Int64Type>(
+            array,
+            messages,
+            field_descriptor,
+            &ReflectValueBox::I64,
+        ),
+        RuntimeType::U64 => set_primitive::<arrow_array::types::UInt64Type>(
+            array,
+            messages,
+            field_descriptor,
+            &ReflectValueBox::U64,
+        ),
+        RuntimeType::F32 => set_primitive::<arrow_array::types::Float32Type>(
+            array,
+            messages,
+            field_descriptor,
+            &ReflectValueBox::F32,
+        ),
+        RuntimeType::F64 => set_primitive::<arrow_array::types::Float64Type>(
+            array,
+            messages,
+            field_descriptor,
+            &ReflectValueBox::F64,
+        ),
+        RuntimeType::Bool => {
+            // BooleanType doesn't implement primitive type
+            array
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .for_each(|(index, value)| match value {
+                    None => {}
+                    Some(x) => {
+                        let element: &mut dyn MessageDyn =
+                            messages.get_mut(index).unwrap().as_mut();
+                        field_descriptor
+                            .set_singular_field(&mut *element, ReflectValueBox::Bool(x));
+                    }
+                })
+        }
+        RuntimeType::String => array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .for_each(|(index, value)| match value {
+                None => {}
+                Some(x) => {
+                    let element: &mut dyn MessageDyn = messages.get_mut(index).unwrap().as_mut();
+                    field_descriptor
+                        .set_singular_field(&mut *element, ReflectValueBox::String(x.to_string()));
+                }
+            }),
+        RuntimeType::VecU8 => array
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .for_each(|(index, value)| match value {
+                None => {}
+                Some(x) => {
+                    let element: &mut dyn MessageDyn = messages.get_mut(index).unwrap().as_mut();
+                    field_descriptor
+                        .set_singular_field(&mut *element, ReflectValueBox::Bytes(x.to_vec()));
+                }
+            }),
+        RuntimeType::Enum(_) => {}
+        RuntimeType::Message(_) => {}
+    }
+}
+
+fn extract_array(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [Box<dyn MessageDyn>],
+) {
+    match field_descriptor.runtime_field_type() {
+        RuntimeFieldType::Singular(x) => {
+            extract_singular_array(array, field_descriptor, messages, &x)
+        }
+        RuntimeFieldType::Repeated(_) => {}
+        RuntimeFieldType::Map(_, _) => {}
+    }
+}
+
 #[pymethods]
 impl MessageHandler {
     fn list_to_record_batch(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
@@ -581,9 +721,27 @@ impl MessageHandler {
         record_batch: &Bound<PyAny>,
         py: Python<'_>,
     ) -> PyResult<PyObject> {
-        let _arrow_record_batch = RecordBatch::from_pyarrow_bound(record_batch);
-        let results = BinaryBuilder::new().build();
-        results.to_data().to_pyarrow(py)
+        let arrow_record_batch: RecordBatch =
+            RecordBatch::from_pyarrow_bound(record_batch).unwrap();
+        let mut messages: Vec<Box<dyn MessageDyn>> = (0..arrow_record_batch.num_rows())
+            .map(|_| self.message_descriptor.new_instance())
+            .collect::<Vec<Box<dyn MessageDyn>>>();
+
+        self.message_descriptor
+            .fields()
+            .for_each(|field_descriptor: FieldDescriptor| {
+                let column: Option<&ArrayRef> =
+                    arrow_record_batch.column_by_name(field_descriptor.name());
+                match column {
+                    None => {}
+                    Some(column) => extract_array(column, &field_descriptor, &mut messages),
+                }
+            });
+        let mut results = BinaryBuilder::new();
+        messages
+            .iter()
+            .for_each(|x| results.append_message(x.deref()));
+        results.build().to_data().to_pyarrow(py)
     }
 }
 

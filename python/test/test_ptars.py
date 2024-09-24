@@ -112,11 +112,40 @@ def test_back_and_forth(message_type: type[Message], pool):
 
 
 def test_arrow_to_proto(pool):
-    record_batch = pa.record_batch([[1, 2, 3]], ["col1"])
+    record_batch = pa.record_batch(
+        [
+            pa.array([33, 42, 17], pa.int32()),
+            pa.array([133, 142, 117], pa.int64()),
+            pa.array([True, False, None], pa.bool_()),
+            pa.array(["ABC", "", None], pa.utf8()),
+            pa.array([b"ABC", b"", None], pa.binary()),
+        ],
+        [
+            "int32_value",
+            "int64_value",
+            "bool_value",
+            "string_value",
+            "bytes_value",
+        ],
+    )
     handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
     array = handler.record_batch_to_array(record_batch)
     assert isinstance(array, pa.Array)
     assert array.type == pa.binary()
+    assert len(array) == 3
+
+    messages = [ExampleMessage.FromString(b.as_py()) for b in array]
+    assert messages == [
+        ExampleMessage(
+            int32_value=33,
+            int64_value=133,
+            bool_value=True,
+            string_value="ABC",
+            bytes_value=b"ABC",
+        ),
+        ExampleMessage(int32_value=42, int64_value=142),
+        ExampleMessage(int32_value=17, int64_value=117),
+    ]
 
 
 def test_timestamp_missing(pool):
@@ -159,3 +188,9 @@ def test_example():
         record_batch.to_pandas().to_markdown(sys.stdout, index=False)
     except ImportError:
         pass
+
+    array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
+    messages_back: list[SearchRequest] = [
+        SearchRequest.FromString(s.as_py()) for s in array
+    ]
+    assert messages_back == messages
