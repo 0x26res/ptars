@@ -41,7 +41,7 @@ jobs:
           path: dist
 
   macos:
-    runs-on: macos-latest
+    runs-on: macos-14
     strategy:
       matrix:
         python-version:
@@ -56,15 +56,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-      - name: Build wheels - x86_64
-        uses: PyO3/maturin-action@v1
-        with:
-          target: x86_64
-          args: -i python --release --out dist
-      - name: Install build wheel - x86_64
-        run: |
-          pip install --force-reinstall dist/ptars*.whl
-          cd ~ && python -c 'import ptars'
       - name: Build wheels - universal2
         uses: PyO3/maturin-action@v1
         with:
