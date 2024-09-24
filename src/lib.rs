@@ -1,8 +1,3 @@
-use std::collections::HashMap;
-use std::iter::zip;
-use std::ops::Deref;
-use std::sync::Arc;
-
 use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
@@ -23,7 +18,12 @@ use protobuf::reflect::{
 };
 use protobuf::{Message, MessageDyn};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
+use pyo3::types::PyModuleMethods;
 use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
+use std::collections::HashMap;
+use std::iter::zip;
+use std::ops::Deref;
+use std::sync::Arc;
 
 static CE_OFFSET: i32 = 719163;
 
@@ -76,8 +76,8 @@ impl StringBuilder {
 
         let array_data = ArrayData::builder(DataType::Utf8)
             .len(size)
-            .add_buffer(Buffer::from(self.offsets.to_byte_slice()))
-            .add_buffer(Buffer::from(self.values.as_str()))
+            .add_buffer(Buffer::from_vec(self.offsets.to_vec()))
+            .add_buffer(Buffer::from(self.values.as_bytes()))
             .build()
             .unwrap();
         Arc::new(StringArray::from(array_data))
@@ -814,8 +814,8 @@ fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
 }
 
 #[pymodule]
-fn _lib(_py: Python, m: &Bound<PyModule>) -> PyResult<()> {
-    m.add_wrapped(wrap_pyfunction!(get_a_table))?;
+fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(get_a_table, m)?)?;
     m.add_class::<ProtoCache>()?;
     m.add_class::<MessageHandler>()?;
     PyResult::Ok(())
