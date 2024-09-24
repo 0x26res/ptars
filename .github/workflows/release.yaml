@@ -3,7 +3,7 @@
 #
 #    maturin generate-ci github
 #
-name: "Release"
+name: "Wheels"
 
 on:
   push:
@@ -11,8 +11,6 @@ on:
       - main
     tags:
       - 'v*'
-  pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
