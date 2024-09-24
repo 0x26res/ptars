@@ -116,10 +116,16 @@ def test_arrow_to_proto(pool):
         [
             pa.array([33, 42, 17], pa.int32()),
             pa.array([133, 142, 117], pa.int64()),
+            pa.array([True, False, None], pa.bool_()),
+            pa.array(["ABC", "", None], pa.utf8()),
+            pa.array([b"ABC", b"", None], pa.binary()),
         ],
         [
             "int32_value",
             "int64_value",
+            "bool_value",
+            "string_value",
+            "bytes_value",
         ],
     )
     handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
@@ -128,15 +134,15 @@ def test_arrow_to_proto(pool):
     assert array.type == pa.binary()
     assert len(array) == 3
 
-    payload = array.to_pylist()[0]
-    assert len(payload) == 5
-    assert ExampleMessage.FromString(payload) == ExampleMessage(
-        int32_value=33, int64_value=133
-    )
-
     messages = [ExampleMessage.FromString(b.as_py()) for b in array]
     assert messages == [
-        ExampleMessage(int32_value=33, int64_value=133),
+        ExampleMessage(
+            int32_value=33,
+            int64_value=133,
+            bool_value=True,
+            string_value="ABC",
+            bytes_value=b"ABC",
+        ),
         ExampleMessage(int32_value=42, int64_value=142),
         ExampleMessage(int32_value=17, int64_value=117),
     ]

@@ -556,8 +556,10 @@ fn set_primitive<P: ArrowPrimitiveType>(
     field_descriptor: &FieldDescriptor,
     rvb_creator: &dyn Fn(P::Native) -> ReflectValueBox,
 ) {
-    let specific_array: &PrimitiveArray<P> = array.as_any().downcast_ref().unwrap();
-    specific_array
+    array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<P>>()
+        .unwrap()
         .iter()
         .enumerate()
         .for_each(|(index, value)| match value {
@@ -616,9 +618,52 @@ fn extract_singular_array(
             field_descriptor,
             &ReflectValueBox::F64,
         ),
-        RuntimeType::Bool => {} // BooleanType doesn't implement primitive type
-        RuntimeType::String => {}
-        RuntimeType::VecU8 => {}
+        RuntimeType::Bool => {
+            // BooleanType doesn't implement primitive type
+            array
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .for_each(|(index, value)| match value {
+                    None => {}
+                    Some(x) => {
+                        let element: &mut dyn MessageDyn =
+                            messages.get_mut(index).unwrap().as_mut();
+                        field_descriptor
+                            .set_singular_field(&mut *element, ReflectValueBox::Bool(x));
+                    }
+                })
+        }
+        RuntimeType::String => array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .for_each(|(index, value)| match value {
+                None => {}
+                Some(x) => {
+                    let element: &mut dyn MessageDyn = messages.get_mut(index).unwrap().as_mut();
+                    field_descriptor
+                        .set_singular_field(&mut *element, ReflectValueBox::String(x.to_string()));
+                }
+            }),
+        RuntimeType::VecU8 => array
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .for_each(|(index, value)| match value {
+                None => {}
+                Some(x) => {
+                    let element: &mut dyn MessageDyn = messages.get_mut(index).unwrap().as_mut();
+                    field_descriptor
+                        .set_singular_field(&mut *element, ReflectValueBox::Bytes(x.to_vec()));
+                }
+            }),
         RuntimeType::Enum(_) => {}
         RuntimeType::Message(_) => {}
     }
@@ -629,7 +674,6 @@ fn extract_array(
     field_descriptor: &FieldDescriptor,
     messages: &mut Vec<Box<dyn MessageDyn>>,
 ) {
-    println!("!!!  {}", field_descriptor.name());
     match field_descriptor.runtime_field_type() {
         RuntimeFieldType::Singular(x) => {
             extract_singular_array(&array, &field_descriptor, messages, &x)
