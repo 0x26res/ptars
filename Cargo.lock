@@ -56,7 +56,7 @@ dependencies = [
  "arrow-json",
  "arrow-ord",
  "arrow-row",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "arrow-select",
  "arrow-string",
  "pyo3",
@@ -71,7 +71,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "chrono",
  "half",
  "num",
@@ -86,7 +86,7 @@ dependencies = [
  "ahash",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "chrono",
  "half",
  "hashbrown",
@@ -113,7 +113,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "arrow-select",
  "atoi",
  "base64",
@@ -134,7 +134,7 @@ dependencies = [
  "arrow-buffer",
  "arrow-cast",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "chrono",
  "csv",
  "csv-core",
@@ -150,7 +150,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd9d6f18c65ef7a2573ab498c374d8ae364b4a4edf67105357491c031f716ca5"
 dependencies = [
  "arrow-buffer",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "half",
  "num",
 ]
@@ -165,7 +165,7 @@ dependencies = [
  "arrow-buffer",
  "arrow-cast",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "flatbuffers",
 ]
 
@@ -179,7 +179,7 @@ dependencies = [
  "arrow-buffer",
  "arrow-cast",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "chrono",
  "half",
  "indexmap",
@@ -198,7 +198,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "arrow-select",
  "half",
  "num",
@@ -214,7 +214,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "half",
 ]
 
@@ -228,6 +228,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow-schema"
+version = "53.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c85320a3a2facf2b2822b57aa9d6d9d55edb8aee0b6b5d3b8df158e503d10858"
+
+[[package]]
 name = "arrow-select"
 version = "52.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,7 +243,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "num",
 ]
 
@@ -250,7 +256,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-data",
- "arrow-schema",
+ "arrow-schema 52.2.0",
  "arrow-select",
  "memchr",
  "num",
@@ -746,7 +752,7 @@ version = "0.0.2-rc2"
 dependencies = [
  "arrow",
  "arrow-array",
- "arrow-schema",
+ "arrow-schema 53.0.0",
  "chrono",
  "protobuf",
  "pyo3",
