@@ -77,6 +77,7 @@ bindings = "pyo3"
 python-packages = ["ptars"]
 python-source = "python"
 exclude = ["python/test/**", ".**", "sdist/**", ".github/**"]
+features = ["pyo3/extension-module"]
 
 [tool.isort]
 profile = "black"
