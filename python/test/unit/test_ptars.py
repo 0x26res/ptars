@@ -9,7 +9,7 @@ from ptars import HandlerPool
 from ptars._lib import MessageHandler
 from ptars_protos import simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
-from ptars_protos.simple_pb2 import SearchRequest
+from ptars_protos.benchmark_pb2 import SearchRequest
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]

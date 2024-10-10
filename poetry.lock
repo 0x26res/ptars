@@ -1377,6 +1377,22 @@ pyyaml = ">=5.1"
 virtualenv = ">=20.10.0"
 
 [[package]]
+name = "protarrow"
+version = "0.6.0"
+description = "Convert from protobuf to arrow and back"
+optional = false
+python-versions = "<4,>=3.9"
+files = [
+    {file = "protarrow-0.6.0-py3-none-any.whl", hash = "sha256:dfd11fe69ca3c71eb0ba10fe43d0d68cdcb4b5c5ee64f8276b270fe90d2e721c"},
+    {file = "protarrow-0.6.0.tar.gz", hash = "sha256:c43b3ff867d22af474e47d0bf56fb445a47a1bd594cf58c67490f7b382f935e2"},
+]
+
+[package.dependencies]
+googleapis-common-protos = ">=1.53.0"
+protobuf = ">=3.20.1"
+pyarrow = ">=16.0.0"
+
+[[package]]
 name = "protobuf"
 version = "5.28.2"
 description = ""
@@ -2300,4 +2316,4 @@ test = ["pytest (>=6.0.0)", "setuptools (>=65)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<4.0"
-content-hash = "ea7b54ef179ff462d0957e4188f55ef7f2fd88070c0e69775b589b919eac53f2"
+content-hash = "9efff7a964c364e55d926ab501c2561ab758589b250ee64a223a11ce43f4df0c"
