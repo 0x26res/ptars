@@ -17,17 +17,16 @@ push = true
 [package.metadata.maturin]
 name = "ptars._lib"
 
-
 [lib]
 crate-type = ["cdylib"]
 name = "ptars"
 
 [dependencies]
-pyo3 = { version = "0.22.3" }
-arrow = { version = "53.0.0", features = ["pyarrow"] }
-arrow-array = { version = "53.0.0" }
-arrow-schema = { version = "53.0.0" }
-protobuf = { version = "3.5.1" }
+pyo3 = { version = "0.22.3", features = ["abi3-py310"] }
+arrow = { version = "53.1.0", features = ["pyarrow"] }
+arrow-array = { version = "53.1.0" }
+arrow-schema = { version = "53.1.0" }
+protobuf = { version = "3.6.0" }
 chrono = { version = "0.4.38" }
 
 [features]
