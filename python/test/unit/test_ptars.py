@@ -9,7 +9,6 @@ from ptars import HandlerPool
 from ptars._lib import MessageHandler
 from ptars_protos import simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
-from ptars_protos.simple_pb2 import SearchRequest
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]
@@ -168,12 +167,12 @@ def test_timestamp_missing(pool):
 
 def test_example():
     messages = [
-        SearchRequest(
+        simple_pb2.SearchRequest(
             query="protobuf to arrow",
             page_number=0,
             result_per_page=10,
         ),
-        SearchRequest(
+        simple_pb2.SearchRequest(
             query="protobuf to arrow",
             page_number=1,
             result_per_page=10,
@@ -182,7 +181,7 @@ def test_example():
     payloads = [message.SerializeToString() for message in messages]
 
     pool = HandlerPool()
-    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+    handler = pool.get_for_message(simple_pb2.SearchRequest.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
     try:
         record_batch.to_pandas().to_markdown(sys.stdout, index=False)
@@ -190,7 +189,7 @@ def test_example():
         pass
 
     array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
-    messages_back: list[SearchRequest] = [
-        SearchRequest.FromString(s.as_py()) for s in array
+    messages_back: list[simple_pb2.SearchRequest] = [
+        simple_pb2.SearchRequest.FromString(s.as_py()) for s in array
     ]
     assert messages_back == messages

@@ -1,5 +1,6 @@
 # ptars
 
+[![Ruff][ruff-image]][ruff-url]
 [![PyPI Version][pypi-image]][pypi-url]
 [![Python Version][versions-image]][versions-url]
 [![Github Stars][stars-image]][stars-url]
@@ -10,6 +11,7 @@
 [![Downloads][downloads-month-image]][downloads-month-url]
 [![Code style: black][codestyle-image]][codestyle-url]
 [![snyk][snyk-image]][snyk-url]
+![Size][repo-size-url]
 
 Protobuf to Arrow, using Rust
 
@@ -81,6 +83,9 @@ messages_back: list[SearchRequest] = [
 [downloads-month-image]: https://pepy.tech/badge/ptars/month
 [downloads-month-url]: https://static.pepy.tech/badge/ptars/month
 [codestyle-image]: https://img.shields.io/badge/code%20style-black-000000.svg
-[codestyle-url]: https://github.com/ambv/black
+[codestyle-url]: https://github.com/astral-sh/ruff
 [snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
 [snyk-url]: https://snyk.io/advisor/python/ptars
+[ruff-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
+[ruff-url]: https://github.com/astral-sh/ruff
+[repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
