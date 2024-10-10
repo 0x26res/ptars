@@ -37,3 +37,9 @@ repos:
     rev: 1.8.0
     hooks:
       - id: poetry-check
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        args:
+          - "--drop-empty-cells"
