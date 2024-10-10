@@ -89,7 +89,7 @@ skip = [".gitignore"]
 skips = ["B101"]
 
 [tool.ruff]
-select = ["E", "F", "C", "I"]
+lint.select = ["E", "F", "C", "I"]
 # ignore = ["E501", "C901"]
 
 [tool.ruff.lint.isort]

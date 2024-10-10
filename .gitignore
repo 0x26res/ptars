@@ -1,6 +1,6 @@
 /target
-Cargo.lock
 /env
+venv
 __pycache__
 *.pyc
 /.env
@@ -8,3 +8,7 @@ __pycache__
 /.cargo
 *.so
 /ptars_protos
+/sdist
+*_pb2.py
+.idea
+*-checkpoint.ipynb
