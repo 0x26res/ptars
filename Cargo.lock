@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "ptarslib"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "arrow",
  "arrow-array",

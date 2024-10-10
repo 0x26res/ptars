@@ -20,12 +20,12 @@ dependencies = [
 
 [tool.poetry]
 name = "ptars"
-version = "0.0.2"
+version = "0.0.3"
 description = "Convert from protobuf to arrow and back in rust"
 authors = ["Tradewell Tech <engineering@tradewelltech.co>"]
 maintainers = ["0x26res <0x26res@gmail.com>"]
-packages = [    { include = "ptars", from = "python" } ]
-include = ["ptars/*",  "ptarslib/*", "ptarslib/src/*"]
+packages = [{ include = "ptars", from = "python" }]
+include = ["ptars/*", "ptarslib/*", "ptarslib/src/*"]
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/tradewelltech/ptars"
@@ -82,7 +82,7 @@ features = ["pyo3/extension-module"]
 [tool.isort]
 profile = "black"
 src_paths = ["ptars", "tests"]
-known_first_party = ["ptars", "ptars_protos" ]
+known_first_party = ["ptars", "ptars_protos"]
 skip = [".gitignore"]
 
 [tool.bandit]
