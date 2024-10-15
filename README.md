@@ -1,5 +1,6 @@
 # ptars
 
+[![Ruff][ruff-image]][ruff-url]
 [![PyPI Version][pypi-image]][pypi-url]
 [![Python Version][versions-image]][versions-url]
 [![Github Stars][stars-image]][stars-url]
@@ -10,6 +11,7 @@
 [![Downloads][downloads-month-image]][downloads-month-url]
 [![Code style: black][codestyle-image]][codestyle-url]
 [![snyk][snyk-image]][snyk-url]
+![Size][repo-size-url]
 
 Protobuf to Arrow, using Rust
 
@@ -64,6 +66,32 @@ messages_back: list[SearchRequest] = [
 ]
 ```
 
+## Benchmark against protarrow
+
+[Ptars](https://github.com/0x26res/ptars) is a rust implementation of
+[protarrow](https://github.com/tradewelltech/protarrow),
+which is implemented in plain python.
+It is:
+
+- marginally faster when converting from proto to arrow.
+- About 3 times faster when converting from arrow to proto.
+
+```benchmark
+---- benchmark 'to_arrow': 2 tests ----
+Name (time in ms)        Mean          
+---------------------------------------
+protarrow_to_arrow     8.6582 (1.18)   
+ptars_to_arrow         7.3336 (1.0)    
+---------------------------------------
+
+---- benchmark 'to_proto': 2 tests -----
+Name (time in ms)         Mean          
+----------------------------------------
+ptars_to_proto          6.4088 (1.0)    
+protarrow_to_proto     21.5594 (3.36)   
+----------------------------------------
+```
+
 [pypi-image]: https://img.shields.io/pypi/v/ptars
 [pypi-url]: https://pypi.org/project/ptars/
 [build-image]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml/badge.svg
@@ -81,6 +109,9 @@ messages_back: list[SearchRequest] = [
 [downloads-month-image]: https://pepy.tech/badge/ptars/month
 [downloads-month-url]: https://static.pepy.tech/badge/ptars/month
 [codestyle-image]: https://img.shields.io/badge/code%20style-black-000000.svg
-[codestyle-url]: https://github.com/ambv/black
+[codestyle-url]: https://github.com/astral-sh/ruff
 [snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
 [snyk-url]: https://snyk.io/advisor/python/ptars
+[ruff-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
+[ruff-url]: https://github.com/astral-sh/ruff
+[repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
