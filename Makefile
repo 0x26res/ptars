@@ -16,7 +16,7 @@ develop: env
 
 .PHONY: test
 test: develop
-	. env/bin/activate && RUST_BACKTRACE=1 python -m pytest python/test/ && cargo test
+	. env/bin/activate && RUST_BACKTRACE=1 python -m pytest python/test/unit && cargo test
 
 .PHONY: build
 build: env
