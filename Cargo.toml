@@ -23,7 +23,7 @@ name = "ptars"
 
 [dependencies]
 pyo3 = { version = "0.22.5", features = ["abi3-py310"] }
-arrow = { version = "53.1.0", features = ["pyarrow"] }
+arrow = { version = "53.2.0", features = ["pyarrow"] }
 arrow-array = { version = "53.1.0" }
 arrow-schema = { version = "53.1.0" }
 protobuf = { version = "3.7.1" }
