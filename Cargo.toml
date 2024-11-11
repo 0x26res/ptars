@@ -22,7 +22,7 @@ crate-type = ["cdylib"]
 name = "ptars"
 
 [dependencies]
-pyo3 = { version = "0.22.5", features = ["abi3-py310"] }
+pyo3 = { version = "0.22.6", features = ["abi3-py310"] }
 arrow = { version = "53.2.0", features = ["pyarrow"] }
 arrow-array = { version = "53.1.0" }
 arrow-schema = { version = "53.2.0" }
