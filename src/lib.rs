@@ -365,7 +365,7 @@ fn repeated_field_to_array(
     runtime_type: &RuntimeType,
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<Arc<dyn Array>, &'static str> {
-    return match runtime_type {
+    match runtime_type {
         RuntimeType::I32 => read_repeated_primitive::<i32, Int32Array>(
             field,
             messages,
@@ -431,7 +431,7 @@ fn repeated_field_to_array(
                 .add_child_data(string_builder.build().to_data())
                 .build()
                 .unwrap();
-            return Ok(Arc::new(ListArray::from(list_data)));
+            Ok(Arc::new(ListArray::from(list_data)))
         }
         RuntimeType::VecU8 => {
             let mut builder = BinaryBuilder::new();
@@ -455,7 +455,7 @@ fn repeated_field_to_array(
                 .add_child_data(builder.build().to_data())
                 .build()
                 .unwrap();
-            return Ok(Arc::new(ListArray::from(list_data)));
+            Ok(Arc::new(ListArray::from(list_data)))
         }
         RuntimeType::Enum(_) => read_repeated_primitive::<i32, Int32Array>(
             field,
@@ -496,9 +496,9 @@ fn repeated_field_to_array(
                 .add_child_data(struct_array.to_data())
                 .build()
                 .unwrap();
-            return Ok(Arc::new(ListArray::from(list_data)));
+            Ok(Arc::new(ListArray::from(list_data)))
         }
-    };
+    }
 }
 
 fn field_to_array(
@@ -525,29 +525,27 @@ fn field_to_tuple(
     messages: &Vec<Box<dyn MessageDyn>>,
 ) -> Result<(Arc<Field>, Arc<dyn Array>), &'static str> {
     let results = field_to_array(field, messages);
-    return match results {
-        Ok(array) => {
-            return Ok((
-                Arc::new(Field::new(
-                    field.name(),
-                    array.data_type().clone(),
-                    is_nullable(field),
-                )),
-                array,
-            ));
-        }
+    match results {
+        Ok(array) => Ok((
+            Arc::new(Field::new(
+                field.name(),
+                array.data_type().clone(),
+                is_nullable(field),
+            )),
+            array,
+        )),
         Err(x) => Err(x),
-    };
+    }
 }
 
 fn fields_to_arrays(
     messages: &Vec<Box<dyn MessageDyn>>,
     message_descriptor: &MessageDescriptor,
 ) -> Vec<(Arc<Field>, Arc<dyn Array>)> {
-    return message_descriptor
+    message_descriptor
         .fields()
         .map(|x| field_to_tuple(&x, messages).unwrap())
-        .collect();
+        .collect()
 }
 
 fn set_primitive<P: ArrowPrimitiveType>(
@@ -750,7 +748,7 @@ impl ProtoCache {
         let tmp = file_descriptor_proto.name.as_ref().unwrap();
         let name: &str = tmp.as_ref();
         let available = self.cache.get(name);
-        return match available {
+        match available {
             Some(x) => x.clone(),
             None => {
                 let dependencies: Vec<&FileDescriptor> = file_descriptor_proto
@@ -765,7 +763,7 @@ impl ProtoCache {
                 self.cache.insert(name.to_string(), descriptor);
                 self.cache.get(name).unwrap().clone()
             }
-        };
+        }
     }
 }
 
