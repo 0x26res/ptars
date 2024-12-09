@@ -1,53 +1,70 @@
 [build-system]
-requires = ["setuptools", "setuptools-rust", "maturin", "protobuf"]
 build-backend = "maturin"
+requires = ["setuptools", "setuptools-rust", "maturin", "protobuf"]
+
+[lint.isort]
+known-first-party = ["ptars", "ptars_proto"]
 
 [project]
-name = "ptars"
 classifiers = [
-    "Programming Language :: Rust",
-    "Operating System :: POSIX :: Linux",
-    "Natural Language :: English",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "Operating System :: POSIX :: Linux",
+  "Natural Language :: English",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12"
 ]
-requires-python = ">=3.8"
 dependencies = [
-    'protobuf > 3',
-    "pyarrow > 15",
+  'protobuf > 3',
+  "pyarrow > 15"
 ]
+name = "ptars"
+requires-python = ">=3.8"
+
+[tool.bandit]
+skips = ["B101"]
+
+[tool.isort]
+known_first_party = ["ptars", "ptars_protos"]
+profile = "black"
+skip = [".gitignore"]
+src_paths = ["ptars", "tests"]
+
+[tool.maturin]
+bindings = "pyo3"
+exclude = ["python/test/**", ".**", "sdist/**", ".github/**"]
+features = ["pyo3/extension-module"]
+module-name = "ptars._lib"
+python-packages = ["ptars"]
+python-source = "python"
 
 [tool.poetry]
-name = "ptars"
-version = "0.0.3"
-description = "Convert from protobuf to arrow and back in rust"
 authors = ["Tradewell Tech <engineering@tradewelltech.co>"]
-maintainers = ["0x26res <0x26res@gmail.com>"]
-packages = [{ include = "ptars", from = "python" }]
-include = ["ptars/*", "ptarslib/*", "ptarslib/src/*"]
-readme = "README.md"
-license = "Apache-2.0"
-repository = "https://github.com/tradewelltech/ptars"
-documentation = "https://ptars.readthedocs.io/en/latest/"
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: Apache Software License",
-    "Natural Language :: English",
-    "Programming Language :: Python :: 3.11",
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: Apache Software License",
+  "Natural Language :: English",
+  "Programming Language :: Python :: 3.11"
 ]
+description = "Convert from protobuf to arrow and back in rust"
+documentation = "https://ptars.readthedocs.io/en/latest/"
+include = ["ptars/*", "ptarslib/*", "ptarslib/src/*"]
 keywords = ["apache-arrow", "protobuf", "data", "rust"]
-
+license = "Apache-2.0"
+maintainers = ["0x26res <0x26res@gmail.com>"]
+name = "ptars"
+packages = [{include = "ptars", from = "python"}]
+readme = "README.md"
+repository = "https://github.com/tradewelltech/ptars"
+version = "0.0.3"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<4.0"
-
-setuptools = "*"
 maturin = "*"
-pyarrow = "*"
 protobuf = ">=3.20.1"
+pyarrow = "*"
+python = ">=3.10,<4.0"
+setuptools = "*"
 setuptools-rust = "^0.10.6"
-
 
 [tool.poetry.group.dev.dependencies]
 coverage = ">=6.5.0"
@@ -59,7 +76,7 @@ isort = ">=5.10.1"
 maturin = "^1.3.1"
 mkdocs = ">=1.4.2"
 mkdocs-material = ">=9.0.3"
-mkdocstrings = { version = ">=0.21.2", extras = ["python"] }
+mkdocstrings = {version = ">=0.21.2", extras = ["python"]}
 pip-tools = ">=6.12.1"
 pre-commit = ">=2.20.0"
 protarrow = "*"
@@ -67,29 +84,7 @@ pylint = ">=2.15.0"
 pytest = ">=7.2.0"
 pytest-benchmark = ">=4.0.0"
 pytest-xdist = ">=3.1.0"
-rooster-blue = ">=0.0.4"
 ruff = "*"
-
-[tool.maturin]
-module-name = "ptars._lib"
-bindings = "pyo3"
-python-packages = ["ptars"]
-python-source = "python"
-exclude = ["python/test/**", ".**", "sdist/**", ".github/**"]
-features = ["pyo3/extension-module"]
-
-[tool.isort]
-profile = "black"
-src_paths = ["ptars", "tests"]
-known_first_party = ["ptars", "ptars_protos"]
-skip = [".gitignore"]
-
-[tool.bandit]
-skips = ["B101"]
 
 [tool.ruff]
 lint.select = ["E", "F", "C", "I"]
-# ignore = ["E501", "C901"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["ptars", "ptars_proto"]
