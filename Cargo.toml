@@ -1,6 +1,6 @@
 [dependencies]
 arrow = {version = "54.0.0", features = ["pyarrow"]}
-arrow-array = {version = "54.0.0"}
+arrow-array = {version = "54.1.0"}
 arrow-schema = {version = "54.0.0"}
 chrono = {version = "0.4.39"}
 protobuf = {version = "3.7.1"}
