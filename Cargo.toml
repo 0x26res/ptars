@@ -3,7 +3,7 @@ arrow = {version = "54.1.0", features = ["pyarrow"]}
 arrow-array = {version = "54.1.0"}
 arrow-schema = {version = "54.1.0"}
 chrono = {version = "0.4.39"}
-protobuf = {version = "3.7.1"}
+protobuf = {version = "3.7.2"}
 pyo3 = {version = "0.23.4", features = ["abi3-py310"]}
 
 [features]
