@@ -21,7 +21,7 @@ dependencies = [
 ]
 name = "ptars"
 requires-python = ">=3.10"
-version = "0.0.3"
+version = "0.0.5"
 
 [tool.bandit]
 skips = ["B101"]
