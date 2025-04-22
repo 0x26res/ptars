@@ -1,5 +1,6 @@
 from ptars import HandlerPool
 from ptars.internal import _get_dependencies
+
 from ptars_protos import bench_pb2, imported_pb2, importer_pb2, simple_pb2
 
 

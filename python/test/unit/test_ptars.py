@@ -4,9 +4,9 @@ import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
 from google.protobuf.timestamp_pb2 import Timestamp
-
 from ptars import HandlerPool
 from ptars._lib import MessageHandler
+
 from ptars_protos import simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
 from python.test.random_generator import generate_messages
