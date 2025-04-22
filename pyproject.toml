@@ -21,7 +21,7 @@ dependencies = [
 ]
 name = "ptars"
 requires-python = ">=3.8"
-version = "0.0.3"
+version = "0.0.4"
 
 [tool.bandit]
 skips = ["B101"]
@@ -58,7 +58,7 @@ name = "ptars"
 packages = [{include = "ptars", from = "python"}]
 readme = "README.md"
 repository = "https://github.com/tradewelltech/ptars"
-version = "0.0.3"
+version = "0.0.4"
 
 [tool.poetry.dependencies]
 maturin = "*"
