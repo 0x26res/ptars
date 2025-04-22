@@ -48,7 +48,7 @@ pytest python/test/benchmark --benchmark-name=short --benchmark-columns=mean --b
 
 ## TODO
 
-- [ ] finish arrow to proto
+- [x] finish arrow to proto
 - [ ] handle repeated messages
 - [ ] more generic code
 - [ ] add rust unit tests
