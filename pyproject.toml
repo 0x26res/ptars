@@ -20,8 +20,8 @@ dependencies = [
   "pyarrow > 15"
 ]
 name = "ptars"
-requires-python = ">=3.8"
-version = "0.0.4"
+requires-python = ">=3.10"
+version = "0.0.3"
 
 [tool.bandit]
 skips = ["B101"]
@@ -58,7 +58,7 @@ name = "ptars"
 packages = [{include = "ptars", from = "python"}]
 readme = "README.md"
 repository = "https://github.com/tradewelltech/ptars"
-version = "0.0.4"
+version = "0.0.5"
 
 [tool.poetry.dependencies]
 maturin = ">=1.0,<2.0"
