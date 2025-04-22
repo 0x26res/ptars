@@ -4,7 +4,6 @@ import pyarrow as pa
 from google._upb._message import Message, MessageMeta
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
-
 from ptars._lib import MessageHandler, ProtoCache
 
 

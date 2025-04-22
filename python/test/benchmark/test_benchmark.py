@@ -2,12 +2,12 @@ import random
 import secrets
 
 import protarrow
+import ptars
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
 from pytest_benchmark.fixture import BenchmarkFixture
 
-import ptars
 from ptars_protos.benchmark_pb2 import BenchmarkMessage
 
 MESSAGE_COUNT = 10_000
