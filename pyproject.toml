@@ -61,7 +61,7 @@ repository = "https://github.com/tradewelltech/ptars"
 version = "0.0.4"
 
 [tool.poetry.dependencies]
-maturin = "*"
+maturin = ">=1.0,<2.0"
 protobuf = ">=3.20.1"
 pyarrow = "*"
 python = ">=3.10,<4.0"
