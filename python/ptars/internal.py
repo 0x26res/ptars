@@ -44,7 +44,6 @@ class HandlerPool:
                         print(new_descriptor.name)
                         all_descriptors.append(new_descriptor)
 
-        assert len(all_descriptors) > 1
         payloads = [_file_descriptor_to_bytes(d) for d in all_descriptors]
 
         self._proto_cache = ProtoCache(payloads)
