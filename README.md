@@ -47,7 +47,7 @@ messages = [
 ]
 payloads = [message.SerializeToString() for message in messages]
 
-pool = HandlerPool()
+pool = HandlerPool([SearchRequest.DESCRIPTOR.file])
 handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
 record_batch = handler.list_to_record_batch(payloads)
 ```
@@ -80,15 +80,15 @@ It is:
 ---- benchmark 'to_arrow': 2 tests ----
 Name (time in ms)        Mean          
 ---------------------------------------
-protarrow_to_arrow     8.6582 (1.18)   
-ptars_to_arrow         7.3336 (1.0)    
+protarrow_to_arrow     8.6871 (1.43)   
+ptars_to_arrow         6.0837 (1.0)    
 ---------------------------------------
 
 ---- benchmark 'to_proto': 2 tests -----
 Name (time in ms)         Mean          
 ----------------------------------------
-ptars_to_proto          6.4088 (1.0)    
-protarrow_to_proto     21.5594 (3.36)   
+protarrow_to_proto     21.7639 (3.10)   
+ptars_to_proto          7.0171 (1.0)    
 ----------------------------------------
 ```
 
