@@ -298,6 +298,7 @@ fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
     for message in messages {
         if message.has_field(field_descriptor) {
             let field_value = message.get_field(field_descriptor);
+            println!("{}", field_descriptor.full_name());
             let field_value_as_list: &[Value] = field_value.as_list().unwrap();
             for each_value in field_value_as_list {
                 all_values.push(extractor(each_value).unwrap())
@@ -353,7 +354,7 @@ fn repeated_field_to_array(
         Kind::Fixed64 | Kind::Uint64 => read_repeated_primitive::<u64, UInt64Array>(
             field_descriptor,
             messages,
-            DataType::Int64,
+            DataType::UInt64,
             &Value::as_u64,
         ),
         Kind::Bool => read_repeated_primitive::<bool, BooleanArray>(
@@ -456,11 +457,11 @@ fn field_to_array(
     messages: &Vec<DynamicMessage>,
 ) -> Result<Arc<dyn Array>, &'static str> {
     if field_descriptor.is_list() {
-        singular_field_to_array(field_descriptor, messages)
+        repeated_field_to_array(field_descriptor, messages)
     } else if field_descriptor.is_map() {
         Err("map not supported")
     } else {
-        repeated_field_to_array(field_descriptor, messages)
+        singular_field_to_array(field_descriptor, messages)
     }
 }
 
