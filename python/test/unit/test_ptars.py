@@ -180,7 +180,7 @@ def test_example():
     ]
     payloads = [message.SerializeToString() for message in messages]
 
-    pool = HandlerPool()
+    pool = HandlerPool([simple_pb2.DESCRIPTOR])
     handler = pool.get_for_message(simple_pb2.SearchRequest.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
     try:

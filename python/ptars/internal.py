@@ -27,12 +27,27 @@ def _get_dependencies(
         if dependency not in results:
             _get_dependencies(dependency, results)
     results.append(file_descriptor)
-    return results[::-1]
+    return results
 
 
 class HandlerPool:
-    def __init__(self):
-        self._proto_cache = ProtoCache()
+    def __init__(self, file_descriptors: list[FileDescriptor]):
+        all_descriptors = []
+        for file_descriptor in file_descriptors:
+            if not isinstance(file_descriptor, FileDescriptor):
+                raise TypeError(f"Expecting {Descriptor.__name__}")
+
+            if file_descriptor not in all_descriptors:
+                new_descriptors = _get_dependencies(file_descriptor)
+                for new_descriptor in new_descriptors:
+                    if new_descriptor not in all_descriptors:
+                        print(new_descriptor.name)
+                        all_descriptors.append(new_descriptor)
+
+        assert len(all_descriptors) > 1
+        payloads = [_file_descriptor_to_bytes(d) for d in all_descriptors]
+
+        self._proto_cache = ProtoCache(payloads)
         self._pool = {}
 
     def get_for_message(self, descriptor: Descriptor) -> MessageHandler:
@@ -48,15 +63,9 @@ class HandlerPool:
         try:
             return self._pool[descriptor.full_name]
         except KeyError:
-            file_descriptor = descriptor.file
-
-            dependencies = _get_dependencies(file_descriptor)
-            payloads = [_file_descriptor_to_bytes(d) for d in dependencies]
-            message_handler = self._proto_cache.create_for_message(
-                "." + descriptor.full_name, payloads
-            )
-            self._pool[descriptor.full_name] = message_handler
-            return message_handler
+            result = self._proto_cache.create_for_message(descriptor.full_name)
+            self._pool[descriptor.full_name] = result
+            return result
 
     def messages_to_record_batch(
         self, messages: list[Message], descriptor: Descriptor
