@@ -23,8 +23,7 @@ struct MessageHandler {
 #[pymethods]
 impl MessageHandler {
     fn list_to_record_batch(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
-        return converter::messages_to_record_batch(&values, &self.message_descriptor)
-            .to_pyarrow(py);
+        converter::messages_to_record_batch(&values, &self.message_descriptor).to_pyarrow(py)
     }
 
     fn just_convert(&self, values: Vec<Vec<u8>>, _py: Python<'_>) {
@@ -41,8 +40,8 @@ impl MessageHandler {
     ) -> PyResult<PyObject> {
         let arrow_record_batch: RecordBatch =
             RecordBatch::from_pyarrow_bound(record_batch).unwrap();
-        return converter::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
-            .to_pyarrow(py);
+        converter::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
+            .to_pyarrow(py)
     }
 }
 

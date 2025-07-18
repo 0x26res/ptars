@@ -169,7 +169,7 @@ fn singular_field_to_array(
             }
             Ok(binary_builder.build())
         }
-        Kind::Message(x) => Ok(nested_messages_to_array(field_descriptor, &x, &messages)),
+        Kind::Message(x) => Ok(nested_messages_to_array(field_descriptor, &x, messages)),
         Kind::Enum(_) => Ok(read_primitive::<i32, Int32Array>(
             messages,
             field_descriptor,
@@ -466,7 +466,7 @@ fn field_to_array(
 }
 
 fn is_nullable(field: &FieldDescriptor) -> bool {
-    return field.supports_presence();
+    field.supports_presence()
 }
 
 fn field_to_tuple(
@@ -636,7 +636,7 @@ pub fn extract_array(
 }
 
 pub fn messages_to_record_batch(
-    values: &Vec<Vec<u8>>,
+    values: &[Vec<u8>],
     message_descriptor: &MessageDescriptor,
 ) -> RecordBatch {
     let messages: Vec<DynamicMessage> = values
@@ -644,7 +644,7 @@ pub fn messages_to_record_batch(
         .map(|x| DynamicMessage::decode(message_descriptor.clone(), x.as_slice()).unwrap())
         .collect();
     let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
-        converter::fields_to_arrays(&messages, &message_descriptor);
+        converter::fields_to_arrays(&messages, message_descriptor);
     let struct_array = if arrays.is_empty() {
         StructArray::new_empty_fields(messages.len(), None)
     } else {
