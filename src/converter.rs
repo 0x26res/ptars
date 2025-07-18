@@ -1,8 +1,8 @@
 use crate::{converter, CE_OFFSET};
 use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
-use arrow::datatypes::{ArrowNativeType, ToByteSlice};
-use arrow_array::builder::Int32Builder;
+use arrow::datatypes::ArrowNativeType;
+use arrow_array::builder::{ArrayBuilder, BinaryBuilder, Int32Builder, StringBuilder};
 use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Date32Array, Float32Array,
@@ -15,99 +15,6 @@ use prost::Message;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
 use std::iter::zip;
 use std::sync::Arc;
-
-struct StringBuilder {
-    values: String,
-    offsets: Vec<i32>,
-}
-
-impl StringBuilder {
-    pub fn new() -> Self {
-        Self {
-            values: String::new(),
-            offsets: Vec::new(),
-        }
-    }
-
-    fn append(&mut self, message: &DynamicMessage, field: &FieldDescriptor) {
-        self.append_value(message.get_field(field).as_str().unwrap());
-    }
-
-    fn append_value(&mut self, value: &str) {
-        self.offsets
-            .push(i32::from_usize(self.values.len()).unwrap());
-        self.values.push_str(value);
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len()
-    }
-
-    fn build(&mut self) -> Arc<dyn Array> {
-        let size = self.offsets.len();
-        self.offsets
-            .push(i32::from_usize(self.values.len()).unwrap());
-
-        let array_data = ArrayData::builder(DataType::Utf8)
-            .len(size)
-            .add_buffer(Buffer::from_vec(self.offsets.to_vec()))
-            .add_buffer(Buffer::from(self.values.as_bytes()))
-            .build()
-            .unwrap();
-        Arc::new(StringArray::from(array_data))
-    }
-}
-
-pub struct BinaryBuilder {
-    values: Vec<u8>,
-    offsets: Vec<i32>,
-}
-
-impl BinaryBuilder {
-    pub fn new() -> Self {
-        Self {
-            values: Vec::new(),
-            offsets: Vec::new(),
-        }
-    }
-
-    fn append(&mut self, message: &DynamicMessage, field: &FieldDescriptor) {
-        self.append_bytes(message.get_field(field).as_bytes().unwrap());
-    }
-
-    fn append_bytes(&mut self, bytes: &prost::bytes::Bytes) {
-        self.offsets
-            .push(i32::from_usize(self.values.len()).unwrap());
-        for n in 0..bytes.len() {
-            self.values.push(*bytes.get(n).unwrap());
-        }
-    }
-
-    pub fn append_vec(&mut self, vec: &Vec<u8>) {
-        self.offsets
-            .push(i32::from_usize(self.values.len()).unwrap());
-        self.values.extend(vec);
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len()
-    }
-
-    pub fn build(&mut self) -> Arc<dyn Array> {
-        let size = self.offsets.len();
-        self.offsets
-            .push(i32::from_usize(self.values.len()).unwrap());
-
-        // TODO: look into avoiding copy here
-        let array_data = ArrayData::builder(DataType::Binary)
-            .len(size)
-            .add_buffer(Buffer::from(self.offsets.to_byte_slice()))
-            .add_buffer(Buffer::from_iter(self.values.clone()))
-            .build()
-            .unwrap();
-        Arc::new(BinaryArray::from(array_data))
-    }
-}
 
 fn singular_field_to_array(
     field_descriptor: &FieldDescriptor,
@@ -157,16 +64,16 @@ fn singular_field_to_array(
         Kind::String => {
             let mut string_builder = StringBuilder::new();
             for message in messages {
-                string_builder.append(message, field_descriptor)
+                string_builder.append_value(message.get_field(field_descriptor).as_str().unwrap());
             }
-            Ok(string_builder.build())
+            Ok(Arc::new(string_builder.finish()))
         }
         Kind::Bytes => {
             let mut binary_builder = BinaryBuilder::new();
             for message in messages {
-                binary_builder.append(message, field_descriptor)
+                binary_builder.append_value(message.get_field(field_descriptor).as_bytes().unwrap())
             }
-            Ok(binary_builder.build())
+            Ok(Arc::new(binary_builder.finish()))
         }
         Kind::Message(x) => Ok(nested_messages_to_array(field_descriptor, &x, messages)),
         Kind::Enum(_) => Ok(read_primitive::<i32, Int32Array>(
@@ -393,7 +300,7 @@ fn repeated_field_to_array(
             let list_data = ArrayData::builder(list_data_type)
                 .len(messages.len())
                 .add_buffer(Buffer::from_iter(offsets))
-                .add_child_data(string_builder.build().to_data())
+                .add_child_data(string_builder.finish().to_data())
                 .build()
                 .unwrap();
             Ok(Arc::new(ListArray::from(list_data)))
@@ -407,7 +314,7 @@ fn repeated_field_to_array(
                     let each_list = message.get_field(field_descriptor);
                     let values = each_list.as_list().unwrap();
                     for each_value in values {
-                        builder.append_bytes(each_value.as_bytes().unwrap())
+                        builder.append_value(each_value.as_bytes().unwrap())
                     }
                 }
                 offsets.push(i32::from_usize(builder.len()).unwrap());
@@ -417,7 +324,7 @@ fn repeated_field_to_array(
             let list_data = ArrayData::builder(list_data_type)
                 .len(messages.len())
                 .add_buffer(Buffer::from_iter(offsets))
-                .add_child_data(builder.build().to_data())
+                .add_child_data(builder.finish().to_data())
                 .build()
                 .unwrap();
             Ok(Arc::new(ListArray::from(list_data)))
@@ -832,8 +739,8 @@ pub fn record_batch_to_array(
 
     messages
         .iter()
-        .for_each(|x| results.append_vec(&x.encode_to_vec()));
-    return results.build().to_data();
+        .for_each(|x| results.append_value(x.encode_to_vec()));
+    results.finish().to_data()
 }
 
 #[cfg(test)]

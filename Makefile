@@ -35,4 +35,4 @@ protoc: env
 
 .PHONY: lint
 lint:
-    cargo clippy -- -D warnings
+	cargo clippy -- -D warnings
