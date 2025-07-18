@@ -32,3 +32,7 @@ dist: env
 .PHONY: protoc
 protoc: env
 	. .venv/bin/activate && python scripts/protoc.py
+
+.PHONY: lint
+lint:
+	cargo clippy -- -D warnings
