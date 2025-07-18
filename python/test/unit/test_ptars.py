@@ -183,10 +183,7 @@ def test_round_trip():
     run_round_trip(
         [
             SimpleMessage(double_values=[1.0, 2.0]),
-            SimpleMessage(
-                int32_values=[1, 2, 3, 4],
-                # bool_values=[True, False]
-            ),
+            SimpleMessage(int32_values=[1, 2, 3, 4], bool_values=[True, False]),
         ],
         SimpleMessage,
     )

@@ -529,12 +529,14 @@ fn extract_single_primitive<P: ArrowPrimitiveType>(
         })
 }
 
-fn extract_repeated_primitive<P: ArrowPrimitiveType>(
+fn extract_repeated_primitive_type<P>(
     list_array: &ListArray,
     messages: &mut [DynamicMessage],
     field_descriptor: &FieldDescriptor,
     value_creator: &dyn Fn(P::Native) -> Value,
-) {
+) where
+    P: ArrowPrimitiveType,
+{
     let values: &PrimitiveArray<P> = list_array
         .values()
         .as_any()
@@ -560,6 +562,33 @@ fn extract_repeated_primitive<P: ArrowPrimitiveType>(
     }
 }
 
+fn extract_repeated_boolean(
+    list_array: &ListArray,
+    messages: &mut [DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+) {
+    let values: &BooleanArray = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+            if start < end {
+                let each_values = (start..end)
+                    .map(|x| values.value(x))
+                    .map(Value::Bool)
+                    .collect();
+
+                message.set_field(field_descriptor, Value::List(each_values));
+            }
+        }
+    }
+}
+
 pub fn extract_repeated_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
@@ -569,43 +598,48 @@ pub fn extract_repeated_array(
     let values = list_array.values();
 
     match field_descriptor.kind() {
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => extract_repeated_primitive::<Int32Type>(
-            list_array,
-            messages,
-            field_descriptor,
-            &Value::I32,
-        ),
-        Kind::Fixed32 | Kind::Uint32 => extract_repeated_primitive::<UInt32Type>(
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
+            extract_repeated_primitive_type::<Int32Type>(
+                list_array,
+                messages,
+                field_descriptor,
+                &Value::I32,
+            )
+        }
+        Kind::Fixed32 | Kind::Uint32 => extract_repeated_primitive_type::<UInt32Type>(
             list_array,
             messages,
             field_descriptor,
             &Value::U32,
         ),
-        Kind::Sint64 | Kind::Sfixed64 | Kind::Int64 => extract_repeated_primitive::<Int64Type>(
-            list_array,
-            messages,
-            field_descriptor,
-            &Value::I64,
-        ),
-        Kind::Fixed64 | Kind::Uint64 => extract_repeated_primitive::<UInt64Type>(
+        Kind::Sint64 | Kind::Sfixed64 | Kind::Int64 => {
+            extract_repeated_primitive_type::<Int64Type>(
+                list_array,
+                messages,
+                field_descriptor,
+                &Value::I64,
+            )
+        }
+        Kind::Fixed64 | Kind::Uint64 => extract_repeated_primitive_type::<UInt64Type>(
             list_array,
             messages,
             field_descriptor,
             &Value::U64,
         ),
-        Kind::Float => extract_repeated_primitive::<Float32Type>(
+        Kind::Float => extract_repeated_primitive_type::<Float32Type>(
             list_array,
             messages,
             field_descriptor,
             &Value::F32,
         ),
-        Kind::Double => extract_repeated_primitive::<Float64Type>(
+        Kind::Double => extract_repeated_primitive_type::<Float64Type>(
             list_array,
             messages,
             field_descriptor,
             &Value::F64,
         ),
-        Kind::Bool => {}
+        Kind::Bool => extract_repeated_boolean(list_array, messages, field_descriptor),
+
         Kind::String => {
             let values = values.as_any().downcast_ref::<StringArray>().unwrap();
             for (i, message) in messages.iter_mut().enumerate() {
@@ -645,29 +679,29 @@ pub fn extract_singular_array(
     messages: &mut [DynamicMessage],
 ) {
     match field_descriptor.kind() {
-        Kind::Int32 => {
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
             extract_single_primitive::<arrow_array::types::Int32Type>(
                 array,
                 messages,
                 field_descriptor,
                 &Value::I32,
-            );
+            )
         }
-        Kind::Uint32 => {
-            extract_single_primitive::<arrow_array::types::UInt32Type>(
-                array,
-                messages,
-                field_descriptor,
-                &Value::U32,
-            );
-        }
-        Kind::Int64 => extract_single_primitive::<arrow_array::types::Int64Type>(
+        Kind::Fixed32 | Kind::Uint32 => extract_single_primitive::<arrow_array::types::UInt32Type>(
             array,
             messages,
             field_descriptor,
-            &Value::I64,
+            &Value::U32,
         ),
-        Kind::Uint64 => extract_single_primitive::<arrow_array::types::UInt64Type>(
+        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => {
+            extract_single_primitive::<arrow_array::types::Int64Type>(
+                array,
+                messages,
+                field_descriptor,
+                &Value::I64,
+            )
+        }
+        Kind::Fixed64 | Kind::Uint64 => extract_single_primitive::<arrow_array::types::UInt64Type>(
             array,
             messages,
             field_descriptor,
@@ -687,19 +721,7 @@ pub fn extract_singular_array(
         ),
         Kind::Bool => {
             // BooleanType doesn't implement primitive type
-            array
-                .as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap()
-                .iter()
-                .enumerate()
-                .for_each(|(index, value)| match value {
-                    None => {}
-                    Some(x) => {
-                        let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
-                        element.set_field(field_descriptor, Value::Bool(x));
-                    }
-                })
+            extract_single_bool(array, field_descriptor, messages);
         }
         Kind::String => array
             .as_any()
@@ -731,15 +753,30 @@ pub fn extract_singular_array(
                     );
                 }
             }),
-        Kind::Sint32 => {}
-        Kind::Sint64 => {}
-        Kind::Fixed32 => {}
-        Kind::Fixed64 => {}
-        Kind::Sfixed32 => {}
-        Kind::Sfixed64 => {}
+
         Kind::Message(_) => {}
         Kind::Enum(_) => {}
     }
+}
+
+fn extract_single_bool(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [DynamicMessage],
+) {
+    array
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .for_each(|(index, value)| match value {
+            None => {}
+            Some(x) => {
+                let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
+                element.set_field(field_descriptor, Value::Bool(x));
+            }
+        })
 }
 
 pub fn extract_array(
@@ -788,7 +825,7 @@ pub fn record_batch_to_array(
             let column: Option<&ArrayRef> = record_batch.column_by_name(field_descriptor.name());
             match column {
                 None => {}
-                Some(column) => converter::extract_array(column, &field_descriptor, &mut messages),
+                Some(column) => extract_array(column, &field_descriptor, &mut messages),
             }
         });
     let mut results = converter::BinaryBuilder::new();
