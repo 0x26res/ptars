@@ -3,9 +3,9 @@
 ## Set up venv
 
 ```shell
-python3 -m venv --clear env
-source env/bin/activate
-poetry install
+python3 -m venv --clear .venv
+source .venv/bin/activate
+uv sync --active
 python ./scripts/protoc.py
 ```
 

@@ -4,9 +4,9 @@ all:
 
 .PHONY: env
 env:
-	test -d env || python3 -m venv env
-	. env/bin/activate && \
-		python -m pip install maturin pytest pyarrow googleapis-common-protos protobuf grpcio-tools protarrow
+	test -d .venv || python3 -m venv .venv
+	. .venv/bin/activate && \
+		uv sync --all-groups
 
 
 .PHONY: develop
