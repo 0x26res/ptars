@@ -9,6 +9,7 @@ from ptars._lib import MessageHandler
 
 from ptars_protos import bench_pb2, simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
+from ptars_protos.simple_pb2 import SimpleMessage
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]
@@ -163,6 +164,32 @@ def test_timestamp_missing(pool):
         1712660619123456789,
         None,
     ]
+
+
+def run_round_trip(messages, message_type):
+    payloads = [message.SerializeToString() for message in messages]
+
+    pool = HandlerPool([message_type.DESCRIPTOR.file])
+    handler = pool.get_for_message(message_type.DESCRIPTOR)
+    record_batch = handler.list_to_record_batch(payloads)
+    assert isinstance(record_batch, pa.RecordBatch)
+    array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
+    assert isinstance(array, pa.BinaryArray)
+    messages_back = [message_type.FromString(s.as_py()) for s in array]
+    assert messages_back == messages
+
+
+def test_round_trip():
+    run_round_trip(
+        [
+            SimpleMessage(double_values=[1.0, 2.0]),
+            SimpleMessage(
+                int32_values=[1, 2, 3, 4],
+                # bool_values=[True, False]
+            ),
+        ],
+        SimpleMessage,
+    )
 
 
 def test_example():

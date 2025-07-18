@@ -3,6 +3,7 @@ use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::{ArrowNativeType, ToByteSlice};
 use arrow_array::builder::Int32Builder;
+use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, Date32Array, Float32Array,
     Float64Array, Int32Array, Int64Array, ListArray, PrimitiveArray, RecordBatch, Scalar,
@@ -113,41 +114,39 @@ fn singular_field_to_array(
     messages: &Vec<DynamicMessage>,
 ) -> Result<Arc<dyn Array>, &'static str> {
     match field_descriptor.kind() {
-        Kind::Double => Ok(read_primitive::<f64, Float64Array>(
+        Kind::Double => Ok(read_primitive_type::<Float64Type, Float64Array>(
             messages,
             field_descriptor,
             &Value::as_f64,
-            0.0,
         )),
-        Kind::Float => Ok(read_primitive::<f32, Float32Array>(
+        Kind::Float => Ok(read_primitive_type::<Float32Type, Float32Array>(
             messages,
             field_descriptor,
             &Value::as_f32,
-            0.0,
         )),
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(read_primitive::<i32, Int32Array>(
-            messages,
-            field_descriptor,
-            &Value::as_i32,
-            0,
-        )),
-        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(read_primitive::<i64, Int64Array>(
-            messages,
-            field_descriptor,
-            &Value::as_i64,
-            0,
-        )),
-        Kind::Fixed32 | Kind::Uint32 => Ok(read_primitive::<u32, UInt32Array>(
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
+            Ok(read_primitive_type::<Int32Type, Int32Array>(
+                messages,
+                field_descriptor,
+                &Value::as_i32,
+            ))
+        }
+        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => {
+            Ok(read_primitive_type::<Int64Type, Int64Array>(
+                messages,
+                field_descriptor,
+                &Value::as_i64,
+            ))
+        }
+        Kind::Fixed32 | Kind::Uint32 => Ok(read_primitive_type::<UInt32Type, UInt32Array>(
             messages,
             field_descriptor,
             &Value::as_u32,
-            0,
         )),
-        Kind::Fixed64 | Kind::Uint64 => Ok(read_primitive::<u64, UInt64Array>(
+        Kind::Fixed64 | Kind::Uint64 => Ok(read_primitive_type::<UInt64Type, UInt64Array>(
             messages,
             field_descriptor,
             &Value::as_u64,
-            0,
         )),
         Kind::Bool => Ok(read_primitive::<bool, BooleanArray>(
             messages,
@@ -224,8 +223,7 @@ fn convert_timestamps(
     arrays: &[(Arc<Field>, Arc<dyn Array>)],
     is_valid: &[bool],
 ) -> Arc<TimestampNanosecondArray> {
-    let scalar: Scalar<PrimitiveArray<arrow_array::types::Int64Type>> =
-        Int64Array::new_scalar(1_000_000_000);
+    let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
     let seconds: Arc<dyn Array> = arrays[0].clone().1;
     let nanos: Arc<dyn Array> = arrays[1].clone().1;
     let casted = arrow::compute::kernels::cast(&nanos, &DataType::Int64).unwrap();
@@ -267,6 +265,19 @@ fn nested_messages_to_array(
             Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
         }
     }
+}
+
+fn read_primitive_type<T: ArrowPrimitiveType, A: From<Vec<T::Native>> + Array + 'static>(
+    messages: &Vec<DynamicMessage>,
+    field_descriptor: &FieldDescriptor,
+    extractor: &dyn Fn(&Value) -> Option<T::Native>,
+) -> Arc<dyn Array> {
+    read_primitive::<<T as ArrowPrimitiveType>::Native, A>(
+        messages,
+        field_descriptor,
+        extractor,
+        T::default_value(),
+    )
 }
 
 fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
@@ -497,7 +508,7 @@ pub fn fields_to_arrays(
         .collect()
 }
 
-fn set_primitive<P: ArrowPrimitiveType>(
+fn extract_single_primitive<P: ArrowPrimitiveType>(
     array: &ArrayRef,
     messages: &mut [DynamicMessage],
     field_descriptor: &FieldDescriptor,
@@ -518,6 +529,116 @@ fn set_primitive<P: ArrowPrimitiveType>(
         })
 }
 
+fn extract_repeated_primitive<P: ArrowPrimitiveType>(
+    list_array: &ListArray,
+    messages: &mut [DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    value_creator: &dyn Fn(P::Native) -> Value,
+) {
+    let values: &PrimitiveArray<P> = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<P>>()
+        .unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+            if start < end {
+                let slice = values.slice(start, end);
+                let values = slice
+                    .iter()
+                    .map(|value| match value {
+                        None => value_creator(P::default_value()),
+                        Some(x) => value_creator(x),
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(values));
+            }
+        }
+    }
+}
+
+pub fn extract_repeated_array(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [DynamicMessage],
+) {
+    let list_array: &ListArray = array.as_any().downcast_ref::<ListArray>().unwrap();
+    let values = list_array.values();
+
+    match field_descriptor.kind() {
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => extract_repeated_primitive::<Int32Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::I32,
+        ),
+        Kind::Fixed32 | Kind::Uint32 => extract_repeated_primitive::<UInt32Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::U32,
+        ),
+        Kind::Sint64 | Kind::Sfixed64 | Kind::Int64 => extract_repeated_primitive::<Int64Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::I64,
+        ),
+        Kind::Fixed64 | Kind::Uint64 => extract_repeated_primitive::<UInt64Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::U64,
+        ),
+        Kind::Float => extract_repeated_primitive::<Float32Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::F32,
+        ),
+        Kind::Double => extract_repeated_primitive::<Float64Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::F64,
+        ),
+        Kind::Bool => {}
+        Kind::String => {
+            let values = values.as_any().downcast_ref::<StringArray>().unwrap();
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let start = list_array.value_offsets()[i] as usize;
+                    let end = list_array.value_offsets()[i + 1] as usize;
+                    let values_vec: Vec<Value> = (start..end)
+                        .map(|idx| Value::String(values.value(idx).to_string()))
+                        .collect();
+                    message.set_field(field_descriptor, Value::List(values_vec));
+                }
+            }
+        }
+        Kind::Bytes => {
+            let values = values.as_any().downcast_ref::<BinaryArray>().unwrap();
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let start = list_array.value_offsets()[i] as usize;
+                    let end = list_array.value_offsets()[i + 1] as usize;
+                    let values_vec: Vec<Value> = (start..end)
+                        .map(|idx| {
+                            Value::Bytes(prost::bytes::Bytes::from(values.value(idx).to_vec()))
+                        })
+                        .collect();
+                    message.set_field(field_descriptor, Value::List(values_vec));
+                }
+            }
+        }
+        Kind::Message(_) => {}
+        Kind::Enum(_) => {}
+    }
+}
+
 pub fn extract_singular_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
@@ -525,7 +646,7 @@ pub fn extract_singular_array(
 ) {
     match field_descriptor.kind() {
         Kind::Int32 => {
-            set_primitive::<arrow_array::types::Int32Type>(
+            extract_single_primitive::<arrow_array::types::Int32Type>(
                 array,
                 messages,
                 field_descriptor,
@@ -533,32 +654,32 @@ pub fn extract_singular_array(
             );
         }
         Kind::Uint32 => {
-            set_primitive::<arrow_array::types::UInt32Type>(
+            extract_single_primitive::<arrow_array::types::UInt32Type>(
                 array,
                 messages,
                 field_descriptor,
                 &Value::U32,
             );
         }
-        Kind::Int64 => set_primitive::<arrow_array::types::Int64Type>(
+        Kind::Int64 => extract_single_primitive::<arrow_array::types::Int64Type>(
             array,
             messages,
             field_descriptor,
             &Value::I64,
         ),
-        Kind::Uint64 => set_primitive::<arrow_array::types::UInt64Type>(
+        Kind::Uint64 => extract_single_primitive::<arrow_array::types::UInt64Type>(
             array,
             messages,
             field_descriptor,
             &Value::U64,
         ),
-        Kind::Float => set_primitive::<arrow_array::types::Float32Type>(
+        Kind::Float => extract_single_primitive::<arrow_array::types::Float32Type>(
             array,
             messages,
             field_descriptor,
             &Value::F32,
         ),
-        Kind::Double => set_primitive::<arrow_array::types::Float64Type>(
+        Kind::Double => extract_single_primitive::<arrow_array::types::Float64Type>(
             array,
             messages,
             field_descriptor,
@@ -629,7 +750,7 @@ pub fn extract_array(
     if field_descriptor.is_map() {
         // TODO:
     } else if field_descriptor.is_list() {
-        // TODO
+        extract_repeated_array(array, field_descriptor, messages)
     } else {
         extract_singular_array(array, field_descriptor, messages)
     }
