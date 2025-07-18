@@ -8,6 +8,7 @@ import pytest
 from google.protobuf.message import Message
 from pytest_benchmark.fixture import BenchmarkFixture
 
+from ptars_protos import benchmark_pb2
 from ptars_protos.benchmark_pb2 import BenchmarkMessage
 
 MESSAGE_COUNT = 10_000
@@ -46,7 +47,7 @@ def test_same(payloads: list[bytes]):
     assert protarrow.messages_to_record_batch(
         [BenchmarkMessage.FromString(p) for p in payloads],
         BenchmarkMessage,
-    ) == ptars.HandlerPool().get_for_message(
+    ) == ptars.HandlerPool([benchmark_pb2.DESCRIPTOR]).get_for_message(
         BenchmarkMessage.DESCRIPTOR
     ).list_to_record_batch(payloads)
 
@@ -63,7 +64,7 @@ def test_protarrow_to_arrow(benchmark: BenchmarkFixture, payloads: list[bytes]):
 
 def test_ptars_to_arrow(benchmark: BenchmarkFixture, payloads: list[bytes]):
     benchmark.group = "to_arrow"
-    pool = ptars.HandlerPool()
+    pool = ptars.HandlerPool([benchmark_pb2.DESCRIPTOR])
     handler = pool.get_for_message(BenchmarkMessage.DESCRIPTOR)
 
     benchmark(handler.list_to_record_batch, payloads)
@@ -77,7 +78,7 @@ def test_protarrow_to_proto(benchmark: BenchmarkFixture, payloads: list[bytes]):
 
 def test_ptars_to_proto(benchmark: BenchmarkFixture, payloads: list[bytes]):
     benchmark.group = "to_proto"
-    pool = ptars.HandlerPool()
+    pool = ptars.HandlerPool([benchmark_pb2.DESCRIPTOR])
     handler = pool.get_for_message(BenchmarkMessage.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
 

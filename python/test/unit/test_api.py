@@ -4,11 +4,12 @@ from google.protobuf.descriptor import FileDescriptor
 from ptars import HandlerPool
 from ptars._lib import MessageHandler
 
-from ptars_protos.bench_pb2 import ExampleMessage
+from ptars_protos.bench_pb2 import DESCRIPTOR, ExampleMessage
 
 
 def test_with_descriptor():
-    pool = HandlerPool()
+    pool = HandlerPool([DESCRIPTOR])
+    assert pool._proto_cache.get_names() != []
     handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
     assert isinstance(handler, MessageHandler)
     same_handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
@@ -16,13 +17,13 @@ def test_with_descriptor():
     with_message = pool.get_for_message(ExampleMessage)
     assert with_message is handler
 
-    other_pool = HandlerPool()
+    other_pool = HandlerPool([DESCRIPTOR])
     other_handler = other_pool.get_for_message(ExampleMessage.DESCRIPTOR)
     assert other_handler is not handler
 
 
 def test_with_wrong_types():
-    pool = HandlerPool()
+    pool = HandlerPool([DESCRIPTOR])
 
     with pytest.raises(TypeError, match="Expecting Descriptor"):
         pool.get_for_message(None)
@@ -33,7 +34,7 @@ def test_with_wrong_types():
 
 
 def test_messages_to_record_batch():
-    pool = HandlerPool()
+    pool = HandlerPool([DESCRIPTOR])
     batch = pool.messages_to_record_batch(
         [
             ExampleMessage(double_value=1.0),

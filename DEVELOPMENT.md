@@ -11,10 +11,10 @@ python ./scripts/protoc.py
 
 ### Special case for ARM mac
 
-Add this to your bash/rc profile
+Add this to your bash/rc profile:
 
 ```shell
-export CARGO_BUILD_TARGET=x86_64-apple-darwin
+export CARGO_BUILD_TARGET=aarch64-apple-darwin
 ```
 
 ## Testing
@@ -43,13 +43,15 @@ Make sure to install the release version of ptars.
 The locally built version is much slower.
 
 ```shell
+maturin develop --releas
 pytest python/test/benchmark --benchmark-name=short --benchmark-columns=mean --benchmark-sort=name
 ```
 
 ## TODO
 
 - [x] finish arrow to proto
-- [ ] handle repeated messages
+- [ ] handle repeated messages both ways
+- [ ] handle maps
 - [ ] more generic code
 - [ ] add rust unit tests
 - [ ] add configuration for enums, timestamp, date, wrapped types, duration

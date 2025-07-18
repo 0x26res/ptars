@@ -7,7 +7,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from ptars import HandlerPool
 from ptars._lib import MessageHandler
 
-from ptars_protos import simple_pb2
+from ptars_protos import bench_pb2, simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
 from python.test.random_generator import generate_messages
 
@@ -16,7 +16,7 @@ MESSAGES = [ExampleMessage]
 
 @pytest.fixture()
 def pool():
-    return HandlerPool()
+    return HandlerPool([simple_pb2.DESCRIPTOR, bench_pb2.DESCRIPTOR])
 
 
 @pytest.fixture()
@@ -180,7 +180,7 @@ def test_example():
     ]
     payloads = [message.SerializeToString() for message in messages]
 
-    pool = HandlerPool()
+    pool = HandlerPool([simple_pb2.DESCRIPTOR])
     handler = pool.get_for_message(simple_pb2.SearchRequest.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
     try:
