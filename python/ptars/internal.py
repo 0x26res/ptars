@@ -71,3 +71,10 @@ class HandlerPool:
     ) -> pa.RecordBatch:
         handler = self.get_for_message(descriptor)
         return handler.list_to_record_batch([m.SerializeToString() for m in messages])
+
+    def record_batch_to_messages(
+        self, record_batch: pa.RecordBatch, descriptor: Descriptor
+    ) -> list[Message]:
+        handler = self.get_for_message(descriptor)
+        array = handler.record_batch_to_array(record_batch)
+        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]

@@ -45,3 +45,5 @@ def test_messages_to_record_batch():
     assert isinstance(batch, pa.RecordBatch)
     assert batch["double_value"].to_pylist() == [1.0, 0.0]
     assert batch["int32_value"].to_pylist() == [0, 1]
+
+    pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
