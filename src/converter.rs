@@ -75,7 +75,11 @@ fn singular_field_to_array(
             }
             Ok(Arc::new(binary_builder.finish()))
         }
-        Kind::Message(x) => Ok(nested_messages_to_array(field_descriptor, &x, messages)),
+        Kind::Message(message_descriptor) => Ok(nested_messages_to_array(
+            field_descriptor,
+            &message_descriptor,
+            messages,
+        )),
         Kind::Enum(_) => Ok(read_primitive::<i32, Int32Array>(
             messages,
             field_descriptor,
@@ -281,86 +285,14 @@ fn repeated_field_to_array(
             DataType::Boolean,
             &Value::as_bool,
         ),
-        Kind::String => {
-            let mut string_builder = StringBuilder::new();
-            let mut offsets: Vec<i32> = Vec::new();
-            offsets.push(0);
-            for message in messages {
-                if message.has_field(field_descriptor) {
-                    let each_list = message.get_field(field_descriptor);
-                    let values = each_list.as_list().unwrap();
-                    for each_value in values {
-                        string_builder.append_value(each_value.as_str().unwrap())
-                    }
-                }
-                offsets.push(i32::from_usize(string_builder.len()).unwrap());
-            }
-            let list_data_type =
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)));
-            let list_data = ArrayData::builder(list_data_type)
-                .len(messages.len())
-                .add_buffer(Buffer::from_iter(offsets))
-                .add_child_data(string_builder.finish().to_data())
-                .build()
-                .unwrap();
-            Ok(Arc::new(ListArray::from(list_data)))
+        Kind::String => read_repeated_string(field_descriptor, messages),
+
+        Kind::Bytes => read_repeated_bytes(field_descriptor, messages),
+
+        Kind::Message(message_descriptor) => {
+            read_repeated_messages(field_descriptor, &message_descriptor, messages)
         }
-        Kind::Bytes => {
-            let mut builder = BinaryBuilder::new();
-            let mut offsets: Vec<i32> = Vec::new();
-            offsets.push(0);
-            for message in messages {
-                if message.has_field(field_descriptor) {
-                    let each_list = message.get_field(field_descriptor);
-                    let values = each_list.as_list().unwrap();
-                    for each_value in values {
-                        builder.append_value(each_value.as_bytes().unwrap())
-                    }
-                }
-                offsets.push(i32::from_usize(builder.len()).unwrap());
-            }
-            let list_data_type =
-                DataType::List(Arc::new(Field::new("item", DataType::Binary, false)));
-            let list_data = ArrayData::builder(list_data_type)
-                .len(messages.len())
-                .add_buffer(Buffer::from_iter(offsets))
-                .add_child_data(builder.finish().to_data())
-                .build()
-                .unwrap();
-            Ok(Arc::new(ListArray::from(list_data)))
-        }
-        Kind::Message(_) => {
-            let mut repeated_messages: Vec<DynamicMessage> = Vec::new();
-            let mut offsets: Vec<i32> = Vec::new();
-            offsets.push(0);
-            for message in messages {
-                for each_message in message.get_field(field_descriptor).as_list().unwrap() {
-                    repeated_messages.push(each_message.as_message().unwrap().clone());
-                }
-                offsets.push(i32::from_usize(repeated_messages.len()).unwrap());
-            }
-            let arrays = fields_to_arrays(
-                &repeated_messages,
-                field_descriptor.kind().as_message().unwrap(),
-            );
-            let struct_array: Arc<StructArray> = if arrays.is_empty() {
-                Arc::new(StructArray::new_empty_fields(repeated_messages.len(), None))
-            } else {
-                Arc::new(StructArray::from(arrays))
-            };
-            let list_data_type = DataType::List(Arc::new(Field::new(
-                "item",
-                struct_array.data_type().clone(),
-                false,
-            )));
-            let list_data: ArrayData = ArrayData::builder(list_data_type)
-                .len(messages.len())
-                .add_buffer(Buffer::from_iter(offsets))
-                .add_child_data(struct_array.to_data())
-                .build()
-                .unwrap();
-            Ok(Arc::new(ListArray::from(list_data)))
-        }
+
         Kind::Enum(_) => read_repeated_primitive::<i32, Int32Array>(
             field_descriptor,
             messages,
@@ -368,6 +300,94 @@ fn repeated_field_to_array(
             &Value::as_enum_number,
         ),
     }
+}
+
+fn read_repeated_string(
+    field_descriptor: &FieldDescriptor,
+    messages: &Vec<DynamicMessage>,
+) -> Result<Arc<dyn Array>, &'static str> {
+    let mut string_builder = StringBuilder::new();
+    let mut offsets: Vec<i32> = Vec::new();
+    offsets.push(0);
+    for message in messages {
+        if message.has_field(field_descriptor) {
+            let each_list = message.get_field(field_descriptor);
+            let values = each_list.as_list().unwrap();
+            for each_value in values {
+                string_builder.append_value(each_value.as_str().unwrap())
+            }
+        }
+        offsets.push(i32::from_usize(string_builder.len()).unwrap());
+    }
+    let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)));
+    let list_data = ArrayData::builder(list_data_type)
+        .len(messages.len())
+        .add_buffer(Buffer::from_iter(offsets))
+        .add_child_data(string_builder.finish().to_data())
+        .build()
+        .unwrap();
+    Ok(Arc::new(ListArray::from(list_data)))
+}
+
+fn read_repeated_bytes(
+    field_descriptor: &FieldDescriptor,
+    messages: &Vec<DynamicMessage>,
+) -> Result<Arc<dyn Array>, &'static str> {
+    let mut builder = BinaryBuilder::new();
+    let mut offsets: Vec<i32> = Vec::new();
+    offsets.push(0);
+    for message in messages {
+        if message.has_field(field_descriptor) {
+            let each_list = message.get_field(field_descriptor);
+            let values = each_list.as_list().unwrap();
+            for each_value in values {
+                builder.append_value(each_value.as_bytes().unwrap())
+            }
+        }
+        offsets.push(i32::from_usize(builder.len()).unwrap());
+    }
+    let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Binary, false)));
+    let list_data = ArrayData::builder(list_data_type)
+        .len(messages.len())
+        .add_buffer(Buffer::from_iter(offsets))
+        .add_child_data(builder.finish().to_data())
+        .build()
+        .unwrap();
+    Ok(Arc::new(ListArray::from(list_data)))
+}
+
+fn read_repeated_messages(
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &Vec<DynamicMessage>,
+) -> Result<Arc<dyn Array>, &'static str> {
+    let mut repeated_messages: Vec<DynamicMessage> = Vec::new();
+    let mut offsets: Vec<i32> = Vec::new();
+    offsets.push(0);
+    for message in messages {
+        for each_message in message.get_field(field_descriptor).as_list().unwrap() {
+            repeated_messages.push(each_message.as_message().unwrap().clone());
+        }
+        offsets.push(i32::from_usize(repeated_messages.len()).unwrap());
+    }
+    let arrays = fields_to_arrays(&repeated_messages, message_descriptor);
+    let struct_array: Arc<StructArray> = if arrays.is_empty() {
+        Arc::new(StructArray::new_empty_fields(repeated_messages.len(), None))
+    } else {
+        Arc::new(StructArray::from(arrays))
+    };
+    let list_data_type = DataType::List(Arc::new(Field::new(
+        "item",
+        struct_array.data_type().clone(),
+        false,
+    )));
+    let list_data: ArrayData = ArrayData::builder(list_data_type)
+        .len(messages.len())
+        .add_buffer(Buffer::from_iter(offsets))
+        .add_child_data(struct_array.to_data())
+        .build()
+        .unwrap();
+    Ok(Arc::new(ListArray::from(list_data)))
 }
 
 fn field_to_array(

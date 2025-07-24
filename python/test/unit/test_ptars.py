@@ -9,7 +9,7 @@ from ptars._lib import MessageHandler
 
 from ptars_protos import bench_pb2, simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
-from ptars_protos.simple_pb2 import SimpleMessage
+from ptars_protos.simple_pb2 import RepeatedNestedMessageSimple, SimpleMessage
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]
@@ -186,6 +186,20 @@ def test_round_trip():
             SimpleMessage(int32_values=[1, 2, 3, 4], bool_values=[True, False]),
         ],
         SimpleMessage,
+    )
+
+
+def test_round_trip_not_ready():
+    run_round_trip(
+        [
+            RepeatedNestedMessageSimple(
+                search_results=[
+                    simple_pb2.SearchResult(),
+                    simple_pb2.SearchResult(),
+                ]
+            )
+        ],
+        RepeatedNestedMessageSimple,
     )
 
 
