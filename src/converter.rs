@@ -155,10 +155,10 @@ fn nested_messages_to_array(
     let mut nested_messages: Vec<DynamicMessage> = Vec::new();
     let mut is_valid: Vec<bool> = Vec::new();
     for message in messages {
+        is_valid.push(message.has_field(field_descriptor));
         let ee = message.get_field(field_descriptor);
         let each_value = ee.as_message().unwrap();
         nested_messages.push(each_value.clone());
-        is_valid.push(message.has_field(field_descriptor));
     }
     if message_descriptor.full_name() == "google.type.Date" {
         convert_date(&nested_messages, &is_valid, message_descriptor)
@@ -437,7 +437,7 @@ pub fn fields_to_arrays(
 
 fn extract_single_primitive<P: ArrowPrimitiveType>(
     array: &ArrayRef,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     value_creator: &dyn Fn(P::Native) -> Value,
 ) {
@@ -458,7 +458,7 @@ fn extract_single_primitive<P: ArrowPrimitiveType>(
 
 fn extract_repeated_primitive_type<P>(
     list_array: &ListArray,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     value_creator: &dyn Fn(P::Native) -> Value,
 ) where
@@ -491,7 +491,7 @@ fn extract_repeated_primitive_type<P>(
 
 fn extract_repeated_boolean(
     list_array: &ListArray,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
 ) {
     let values: &BooleanArray = list_array
@@ -519,7 +519,7 @@ fn extract_repeated_boolean(
 pub fn extract_repeated_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
 ) {
     let list_array: &ListArray = array.as_any().downcast_ref::<ListArray>().unwrap();
     let values = list_array.values();
@@ -603,7 +603,7 @@ pub fn extract_repeated_array(
 pub fn extract_singular_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
 ) {
     match field_descriptor.kind() {
         Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
@@ -650,46 +650,104 @@ pub fn extract_singular_array(
             // BooleanType doesn't implement primitive type
             extract_single_bool(array, field_descriptor, messages);
         }
-        Kind::String => array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap()
-            .iter()
-            .enumerate()
-            .for_each(|(index, value)| match value {
-                None => {}
-                Some(x) => {
-                    let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
-                    element.set_field(field_descriptor, Value::String(x.to_string()));
-                }
-            }),
-        Kind::Bytes => array
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap()
-            .iter()
-            .enumerate()
-            .for_each(|(index, value)| match value {
-                None => {}
-                Some(x) => {
-                    let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
+        Kind::String => extract_single_string(array, field_descriptor, messages),
+        Kind::Bytes => extract_single_bytes(array, field_descriptor, messages),
 
-                    element.set_field(
-                        field_descriptor,
-                        Value::Bytes(prost::bytes::Bytes::from(x.to_vec())),
-                    );
-                }
-            }),
-
-        Kind::Message(_) => {}
+        Kind::Message(message_descriptor) => {
+            extract_single_message(array, field_descriptor, message_descriptor, messages)
+        }
         Kind::Enum(_) => {}
     }
+}
+
+fn extract_single_string(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .for_each(|(index, value)| match value {
+            None => {}
+            Some(x) => {
+                let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
+                element.set_field(field_descriptor, Value::String(x.to_string()));
+            }
+        })
+}
+
+fn extract_single_bytes(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    array
+        .as_any()
+        .downcast_ref::<BinaryArray>()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .for_each(|(index, value)| match value {
+            None => {}
+            Some(x) => {
+                let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
+
+                element.set_field(
+                    field_descriptor,
+                    Value::Bytes(prost::bytes::Bytes::from(x.to_vec())),
+                );
+            }
+        })
+}
+
+fn extract_single_message(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    if message_descriptor.full_name() == "google.protobuf.Timestamp"
+        || message_descriptor.full_name() == "google.type.Date"
+    {
+        // TODO!!!
+        return;
+    }
+
+    let struct_array = array.as_any().downcast_ref::<StructArray>().unwrap();
+    let mut sub_messages: Vec<&mut DynamicMessage> = messages
+        .iter_mut()
+        .map(|message| {
+            message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap()
+        })
+        .collect();
+
+    message_descriptor
+        .fields()
+        .for_each(|field_descriptor: FieldDescriptor| {
+            let column: Option<&ArrayRef> = struct_array.column_by_name(field_descriptor.name());
+            match column {
+                None => {}
+                Some(column) => extract_array(column, &field_descriptor, &mut sub_messages),
+            }
+        });
+    messages.iter_mut().enumerate().for_each(|(i, x)| {
+        if !struct_array.is_valid(i) {
+            x.clear_field(field_descriptor)
+        }
+    });
 }
 
 fn extract_single_bool(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
 ) {
     array
         .as_any()
@@ -709,7 +767,7 @@ fn extract_single_bool(
 pub fn extract_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
-    messages: &mut [DynamicMessage],
+    messages: &mut [&mut DynamicMessage],
 ) {
     if field_descriptor.is_map() {
         // TODO:
@@ -745,6 +803,7 @@ pub fn record_batch_to_array(
     let mut messages: Vec<DynamicMessage> = (0..record_batch.num_rows())
         .map(|_| DynamicMessage::new(message_descriptor.clone()))
         .collect::<Vec<DynamicMessage>>();
+    let mut references: Vec<&mut DynamicMessage> = messages.iter_mut().collect();
 
     message_descriptor
         .fields()
@@ -752,7 +811,7 @@ pub fn record_batch_to_array(
             let column: Option<&ArrayRef> = record_batch.column_by_name(field_descriptor.name());
             match column {
                 None => {}
-                Some(column) => extract_array(column, &field_descriptor, &mut messages),
+                Some(column) => extract_array(column, &field_descriptor, &mut references),
             }
         });
     let mut results = converter::BinaryBuilder::new();
