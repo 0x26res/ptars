@@ -11,18 +11,6 @@ mod tests {
     use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
     use std::sync::Arc;
 
-    fn dynamic_messages_fixture(message_descriptor: &MessageDescriptor) -> Vec<DynamicMessage> {
-        let mut message1 = DynamicMessage::new(message_descriptor.clone());
-        message1.set_field_by_name("id", prost_reflect::Value::I32(1));
-        message1.set_field_by_name("name", prost_reflect::Value::String("test".to_string()));
-
-        let mut message2 = DynamicMessage::new(message_descriptor.clone());
-        message2.set_field_by_name("id", prost_reflect::Value::I32(2));
-        message2.set_field_by_name("name", prost_reflect::Value::String("test2".to_string()));
-
-        vec![message1, message2]
-    }
-
     fn file_descriptor_proto_fixture() -> FileDescriptorProto {
         FileDescriptorProto {
             name: Some("test.proto".to_string()),
@@ -49,6 +37,18 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    fn dynamic_messages_fixture(message_descriptor: &MessageDescriptor) -> Vec<DynamicMessage> {
+        let mut message1 = DynamicMessage::new(message_descriptor.clone());
+        message1.set_field_by_name("id", prost_reflect::Value::I32(1));
+        message1.set_field_by_name("name", prost_reflect::Value::String("test".to_string()));
+
+        let mut message2 = DynamicMessage::new(message_descriptor.clone());
+        message2.set_field_by_name("id", prost_reflect::Value::I32(2));
+        message2.set_field_by_name("name", prost_reflect::Value::String("test2".to_string()));
+
+        vec![message1, message2]
     }
 
     #[test]
