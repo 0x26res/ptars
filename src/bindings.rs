@@ -22,7 +22,11 @@ struct MessageHandler {
 
 #[pymethods]
 impl MessageHandler {
-    fn list_to_record_batch(&self, values: &Bound<'_, PyList>, py: Python<'_>) -> PyResult<PyObject> {
+    fn list_to_record_batch(
+        &self,
+        values: &Bound<'_, PyList>,
+        py: Python<'_>,
+    ) -> PyResult<PyObject> {
         let mut messages: Vec<DynamicMessage> = Vec::with_capacity(values.len());
         for value in values.iter() {
             let bytes: &[u8] = value.extract()?;

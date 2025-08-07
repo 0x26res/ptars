@@ -16,7 +16,6 @@ use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Va
 use std::iter::zip;
 use std::sync::Arc;
 
-
 fn singular_field_to_array(
     field_descriptor: &FieldDescriptor,
     messages: &[DynamicMessage],
@@ -783,8 +782,7 @@ pub fn messages_to_record_batch(
     messages: &[DynamicMessage],
     message_descriptor: &MessageDescriptor,
 ) -> RecordBatch {
-    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
-        fields_to_arrays(messages, message_descriptor);
+    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> = fields_to_arrays(messages, message_descriptor);
     let struct_array = if arrays.is_empty() {
         StructArray::new_empty_fields(messages.len(), None)
     } else {
