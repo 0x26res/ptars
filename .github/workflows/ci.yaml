@@ -7,7 +7,18 @@ on:
   pull_request:
 
 jobs:
-
+  super-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Super-Linter
+        uses: super-linter/super-linter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_PYTHON_RUFF: true
+          VALIDATE_RUST_CLIPPY: true
   lint:
     runs-on: ubuntu-latest
     steps:
