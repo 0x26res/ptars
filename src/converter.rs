@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::proto_to_arrow::convert_timestamps;
+    use crate::proto_to_arrow::messages_to_record_batch;
     use arrow::array::{Array, BooleanArray, TimestampNanosecondArray};
     use arrow_schema::{DataType, Field};
     use prost_reflect::prost_types::{
         field_descriptor_proto::{Label, Type},
         DescriptorProto, FieldDescriptorProto, FileDescriptorProto,
     };
-    use crate::proto_to_arrow::messages_to_record_batch;
     use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
     use std::sync::Arc;
 
