@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 fn singular_field_to_array(
     field_descriptor: &FieldDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
     match field_descriptor.kind() {
         Kind::Double => Ok(read_primitive_type::<Float64Type, Float64Array>(
@@ -94,7 +94,7 @@ fn read_i32(message: &DynamicMessage, field_descriptor: &FieldDescriptor) -> i32
 }
 
 fn convert_date(
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
     is_valid: &Vec<bool>,
     message_descriptor: &MessageDescriptor,
 ) -> Arc<Date32Array> {
@@ -150,7 +150,7 @@ fn convert_timestamps(
 fn nested_messages_to_array(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Arc<dyn Array> {
     let mut nested_messages: Vec<DynamicMessage> = Vec::new();
     let mut is_valid: Vec<bool> = Vec::new();
@@ -179,7 +179,7 @@ fn nested_messages_to_array(
 }
 
 fn read_primitive_type<T: ArrowPrimitiveType, A: From<Vec<T::Native>> + Array + 'static>(
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
     field_descriptor: &FieldDescriptor,
     extractor: &dyn Fn(&Value) -> Option<T::Native>,
 ) -> Arc<dyn Array> {
@@ -192,7 +192,7 @@ fn read_primitive_type<T: ArrowPrimitiveType, A: From<Vec<T::Native>> + Array + 
 }
 
 fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
-    messages: &'b Vec<DynamicMessage>,
+    messages: &'b [DynamicMessage],
     field_descriptor: &FieldDescriptor,
     extractor: &dyn Fn(&Value) -> Option<T>,
     default: T,
@@ -210,7 +210,7 @@ fn read_primitive<'b, T: Clone, A: From<Vec<T>> + Array + 'static>(
 
 fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
     field_descriptor: &FieldDescriptor,
-    messages: &'b Vec<DynamicMessage>,
+    messages: &'b [DynamicMessage],
     data_type: DataType,
     extractor: &dyn Fn(&Value) -> Option<T>,
 ) -> Result<Arc<dyn Array>, &'static str> {
@@ -240,7 +240,7 @@ fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
 
 fn repeated_field_to_array(
     field_descriptor: &FieldDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
     match field_descriptor.kind() {
         Kind::Double => read_repeated_primitive::<f64, Float64Array>(
@@ -304,7 +304,7 @@ fn repeated_field_to_array(
 
 fn read_repeated_string(
     field_descriptor: &FieldDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
     let mut string_builder = StringBuilder::new();
     let mut offsets: Vec<i32> = Vec::new();
@@ -331,7 +331,7 @@ fn read_repeated_string(
 
 fn read_repeated_bytes(
     field_descriptor: &FieldDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
     let mut builder = BinaryBuilder::new();
     let mut offsets: Vec<i32> = Vec::new();
@@ -359,7 +359,7 @@ fn read_repeated_bytes(
 fn read_repeated_messages(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
     let mut repeated_messages: Vec<DynamicMessage> = Vec::new();
     let mut offsets: Vec<i32> = Vec::new();
@@ -392,7 +392,7 @@ fn read_repeated_messages(
 
 fn field_to_array(
     field_descriptor: &FieldDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
     if field_descriptor.is_list() {
         repeated_field_to_array(field_descriptor, messages)
@@ -409,7 +409,7 @@ fn is_nullable(field: &FieldDescriptor) -> bool {
 
 fn field_to_tuple(
     field: &FieldDescriptor,
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
 ) -> Result<(Arc<Field>, Arc<dyn Array>), &'static str> {
     let results = field_to_array(field, messages);
     match results {
@@ -426,7 +426,7 @@ fn field_to_tuple(
 }
 
 pub fn fields_to_arrays(
-    messages: &Vec<DynamicMessage>,
+    messages: &[DynamicMessage],
     message_descriptor: &MessageDescriptor,
 ) -> Vec<(Arc<Field>, Arc<dyn Array>)> {
     message_descriptor
@@ -779,15 +779,10 @@ pub fn extract_array(
 }
 
 pub fn messages_to_record_batch(
-    values: &[Vec<u8>],
+    messages: &[DynamicMessage],
     message_descriptor: &MessageDescriptor,
 ) -> RecordBatch {
-    let messages: Vec<DynamicMessage> = values
-        .iter()
-        .map(|x| DynamicMessage::decode(message_descriptor.clone(), x.as_slice()).unwrap())
-        .collect();
-    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
-        converter::fields_to_arrays(&messages, message_descriptor);
+    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> = fields_to_arrays(messages, message_descriptor);
     let struct_array = if arrays.is_empty() {
         StructArray::new_empty_fields(messages.len(), None)
     } else {
