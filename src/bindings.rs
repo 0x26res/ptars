@@ -8,7 +8,7 @@ use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
-use pyo3::types::PyModuleMethods;
+use pyo3::types::{PyAnyMethods, PyList, PyListMethods, PyModuleMethods};
 use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -22,15 +22,22 @@ struct MessageHandler {
 
 #[pymethods]
 impl MessageHandler {
-    fn list_to_record_batch(&self, values: Vec<Vec<u8>>, py: Python<'_>) -> PyResult<PyObject> {
-        converter::messages_to_record_batch(&values, &self.message_descriptor).to_pyarrow(py)
+    fn list_to_record_batch(&self, values: &Bound<'_, PyList>, py: Python<'_>) -> PyResult<PyObject> {
+        let mut messages: Vec<DynamicMessage> = Vec::with_capacity(values.len());
+        for value in values.iter() {
+            let bytes: &[u8] = value.extract()?;
+            let message = DynamicMessage::decode(self.message_descriptor.clone(), bytes)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+            messages.push(message);
+        }
+        converter::messages_to_record_batch(&messages, &self.message_descriptor).to_pyarrow(py)
     }
 
-    fn just_convert(&self, values: Vec<Vec<u8>>, _py: Python<'_>) {
-        let _unused: Vec<DynamicMessage> = values
-            .iter()
-            .map(|x| DynamicMessage::decode(self.message_descriptor.clone(), x.as_slice()).unwrap())
-            .collect();
+    fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {
+        for value in values.iter() {
+            let bytes: &[u8] = value.extract().unwrap();
+            let _message = DynamicMessage::decode(self.message_descriptor.clone(), bytes).unwrap();
+        }
     }
 
     fn record_batch_to_array(
