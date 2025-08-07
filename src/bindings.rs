@@ -31,8 +31,7 @@ impl MessageHandler {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             messages.push(message);
         }
-        proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor)
-            .to_pyarrow(py)
+        proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor).to_pyarrow(py)
     }
 
     fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {

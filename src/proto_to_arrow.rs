@@ -1,20 +1,20 @@
-use crate::utils::CE_OFFSET;
+use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::ArrowNativeType;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, Int32Builder, StringBuilder};
 use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
 use arrow_array::{
-    Array, ArrayRef, ArrowPrimitiveType, BooleanArray, Date32Array, Float32Array,
-    Float64Array, Int32Array, Int64Array, ListArray, PrimitiveArray, RecordBatch, Scalar,
-    StructArray, TimestampNanosecondArray, UInt32Array, UInt64Array,
+    Array, ArrayRef, ArrowPrimitiveType, BooleanArray, Date32Array, Float32Array, Float64Array,
+    Int32Array, Int64Array, ListArray, PrimitiveArray, RecordBatch, Scalar, StructArray,
+    TimestampNanosecondArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
 use std::iter::zip;
 use std::sync::Arc;
-use arrow::array::ArrayData;
 
+pub static CE_OFFSET: i32 = 719163;
 
 pub fn singular_field_to_array(
     field_descriptor: &FieldDescriptor,

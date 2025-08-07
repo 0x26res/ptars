@@ -1,8 +1,6 @@
 use arrow::array::ArrayData;
 use arrow_array::builder::BinaryBuilder;
-use arrow_array::types::{
-    Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type,
-};
+use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, PrimitiveArray,
     RecordBatch, StringArray, StructArray,
