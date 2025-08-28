@@ -24,9 +24,6 @@ dev = [
   "ruff"
 ]
 
-[lint.isort]
-known-first-party = ["ptars", "ptars_proto"]
-
 [project]
 authors = [
   {name = "0x26res", email = "0x26res@gmail.com.co"}
@@ -43,11 +40,10 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License"
 ]
 dependencies = [
-  "pyarrow > 15",
-  "maturin<2.0,>=1.0",
-  "protobuf>=3.20.1",
   "pyarrow",
-  "setuptools",
+  "maturin<2.0,>=1.0",
+  "protobuf",
+  "pyarrow",
   "setuptools-rust<1.0.0,>=0.10.6"
 ]
 description = "Convert from protobuf to arrow and back in rust"

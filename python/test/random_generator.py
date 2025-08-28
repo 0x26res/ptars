@@ -17,7 +17,7 @@ UNIT_IN_NANOS = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
 def is_map(field_descriptor: FieldDescriptor) -> bool:
     return (
         field_descriptor.type == FieldDescriptor.TYPE_MESSAGE
-        and field_descriptor.label == FieldDescriptor.LABEL_REPEATED
+        and field_descriptor.is_repeated
         and field_descriptor.message_type.GetOptions().map_entry
     )
 
@@ -86,7 +86,7 @@ def generate_message(
     for field in message_type.DESCRIPTOR.fields:
         if field.containing_oneof is None:
             if (
-                field.label == FieldDescriptor.LABEL_REPEATED
+                field.is_repeated
                 or field.type != FieldDescriptor.TYPE_MESSAGE
                 or random.getrandbits(1) == 1
             ):
@@ -103,7 +103,7 @@ def generate_messages(
 def set_field(message: Message, field: FieldDescriptor, count: int) -> None:
     data = generate_field_data(field, count)
 
-    if field.label == FieldDescriptor.LABEL_REPEATED:
+    if field.is_repeated:
         field_value = getattr(message, field.name)
         if is_map(field):
             if (
@@ -125,7 +125,7 @@ def set_field(message: Message, field: FieldDescriptor, count: int) -> None:
 
 
 def generate_field_data(field: FieldDescriptor, count: int):
-    if field.label == FieldDescriptor.LABEL_REPEATED:
+    if field.is_repeated:
         size = random.randint(0, count)
         return [_generate_data(field, count) for _ in range(size)]
     else:
@@ -162,7 +162,7 @@ def truncate_nanos(message: Message, timestamp_unit: str, time_unit: str) -> Mes
     else:
         for field in message.DESCRIPTOR.fields:
             if field.type == FieldDescriptor.TYPE_MESSAGE:
-                if field.label == FieldDescriptor.LABEL_REPEATED:
+                if field.is_repeated:
                     field_value = getattr(message, field.name)
                     if (
                         field.message_type is not None
