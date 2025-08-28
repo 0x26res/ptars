@@ -2,7 +2,6 @@ use arrow::array::ArrayData;
 use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::ArrowNativeType;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, Int32Builder, StringBuilder};
-use arrow_array::types::Int64Type;
 use arrow_array::{
     Array, ArrayRef, BooleanArray, Date32Array, Float32Array, Float64Array, Int32Array,
     Int64Array, ListArray, PrimitiveArray, RecordBatch, Scalar, StructArray,
@@ -22,18 +21,42 @@ pub trait ProtoArrayBuilder {
 
 pub static CE_OFFSET: i32 = 719163;
 
+use arrow_array::types::{
+    Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type,
+};
+
 pub fn get_singular_array_builder(
     field_descriptor: &FieldDescriptor,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     match field_descriptor.kind() {
-        Kind::Double => Ok(Box::new(Float64BuilderWrapper::new())),
-        Kind::Float => Ok(Box::new(Float32BuilderWrapper::new())),
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(Int32BuilderWrapper::new())),
-        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(Box::new(Int64BuilderWrapper::new())),
-        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(UInt32BuilderWrapper::new())),
-        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(UInt64BuilderWrapper::new())),
+        Kind::Double => Ok(Box::new(PrimitiveBuilderWrapper::<Float64Type>::new(
+            Value::as_f64,
+        ))),
+        Kind::Float => Ok(Box::new(PrimitiveBuilderWrapper::<Float32Type>::new(
+            Value::as_f32,
+        ))),
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
+            Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
+                Value::as_i32,
+            )))
+        }
+        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => {
+            Ok(Box::new(PrimitiveBuilderWrapper::<Int64Type>::new(
+                Value::as_i64,
+            )))
+        }
+        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(
+            PrimitiveBuilderWrapper::<UInt32Type>::new(Value::as_u32),
+        )),
+        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(
+            PrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64),
+        )),
         Kind::Bool => Ok(Box::new(BooleanBuilderWrapper::new())),
-        Kind::Enum(_) => Ok(Box::new(Int32BuilderWrapper::new())),
+        Kind::Enum(_) => Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
+            Value::as_enum_number,
+        ))),
+        Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
+        Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
         _ => Err("Unsupported type for singular array builder"),
     }
 }
@@ -46,26 +69,12 @@ pub fn singular_field_to_array(
         return Ok(read_primitive(messages, field_descriptor, builder));
     }
     match field_descriptor.kind() {
-        Kind::String => {
-            let mut string_builder = StringBuilder::new();
-            for message in messages {
-                string_builder.append_value(message.get_field(field_descriptor).as_str().unwrap());
-            }
-            Ok(Arc::new(string_builder.finish()))
-        }
-        Kind::Bytes => {
-            let mut binary_builder = BinaryBuilder::new();
-            for message in messages {
-                binary_builder.append_value(message.get_field(field_descriptor).as_bytes().unwrap())
-            }
-            Ok(Arc::new(binary_builder.finish()))
-        }
         Kind::Message(message_descriptor) => Ok(nested_messages_to_array(
             field_descriptor,
             &message_descriptor,
             messages,
         )),
-        _ => todo!(),
+        _ => Err("Unsupported field type"),
     }
 }
 
@@ -413,46 +422,48 @@ pub fn messages_to_record_batch(
     RecordBatch::from(struct_array)
 }
 
-use arrow_array::builder::{
-    BooleanBuilder, Float32Builder, Float64Builder, Int64Builder, UInt32Builder, UInt64Builder,
-};
+use arrow_array::builder::BooleanBuilder;
 
-macro_rules! impl_proto_array_builder_for_primitive {
-    ($wrapper_name:ident, $builder_type:ty, $value_as_fn:ident) => {
-        struct $wrapper_name {
-            builder: $builder_type,
-        }
+use arrow_array::builder::PrimitiveBuilder;
+use arrow_array::ArrowPrimitiveType;
 
-        impl $wrapper_name {
-            fn new() -> Self {
-                Self {
-                    builder: <$builder_type>::new(),
-                }
-            }
-        }
-
-        impl ProtoArrayBuilder for $wrapper_name {
-            fn append(&mut self, value: &Value) {
-                self.builder.append_value(value.$value_as_fn().unwrap());
-            }
-
-            fn append_null(&mut self) {
-                self.builder.append_null();
-            }
-
-            fn finish(&mut self) -> Arc<dyn Array> {
-                Arc::new(std::mem::take(&mut self.builder).finish())
-            }
-        }
-    };
+struct PrimitiveBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    builder: PrimitiveBuilder<T>,
+    extractor: fn(&Value) -> Option<T::Native>,
 }
 
-impl_proto_array_builder_for_primitive!(Int32BuilderWrapper, Int32Builder, as_i32);
-impl_proto_array_builder_for_primitive!(Int64BuilderWrapper, Int64Builder, as_i64);
-impl_proto_array_builder_for_primitive!(UInt32BuilderWrapper, UInt32Builder, as_u32);
-impl_proto_array_builder_for_primitive!(UInt64BuilderWrapper, UInt64Builder, as_u64);
-impl_proto_array_builder_for_primitive!(Float32BuilderWrapper, Float32Builder, as_f32);
-impl_proto_array_builder_for_primitive!(Float64BuilderWrapper, Float64Builder, as_f64);
+impl<T> PrimitiveBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    fn new(extractor: fn(&Value) -> Option<T::Native>) -> Self {
+        Self {
+            builder: PrimitiveBuilder::<T>::new(),
+            extractor,
+        }
+    }
+}
+
+impl<T> ProtoArrayBuilder for PrimitiveBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    fn append(&mut self, value: &Value) {
+        let v = (self.extractor)(value).unwrap();
+        self.builder.append_value(v);
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+}
 
 struct BooleanBuilderWrapper {
     builder: BooleanBuilder,
@@ -469,6 +480,58 @@ impl BooleanBuilderWrapper {
 impl ProtoArrayBuilder for BooleanBuilderWrapper {
     fn append(&mut self, value: &Value) {
         self.builder.append_value(value.as_bool().unwrap());
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+}
+
+struct StringBuilderWrapper {
+    builder: StringBuilder,
+}
+
+impl StringBuilderWrapper {
+    fn new() -> Self {
+        Self {
+            builder: StringBuilder::new(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for StringBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        self.builder.append_value(value.as_str().unwrap());
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+}
+
+struct BinaryBuilderWrapper {
+    builder: BinaryBuilder,
+}
+
+impl BinaryBuilderWrapper {
+    fn new() -> Self {
+        Self {
+            builder: BinaryBuilder::new(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for BinaryBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        self.builder.append_value(value.as_bytes().unwrap());
     }
 
     fn append_null(&mut self) {
