@@ -9,7 +9,6 @@ dev = [
   "googleapis-common-protos>=1.53.0",
   "grpcio-tools>=1.46.0",
   "inflection>=0.5.1",
-  "isort>=5.10.1",
   "maturin<2.0.0,>=1.3.1",
   "mkdocs>=1.4.2",
   "mkdocs-material>=9.0.3",
@@ -23,9 +22,6 @@ dev = [
   "pytest-xdist>=3.1.0",
   "ruff"
 ]
-
-[lint.isort]
-known-first-party = ["ptars", "ptars_proto"]
 
 [project]
 authors = [
@@ -43,12 +39,9 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License"
 ]
 dependencies = [
-  "pyarrow > 15",
-  "maturin<2.0,>=1.0",
-  "protobuf>=3.20.1",
   "pyarrow",
-  "setuptools",
-  "setuptools-rust<1.0.0,>=0.10.6"
+  "protobuf",
+  "pyarrow"
 ]
 description = "Convert from protobuf to arrow and back in rust"
 keywords = ["apache-arrow", "protobuf", "data", "rust"]

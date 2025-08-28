@@ -9,9 +9,11 @@
 [![License][license-image]][license-url]
 [![Downloads][downloads-image]][downloads-url]
 [![Downloads][downloads-month-image]][downloads-month-url]
-[![Code style: black][codestyle-image]][codestyle-url]
 [![snyk][snyk-image]][snyk-url]
-![Size][repo-size-url]
+[![GitHub issues][github-issues-image]][github-issues-url]
+[![Contributing][contributing-image]][contributing-url]
+[![FOSSA Status][fossa-image]][fossa-url]
+[![Repo Size][repo-size-image]][repo-size-url]
 
 Protobuf to Arrow, using Rust
 
@@ -108,10 +110,15 @@ ptars_to_proto          7.0171 (1.0)
 [downloads-url]: https://static.pepy.tech/badge/ptars
 [downloads-month-image]: https://pepy.tech/badge/ptars/month
 [downloads-month-url]: https://static.pepy.tech/badge/ptars/month
-[codestyle-image]: https://img.shields.io/badge/code%20style-black-000000.svg
-[codestyle-url]: https://github.com/astral-sh/ruff
 [snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
 [snyk-url]: https://snyk.io/advisor/python/ptars
 [ruff-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
 [ruff-url]: https://github.com/astral-sh/ruff
 [repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
+[repo-size-image]: https://img.shields.io/github/repo-size/0x26res/ptars
+[github-issues-image]: https://img.shields.io/badge/issue_tracking-github-blue.svg
+[github-issues-url]: https://github.com/0x26res/ptars/issues
+[contributing-image]: https://img.shields.io/badge/PR-Welcome-%23FF8300.svg?
+[contributing-url]: https://github.com/0x26res/ptars/blob/main/DEVELOPMENT.md
+[fossa-image]: https://app.fossa.com/api/projects/git%2Bgithub.com%2F0x26res%2Fptars.svg?type=shield
+[fossa-url]: https://app.fossa.com/projects/git%2Bgithub.com%2F0x26res%2ptars?ref=badge_shield
