@@ -12,6 +12,7 @@
 [![Code style: black][codestyle-image]][codestyle-url]
 [![snyk][snyk-image]][snyk-url]
 ![Size][repo-size-url]
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2F0x26res%2Fptars.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2F0x26res%2Fptars?ref=badge_shield)
 
 Protobuf to Arrow, using Rust
 
@@ -115,3 +116,7 @@ ptars_to_proto          7.0171 (1.0)
 [ruff-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
 [ruff-url]: https://github.com/astral-sh/ruff
 [repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2F0x26res%2Fptars.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2F0x26res%2Fptars?ref=badge_large)
