@@ -3,9 +3,8 @@ use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::ArrowNativeType;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, Int32Builder, StringBuilder};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Date32Array, Float32Array, Float64Array, Int32Array, Int64Array,
-    ListArray, PrimitiveArray, RecordBatch, Scalar, StructArray, TimestampNanosecondArray,
-    UInt32Array, UInt64Array,
+    Array, ArrayRef, BooleanArray, Date32Array, Int64Array, ListArray, PrimitiveArray, RecordBatch,
+    Scalar, StructArray, TimestampNanosecondArray,
 };
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
@@ -52,6 +51,38 @@ pub fn get_singular_array_builder(
         Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
         _ => Err("Unsupported type for singular array builder"),
+    }
+}
+
+pub fn get_repeated_array_builder(
+    field_descriptor: &FieldDescriptor,
+) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
+    match field_descriptor.kind() {
+        Kind::Double => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Float64Type>::new(
+            Value::as_f64,
+        ))),
+        Kind::Float => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Float32Type>::new(
+            Value::as_f32,
+        ))),
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(
+            RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(Value::as_i32),
+        )),
+        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(Box::new(
+            RepeatedPrimitiveBuilderWrapper::<Int64Type>::new(Value::as_i64),
+        )),
+        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(
+            RepeatedPrimitiveBuilderWrapper::<UInt32Type>::new(Value::as_u32),
+        )),
+        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(
+            RepeatedPrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64),
+        )),
+        Kind::Bool => Ok(Box::new(RepeatedBooleanBuilderWrapper::new())),
+        Kind::Enum(_) => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(
+            Value::as_enum_number,
+        ))),
+        Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new())),
+        Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new())),
+        _ => Err("Unsupported type for repeated array builder"),
     }
 }
 
@@ -176,152 +207,22 @@ pub fn read_primitive(
     builder.finish()
 }
 
-pub fn read_repeated_primitive<'b, T, A: From<Vec<T>> + Array>(
-    field_descriptor: &FieldDescriptor,
-    messages: &'b [DynamicMessage],
-    data_type: DataType,
-    extractor: &dyn Fn(&Value) -> Option<T>,
-) -> Result<Arc<dyn Array>, &'static str> {
-    let mut all_values: Vec<T> = Vec::new();
-    let mut offsets: Vec<i32> = Vec::new();
-    offsets.push(0);
-    for message in messages {
-        if message.has_field(field_descriptor) {
-            let field_value = message.get_field(field_descriptor);
-            println!("{}", field_descriptor.full_name());
-            let field_value_as_list: &[Value] = field_value.as_list().unwrap();
-            for each_value in field_value_as_list {
-                all_values.push(extractor(each_value).unwrap())
-            }
-        }
-        offsets.push(i32::from_usize(all_values.len()).unwrap());
-    }
-    let list_data_type = DataType::List(Arc::new(Field::new("item", data_type, false)));
-    let list_data = ArrayData::builder(list_data_type)
-        .len(messages.len())
-        .add_buffer(Buffer::from_iter(offsets))
-        .add_child_data(A::from(all_values).to_data())
-        .build()
-        .unwrap();
-    Ok(Arc::new(ListArray::from(list_data)))
-}
-
 pub fn repeated_field_to_array(
     field_descriptor: &FieldDescriptor,
     messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
+    if let Ok(mut builder) = get_repeated_array_builder(field_descriptor) {
+        for message in messages {
+            builder.append(&message.get_field(field_descriptor));
+        }
+        return Ok(builder.finish());
+    }
     match field_descriptor.kind() {
-        Kind::Double => read_repeated_primitive::<f64, Float64Array>(
-            field_descriptor,
-            messages,
-            DataType::Float64,
-            &Value::as_f64,
-        ),
-        Kind::Float => read_repeated_primitive::<f32, Float32Array>(
-            field_descriptor,
-            messages,
-            DataType::Float32,
-            &Value::as_f32,
-        ),
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => read_repeated_primitive::<i32, Int32Array>(
-            field_descriptor,
-            messages,
-            DataType::Int32,
-            &Value::as_i32,
-        ),
-        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => read_repeated_primitive::<i64, Int64Array>(
-            field_descriptor,
-            messages,
-            DataType::Int64,
-            &Value::as_i64,
-        ),
-        Kind::Fixed32 | Kind::Uint32 => read_repeated_primitive::<u32, UInt32Array>(
-            field_descriptor,
-            messages,
-            DataType::UInt32,
-            &Value::as_u32,
-        ),
-        Kind::Fixed64 | Kind::Uint64 => read_repeated_primitive::<u64, UInt64Array>(
-            field_descriptor,
-            messages,
-            DataType::UInt64,
-            &Value::as_u64,
-        ),
-        Kind::Bool => read_repeated_primitive::<bool, BooleanArray>(
-            field_descriptor,
-            messages,
-            DataType::Boolean,
-            &Value::as_bool,
-        ),
-        Kind::String => read_repeated_string(field_descriptor, messages),
-
-        Kind::Bytes => read_repeated_bytes(field_descriptor, messages),
-
         Kind::Message(message_descriptor) => {
             read_repeated_messages(field_descriptor, &message_descriptor, messages)
         }
-
-        Kind::Enum(_) => read_repeated_primitive::<i32, Int32Array>(
-            field_descriptor,
-            messages,
-            DataType::Int32,
-            &Value::as_enum_number,
-        ),
+        _ => Err("Unsupported field type"),
     }
-}
-
-pub fn read_repeated_string(
-    field_descriptor: &FieldDescriptor,
-    messages: &[DynamicMessage],
-) -> Result<Arc<dyn Array>, &'static str> {
-    let mut string_builder = StringBuilder::new();
-    let mut offsets: Vec<i32> = Vec::new();
-    offsets.push(0);
-    for message in messages {
-        if message.has_field(field_descriptor) {
-            let each_list = message.get_field(field_descriptor);
-            let values = each_list.as_list().unwrap();
-            for each_value in values {
-                string_builder.append_value(each_value.as_str().unwrap())
-            }
-        }
-        offsets.push(i32::from_usize(string_builder.len()).unwrap());
-    }
-    let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)));
-    let list_data = ArrayData::builder(list_data_type)
-        .len(messages.len())
-        .add_buffer(Buffer::from_iter(offsets))
-        .add_child_data(string_builder.finish().to_data())
-        .build()
-        .unwrap();
-    Ok(Arc::new(ListArray::from(list_data)))
-}
-
-pub fn read_repeated_bytes(
-    field_descriptor: &FieldDescriptor,
-    messages: &[DynamicMessage],
-) -> Result<Arc<dyn Array>, &'static str> {
-    let mut builder = BinaryBuilder::new();
-    let mut offsets: Vec<i32> = Vec::new();
-    offsets.push(0);
-    for message in messages {
-        if message.has_field(field_descriptor) {
-            let each_list = message.get_field(field_descriptor);
-            let values = each_list.as_list().unwrap();
-            for each_value in values {
-                builder.append_value(each_value.as_bytes().unwrap())
-            }
-        }
-        offsets.push(i32::from_usize(builder.len()).unwrap());
-    }
-    let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Binary, false)));
-    let list_data = ArrayData::builder(list_data_type)
-        .len(messages.len())
-        .add_buffer(Buffer::from_iter(offsets))
-        .add_child_data(builder.finish().to_data())
-        .build()
-        .unwrap();
-    Ok(Arc::new(ListArray::from(list_data)))
 }
 
 pub fn read_repeated_messages(
@@ -456,6 +357,224 @@ where
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+}
+
+struct RepeatedPrimitiveBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    builder: PrimitiveBuilder<T>,
+    offsets: Vec<i32>,
+    extractor: fn(&Value) -> Option<T::Native>,
+}
+
+impl<T> RepeatedPrimitiveBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    fn new(extractor: fn(&Value) -> Option<T::Native>) -> Self {
+        let mut offsets = Vec::new();
+        offsets.push(0);
+        Self {
+            builder: PrimitiveBuilder::<T>::new(),
+            offsets,
+            extractor,
+        }
+    }
+}
+
+impl<T> ProtoArrayBuilder for RepeatedPrimitiveBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                self.builder
+                    .append_value((self.extractor)(each_value).unwrap());
+            }
+        }
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn append_null(&mut self) {
+        // For repeated fields, a null value is an empty list.
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values = std::mem::take(&mut self.builder).finish();
+        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
+
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            "item",
+            values.data_type().clone(),
+            false, // list items are not nullable
+        )));
+
+        let list_data = ArrayData::builder(list_data_type)
+            .len(offsets_buffer.len() / 4 - 1)
+            .add_buffer(offsets_buffer)
+            .add_child_data(values.to_data())
+            .build()
+            .unwrap();
+
+        Arc::new(ListArray::from(list_data))
+    }
+}
+
+struct RepeatedBooleanBuilderWrapper {
+    builder: BooleanBuilder,
+    offsets: Vec<i32>,
+}
+
+impl RepeatedBooleanBuilderWrapper {
+    fn new() -> Self {
+        let mut offsets = Vec::new();
+        offsets.push(0);
+        Self {
+            builder: BooleanBuilder::new(),
+            offsets,
+        }
+    }
+}
+
+impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                self.builder.append_value(each_value.as_bool().unwrap());
+            }
+        }
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn append_null(&mut self) {
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values = std::mem::take(&mut self.builder).finish();
+        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
+
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            "item",
+            DataType::Boolean,
+            false,
+        )));
+
+        let list_data = ArrayData::builder(list_data_type)
+            .len(offsets_buffer.len() / 4 - 1)
+            .add_buffer(offsets_buffer)
+            .add_child_data(values.to_data())
+            .build()
+            .unwrap();
+
+        Arc::new(ListArray::from(list_data))
+    }
+}
+
+struct RepeatedBinaryBuilderWrapper {
+    builder: BinaryBuilder,
+    offsets: Vec<i32>,
+}
+
+impl RepeatedBinaryBuilderWrapper {
+    fn new() -> Self {
+        let mut offsets = Vec::new();
+        offsets.push(0);
+        Self {
+            builder: BinaryBuilder::new(),
+            offsets,
+        }
+    }
+}
+
+impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                self.builder
+                    .append_value(each_value.as_bytes().unwrap());
+            }
+        }
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn append_null(&mut self) {
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values = std::mem::take(&mut self.builder).finish();
+        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
+
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            "item",
+            DataType::Binary,
+            false,
+        )));
+
+        let list_data = ArrayData::builder(list_data_type)
+            .len(offsets_buffer.len() / 4 - 1)
+            .add_buffer(offsets_buffer)
+            .add_child_data(values.to_data())
+            .build()
+            .unwrap();
+
+        Arc::new(ListArray::from(list_data))
+    }
+}
+
+struct RepeatedStringBuilderWrapper {
+    builder: StringBuilder,
+    offsets: Vec<i32>,
+}
+
+impl RepeatedStringBuilderWrapper {
+    fn new() -> Self {
+        let mut offsets = Vec::new();
+        offsets.push(0);
+        Self {
+            builder: StringBuilder::new(),
+            offsets,
+        }
+    }
+}
+
+impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                self.builder.append_value(each_value.as_str().unwrap());
+            }
+        }
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn append_null(&mut self) {
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values = std::mem::take(&mut self.builder).finish();
+        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
+
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            "item",
+            DataType::Utf8,
+            false,
+        )));
+
+        let list_data = ArrayData::builder(list_data_type)
+            .len(offsets_buffer.len() / 4 - 1)
+            .add_buffer(offsets_buffer)
+            .add_child_data(values.to_data())
+            .build()
+            .unwrap();
+
+        Arc::new(ListArray::from(list_data))
     }
 }
 
