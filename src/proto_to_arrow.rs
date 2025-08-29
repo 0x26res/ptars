@@ -3,9 +3,9 @@ use arrow::buffer::{Buffer, NullBuffer};
 use arrow::datatypes::ArrowNativeType;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, Int32Builder, StringBuilder};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Date32Array, Float32Array, Float64Array, Int32Array,
-    Int64Array, ListArray, PrimitiveArray, RecordBatch, Scalar, StructArray,
-    TimestampNanosecondArray, UInt32Array, UInt64Array,
+    Array, ArrayRef, BooleanArray, Date32Array, Float32Array, Float64Array, Int32Array, Int64Array,
+    ListArray, PrimitiveArray, RecordBatch, Scalar, StructArray, TimestampNanosecondArray,
+    UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
@@ -21,9 +21,7 @@ pub trait ProtoArrayBuilder {
 
 pub static CE_OFFSET: i32 = 719163;
 
-use arrow_array::types::{
-    Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type,
-};
+use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
 
 pub fn get_singular_array_builder(
     field_descriptor: &FieldDescriptor,
@@ -35,22 +33,18 @@ pub fn get_singular_array_builder(
         Kind::Float => Ok(Box::new(PrimitiveBuilderWrapper::<Float32Type>::new(
             Value::as_f32,
         ))),
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
-            Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
-                Value::as_i32,
-            )))
-        }
-        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => {
-            Ok(Box::new(PrimitiveBuilderWrapper::<Int64Type>::new(
-                Value::as_i64,
-            )))
-        }
-        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(
-            PrimitiveBuilderWrapper::<UInt32Type>::new(Value::as_u32),
-        )),
-        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(
-            PrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64),
-        )),
+        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(PrimitiveBuilderWrapper::<
+            Int32Type,
+        >::new(Value::as_i32))),
+        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(Box::new(PrimitiveBuilderWrapper::<
+            Int64Type,
+        >::new(Value::as_i64))),
+        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(PrimitiveBuilderWrapper::<UInt32Type>::new(
+            Value::as_u32,
+        ))),
+        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(PrimitiveBuilderWrapper::<UInt64Type>::new(
+            Value::as_u64,
+        ))),
         Kind::Bool => Ok(Box::new(BooleanBuilderWrapper::new())),
         Kind::Enum(_) => Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
             Value::as_enum_number,
