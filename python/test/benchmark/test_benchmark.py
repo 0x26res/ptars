@@ -6,10 +6,9 @@ import ptars
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
-from pytest_benchmark.fixture import BenchmarkFixture
-
 from ptars_protos import benchmark_pb2
 from ptars_protos.benchmark_pb2 import BenchmarkMessage
+from pytest_benchmark.fixture import BenchmarkFixture
 
 MESSAGE_COUNT = 10_000
 STRING_SIZE = 10
