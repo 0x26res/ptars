@@ -58,12 +58,12 @@ pub fn get_repeated_array_builder(
     field_descriptor: &FieldDescriptor,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     match field_descriptor.kind() {
-        Kind::Double => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Float64Type>::new(
-            Value::as_f64,
-        ))),
-        Kind::Float => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Float32Type>::new(
-            Value::as_f32,
-        ))),
+        Kind::Double => Ok(Box::new(
+            RepeatedPrimitiveBuilderWrapper::<Float64Type>::new(Value::as_f64),
+        )),
+        Kind::Float => Ok(Box::new(
+            RepeatedPrimitiveBuilderWrapper::<Float32Type>::new(Value::as_f32),
+        )),
         Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(
             RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(Value::as_i32),
         )),
@@ -374,8 +374,7 @@ where
     T: ArrowPrimitiveType,
 {
     fn new(extractor: fn(&Value) -> Option<T::Native>) -> Self {
-        let mut offsets = Vec::new();
-        offsets.push(0);
+        let offsets: Vec<i32> = vec![0];
         Self {
             builder: PrimitiveBuilder::<T>::new(),
             offsets,
@@ -431,8 +430,7 @@ struct RepeatedBooleanBuilderWrapper {
 
 impl RepeatedBooleanBuilderWrapper {
     fn new() -> Self {
-        let mut offsets = Vec::new();
-        offsets.push(0);
+        let offsets: Vec<i32> = vec![0];
         Self {
             builder: BooleanBuilder::new(),
             offsets,
@@ -458,11 +456,7 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            "item",
-            DataType::Boolean,
-            false,
-        )));
+        let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Boolean, false)));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
@@ -482,8 +476,7 @@ struct RepeatedBinaryBuilderWrapper {
 
 impl RepeatedBinaryBuilderWrapper {
     fn new() -> Self {
-        let mut offsets = Vec::new();
-        offsets.push(0);
+        let offsets: Vec<i32> = vec![0];
         Self {
             builder: BinaryBuilder::new(),
             offsets,
@@ -495,8 +488,7 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
     fn append(&mut self, value: &Value) {
         if let Some(values) = value.as_list() {
             for each_value in values {
-                self.builder
-                    .append_value(each_value.as_bytes().unwrap());
+                self.builder.append_value(each_value.as_bytes().unwrap());
             }
         }
         self.offsets.push(self.builder.len() as i32);
@@ -510,11 +502,7 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            "item",
-            DataType::Binary,
-            false,
-        )));
+        let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Binary, false)));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
@@ -534,8 +522,7 @@ struct RepeatedStringBuilderWrapper {
 
 impl RepeatedStringBuilderWrapper {
     fn new() -> Self {
-        let mut offsets = Vec::new();
-        offsets.push(0);
+        let offsets: Vec<i32> = vec![0];
         Self {
             builder: StringBuilder::new(),
             offsets,
@@ -561,11 +548,7 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            "item",
-            DataType::Utf8,
-            false,
-        )));
+        let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
