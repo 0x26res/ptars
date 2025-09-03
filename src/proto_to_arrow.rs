@@ -255,6 +255,14 @@ impl ProtoArrayBuilder for MapArrayBuilder {
 
         Arc::new(MapArray::from(map_data))
     }
+
+    fn len(&self) -> usize {
+        self.key_builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.key_builder.is_empty()
+    }
 }
 
 struct MessageArrayBuilder {
