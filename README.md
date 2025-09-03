@@ -75,22 +75,22 @@ messages_back: list[SearchRequest] = [
 which is implemented in plain python.
 It is:
 
-- marginally faster when converting from proto to arrow.
-- About 3 times faster when converting from arrow to proto.
+- 2.5 times faster when converting from proto to arrow.
+- 3 times faster when converting from arrow to proto.
 
 ```benchmark
 ---- benchmark 'to_arrow': 2 tests ----
 Name (time in ms)        Mean          
 ---------------------------------------
-protarrow_to_arrow     8.6871 (1.43)   
-ptars_to_arrow         6.0837 (1.0)    
+protarrow_to_arrow     9.4863 (2.63)   
+ptars_to_arrow         3.6009 (1.0)    
 ---------------------------------------
 
 ---- benchmark 'to_proto': 2 tests -----
 Name (time in ms)         Mean          
 ----------------------------------------
-protarrow_to_proto     21.7639 (3.10)   
-ptars_to_proto          7.0171 (1.0)    
+protarrow_to_proto     20.8297 (3.20)   
+ptars_to_proto          6.5013 (1.0)    
 ----------------------------------------
 ```
 

@@ -44,7 +44,7 @@ Make sure to install the release version of ptars.
 The locally built version is much slower.
 
 ```shell
-maturin develop --releas
+maturin develop --release
 pytest python/test/benchmark --benchmark-name=short --benchmark-columns=mean --benchmark-sort=name
 ```
 
