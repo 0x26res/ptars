@@ -1,15 +1,12 @@
 use arrow::array::ArrayData;
-use arrow::buffer::{Buffer, NullBuffer};
-use arrow::datatypes::ArrowNativeType;
-use arrow_array::builder::{ArrayBuilder, BinaryBuilder, Int32Builder, StringBuilder};
-use arrow_array::{
-    Array, ArrayRef, BooleanArray, Date32Array, Int64Array, ListArray, PrimitiveArray, RecordBatch,
-    Scalar, StructArray, TimestampNanosecondArray,
-};
+use arrow::buffer::Buffer;
+use arrow_array::builder::{ArrayBuilder, BinaryBuilder, StringBuilder};
+use arrow_array::types::{Date32Type, TimestampNanosecondType};
+use arrow_array::{Array, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
-use std::iter::zip;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub trait ProtoArrayBuilder {
@@ -50,7 +47,15 @@ pub fn get_singular_array_builder(
         ))),
         Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
-        _ => Err("Unsupported type for singular array builder"),
+        Kind::Message(message_descriptor) => {
+            if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+                Ok(Box::new(TimestampArrayBuilder::new(&message_descriptor)))
+            } else if message_descriptor.full_name() == "google.type.Date" {
+                Ok(Box::new(DateArrayBuilder::new(&message_descriptor)))
+            } else {
+                Ok(Box::new(MessageArrayBuilder::new(&message_descriptor)))
+            }
+        }
     }
 }
 
@@ -82,7 +87,21 @@ pub fn get_repeated_array_builder(
         ))),
         Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new())),
-        _ => Err("Unsupported type for repeated array builder"),
+        Kind::Message(message_descriptor) => Ok(Box::new(RepeatedMessageBuilderWrapper::new(
+            &message_descriptor,
+        ))),
+    }
+}
+
+pub fn get_array_builder(
+    field_descriptor: &FieldDescriptor,
+) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
+    if field_descriptor.is_list() {
+        get_repeated_array_builder(field_descriptor)
+    } else if field_descriptor.is_map() {
+        Err("map not supported")
+    } else {
+        get_singular_array_builder(field_descriptor)
     }
 }
 
@@ -90,106 +109,8 @@ pub fn singular_field_to_array(
     field_descriptor: &FieldDescriptor,
     messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
-    if let Ok(builder) = get_singular_array_builder(field_descriptor) {
-        return Ok(read_primitive(messages, field_descriptor, builder));
-    }
-    match field_descriptor.kind() {
-        Kind::Message(message_descriptor) => Ok(nested_messages_to_array(
-            field_descriptor,
-            &message_descriptor,
-            messages,
-        )),
-        _ => Err("Unsupported field type"),
-    }
-}
-
-pub fn read_i32(message: &DynamicMessage, field_descriptor: &FieldDescriptor) -> i32 {
-    message.get_field(field_descriptor).as_i32().unwrap()
-}
-
-pub fn convert_date(
-    messages: &[DynamicMessage],
-    is_valid: &Vec<bool>,
-    message_descriptor: &MessageDescriptor,
-) -> Arc<Date32Array> {
-    let year_descriptor = message_descriptor.get_field_by_name("year").unwrap();
-    let month_descriptor = message_descriptor.get_field_by_name("month").unwrap();
-    let day_descriptor = message_descriptor.get_field_by_name("day").unwrap();
-
-    let mut builder = Int32Builder::new();
-    for (message, message_valid) in zip(messages, is_valid) {
-        if *message_valid {
-            let year: i32 = read_i32(message, &year_descriptor);
-            let month: i32 = read_i32(message, &month_descriptor);
-            let day: i32 = read_i32(message, &day_descriptor);
-
-            if (year == 0) && (month == 0) && (day == 0) {
-                builder.append_value(0)
-            } else {
-                builder.append_value(
-                    chrono::NaiveDate::from_ymd_opt(
-                        year,
-                        u32::try_from(month).unwrap(),
-                        u32::try_from(day).unwrap(),
-                    )
-                    .unwrap()
-                    .num_days_from_ce()
-                        - CE_OFFSET,
-                )
-            }
-        } else {
-            builder.append_null()
-        }
-    }
-    Arc::new(builder.finish().reinterpret_cast())
-}
-
-pub fn convert_timestamps(
-    arrays: &[(Arc<Field>, Arc<dyn Array>)],
-    is_valid: &[bool],
-) -> Arc<TimestampNanosecondArray> {
-    let scalar: Scalar<PrimitiveArray<Int64Type>> = Int64Array::new_scalar(1_000_000_000);
-    let seconds: Arc<dyn Array> = arrays[0].clone().1;
-    let nanos: Arc<dyn Array> = arrays[1].clone().1;
-    let casted = arrow::compute::kernels::cast(&nanos, &DataType::Int64).unwrap();
-    let multiplied = arrow::compute::kernels::numeric::mul(&seconds, &scalar).unwrap();
-    let total: ArrayRef = arrow::compute::kernels::numeric::add(&multiplied, &casted).unwrap();
-
-    let is_valid_array = BooleanArray::from(is_valid.to_owned());
-    let is_null = arrow::compute::not(&is_valid_array).unwrap();
-    let total_nullable = arrow::compute::nullif(&total, &is_null).unwrap();
-    Arc::new(Int64Array::from(total_nullable.to_data()).reinterpret_cast())
-}
-
-pub fn nested_messages_to_array(
-    field_descriptor: &FieldDescriptor,
-    message_descriptor: &MessageDescriptor,
-    messages: &[DynamicMessage],
-) -> Arc<dyn Array> {
-    let mut nested_messages: Vec<DynamicMessage> = Vec::new();
-    let mut is_valid: Vec<bool> = Vec::new();
-    for message in messages {
-        is_valid.push(message.has_field(field_descriptor));
-        let ee = message.get_field(field_descriptor);
-        let each_value = ee.as_message().unwrap();
-        nested_messages.push(each_value.clone());
-    }
-    if message_descriptor.full_name() == "google.type.Date" {
-        convert_date(&nested_messages, &is_valid, message_descriptor)
-    } else {
-        let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> =
-            fields_to_arrays(&nested_messages, message_descriptor);
-        if arrays.is_empty() {
-            Arc::new(StructArray::new_empty_fields(
-                nested_messages.len(),
-                Some(NullBuffer::from_iter(is_valid)),
-            ))
-        } else if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-            convert_timestamps(&arrays, &is_valid)
-        } else {
-            Arc::new(StructArray::from((arrays, Buffer::from_iter(is_valid))))
-        }
-    }
+    let builder = get_singular_array_builder(field_descriptor)?;
+    Ok(read_primitive(messages, field_descriptor, builder))
 }
 
 pub fn read_primitive(
@@ -211,52 +132,11 @@ pub fn repeated_field_to_array(
     field_descriptor: &FieldDescriptor,
     messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
-    if let Ok(mut builder) = get_repeated_array_builder(field_descriptor) {
-        for message in messages {
-            builder.append(&message.get_field(field_descriptor));
-        }
-        return Ok(builder.finish());
-    }
-    match field_descriptor.kind() {
-        Kind::Message(message_descriptor) => {
-            read_repeated_messages(field_descriptor, &message_descriptor, messages)
-        }
-        _ => Err("Unsupported field type"),
-    }
-}
-
-pub fn read_repeated_messages(
-    field_descriptor: &FieldDescriptor,
-    message_descriptor: &MessageDescriptor,
-    messages: &[DynamicMessage],
-) -> Result<Arc<dyn Array>, &'static str> {
-    let mut repeated_messages: Vec<DynamicMessage> = Vec::new();
-    let mut offsets: Vec<i32> = Vec::new();
-    offsets.push(0);
+    let mut builder = get_repeated_array_builder(field_descriptor)?;
     for message in messages {
-        for each_message in message.get_field(field_descriptor).as_list().unwrap() {
-            repeated_messages.push(each_message.as_message().unwrap().clone());
-        }
-        offsets.push(i32::from_usize(repeated_messages.len()).unwrap());
+        builder.append(&message.get_field(field_descriptor));
     }
-    let arrays = fields_to_arrays(&repeated_messages, message_descriptor);
-    let struct_array: Arc<StructArray> = if arrays.is_empty() {
-        Arc::new(StructArray::new_empty_fields(repeated_messages.len(), None))
-    } else {
-        Arc::new(StructArray::from(arrays))
-    };
-    let list_data_type = DataType::List(Arc::new(Field::new(
-        "item",
-        struct_array.data_type().clone(),
-        false,
-    )));
-    let list_data: ArrayData = ArrayData::builder(list_data_type)
-        .len(messages.len())
-        .add_buffer(Buffer::from_iter(offsets))
-        .add_child_data(struct_array.to_data())
-        .build()
-        .unwrap();
-    Ok(Arc::new(ListArray::from(list_data)))
+    Ok(builder.finish())
 }
 
 pub fn field_to_array(
@@ -321,6 +201,86 @@ use arrow_array::builder::BooleanBuilder;
 
 use arrow_array::builder::PrimitiveBuilder;
 use arrow_array::ArrowPrimitiveType;
+
+struct MessageArrayBuilder {
+    builders: BTreeMap<u32, Box<dyn ProtoArrayBuilder>>,
+    message_descriptor: MessageDescriptor,
+    is_valid: BooleanBuilder,
+}
+
+impl MessageArrayBuilder {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        let mut builders = BTreeMap::new();
+
+        for field_descriptor in message_descriptor.fields() {
+            let builder = get_array_builder(&field_descriptor).unwrap();
+            builders.insert(field_descriptor.number(), builder);
+        }
+
+        Self {
+            builders,
+            message_descriptor: message_descriptor.clone(),
+            is_valid: BooleanBuilder::new(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for MessageArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            self.is_valid.append_value(true);
+            for field_descriptor in self.message_descriptor.fields() {
+                let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+                if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
+                    builder.append_null();
+                } else {
+                    builder.append(&message.get_field(&field_descriptor));
+                }
+            }
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.is_valid.append_value(false);
+        for field_descriptor in self.message_descriptor.fields() {
+            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+            builder.append_null();
+        }
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let is_valid = std::mem::take(&mut self.is_valid).finish();
+        if self.message_descriptor.fields().next().is_none() {
+            return Arc::new(StructArray::new_empty_fields(
+                is_valid.len(),
+                Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
+            ));
+        }
+
+        let (fields, columns): (Vec<_>, Vec<_>) = self
+            .message_descriptor
+            .fields()
+            .map(|field_descriptor| {
+                let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+                let array = builder.finish();
+                let field = Field::new(
+                    field_descriptor.name(),
+                    array.data_type().clone(),
+                    field_descriptor.supports_presence(),
+                );
+                (field, array)
+            })
+            .unzip();
+
+        Arc::new(StructArray::new(
+            arrow_schema::Fields::from(fields),
+            columns,
+            Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
+        ))
+    }
+}
 
 struct PrimitiveBuilderWrapper<T>
 where
@@ -410,6 +370,56 @@ where
             "item",
             values.data_type().clone(),
             false, // list items are not nullable
+        )));
+
+        let list_data = ArrayData::builder(list_data_type)
+            .len(offsets_buffer.len() / 4 - 1)
+            .add_buffer(offsets_buffer)
+            .add_child_data(values.to_data())
+            .build()
+            .unwrap();
+
+        Arc::new(ListArray::from(list_data))
+    }
+}
+
+struct RepeatedMessageBuilderWrapper {
+    builder: MessageArrayBuilder,
+    offsets: Vec<i32>,
+}
+
+impl RepeatedMessageBuilderWrapper {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        let offsets: Vec<i32> = vec![0];
+        Self {
+            builder: MessageArrayBuilder::new(message_descriptor),
+            offsets,
+        }
+    }
+}
+
+impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                self.builder.append(each_value);
+            }
+        }
+        self.offsets.push(self.builder.is_valid.len() as i32);
+    }
+
+    fn append_null(&mut self) {
+        self.offsets.push(self.builder.is_valid.len() as i32);
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values = self.builder.finish();
+        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
+
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            "item",
+            values.data_type().clone(),
+            false,
         )));
 
         let list_data = ArrayData::builder(list_data_type)
@@ -587,6 +597,95 @@ impl ProtoArrayBuilder for BooleanBuilderWrapper {
     }
 }
 
+struct TimestampArrayBuilder {
+    builder: PrimitiveBuilder<TimestampNanosecondType>,
+    seconds_descriptor: FieldDescriptor,
+    nanos_descriptor: FieldDescriptor,
+}
+
+impl TimestampArrayBuilder {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            builder: PrimitiveBuilder::<TimestampNanosecondType>::new(),
+            seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
+            nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for TimestampArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let seconds = message
+                .get_field(&self.seconds_descriptor)
+                .as_i64()
+                .unwrap();
+            let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap();
+            self.builder
+                .append_value(seconds * 1_000_000_000 + i64::from(nanos));
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+}
+
+struct DateArrayBuilder {
+    builder: PrimitiveBuilder<Date32Type>,
+    year_descriptor: FieldDescriptor,
+    month_descriptor: FieldDescriptor,
+    day_descriptor: FieldDescriptor,
+}
+
+impl DateArrayBuilder {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            builder: PrimitiveBuilder::<Date32Type>::new(),
+            year_descriptor: message_descriptor.get_field_by_name("year").unwrap(),
+            month_descriptor: message_descriptor.get_field_by_name("month").unwrap(),
+            day_descriptor: message_descriptor.get_field_by_name("day").unwrap(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for DateArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let year = message.get_field(&self.year_descriptor).as_i32().unwrap();
+            let month = message.get_field(&self.month_descriptor).as_i32().unwrap();
+            let day = message.get_field(&self.day_descriptor).as_i32().unwrap();
+
+            if year == 0 && month == 0 && day == 0 {
+                self.builder.append_value(0);
+            } else {
+                self.builder.append_value(
+                    chrono::NaiveDate::from_ymd_opt(year, month as u32, day as u32)
+                        .unwrap()
+                        .num_days_from_ce()
+                        - CE_OFFSET,
+                );
+            }
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+}
+
 struct StringBuilderWrapper {
     builder: StringBuilder,
 }
@@ -636,66 +735,5 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_timestamps() {
-        let seconds_field = Arc::new(Field::new("seconds", DataType::Int64, true));
-        let nanos_field = Arc::new(Field::new("nanos", DataType::Int32, true));
-
-        //let seconds = vec![1710330693i64, 1710330702i64];
-        let seconds_array: Arc<dyn Array> = Arc::new(arrow::array::Int64Array::from(vec![
-            1710330693i64,
-            1710330702i64,
-            0i64,
-        ]));
-        let nanos_array: Arc<dyn Array> =
-            Arc::new(arrow::array::Int32Array::from(vec![1_000, 123_456_789, 0]));
-
-        let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
-
-        let valid = vec![true, true, false];
-        let results = convert_timestamps(&arrays, &valid);
-        assert_eq!(results.len(), 3);
-
-        let expected: TimestampNanosecondArray = arrow::array::Int64Array::from(vec![
-            1710330693i64 * 1_000_000_000i64 + 1_000i64,
-            1710330702i64 * 1_000_000_000i64 + 123_456_789i64,
-            0,
-        ])
-        .reinterpret_cast();
-
-        let mask = BooleanArray::from(vec![false, false, true]);
-        let expected_with_null = arrow::compute::nullif(&expected, &mask).unwrap();
-
-        assert_eq!(
-            results.as_ref().to_data(),
-            expected_with_null.as_ref().to_data()
-        )
-    }
-
-    #[test]
-    fn test_convert_timestamps_empty() {
-        let seconds_field = Arc::new(Field::new("seconds", DataType::Int64, true));
-        let nanos_field = Arc::new(Field::new("nanos", DataType::Int32, true));
-
-        let seconds_array: Arc<dyn Array> =
-            Arc::new(arrow::array::Int64Array::from(Vec::<i64>::new()));
-        let nanos_array: Arc<dyn Array> =
-            Arc::new(arrow::array::Int32Array::from(Vec::<i32>::new()));
-
-        let arrays = vec![(seconds_field, seconds_array), (nanos_field, nanos_array)];
-        let valid: Vec<bool> = vec![];
-        let results = convert_timestamps(&arrays, &valid);
-        assert_eq!(results.len(), 0);
-
-        let expected: TimestampNanosecondArray =
-            arrow::array::Int64Array::from(Vec::<i64>::new()).reinterpret_cast();
-        assert_eq!(results.as_ref(), &expected)
     }
 }
