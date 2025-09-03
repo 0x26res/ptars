@@ -13,11 +13,24 @@ pub trait ProtoArrayBuilder {
     fn append(&mut self, value: &Value);
     fn append_null(&mut self);
     fn finish(&mut self) -> Arc<dyn Array>;
+    fn len(&self) -> usize;
 }
 
 pub static CE_OFFSET: i32 = 719163;
 
 use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
+
+pub fn get_message_array_builder(
+    message_descriptor: &MessageDescriptor,
+) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
+    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+        Ok(Box::new(TimestampArrayBuilder::new(message_descriptor)))
+    } else if message_descriptor.full_name() == "google.type.Date" {
+        Ok(Box::new(DateArrayBuilder::new(message_descriptor)))
+    } else {
+        Ok(Box::new(MessageArrayBuilder::new(message_descriptor)))
+    }
+}
 
 pub fn get_singular_array_builder(
     field_descriptor: &FieldDescriptor,
@@ -47,15 +60,7 @@ pub fn get_singular_array_builder(
         ))),
         Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
-        Kind::Message(message_descriptor) => {
-            if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-                Ok(Box::new(TimestampArrayBuilder::new(&message_descriptor)))
-            } else if message_descriptor.full_name() == "google.type.Date" {
-                Ok(Box::new(DateArrayBuilder::new(&message_descriptor)))
-            } else {
-                Ok(Box::new(MessageArrayBuilder::new(&message_descriptor)))
-            }
-        }
+        Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor),
     }
 }
 
@@ -87,9 +92,12 @@ pub fn get_repeated_array_builder(
         ))),
         Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new())),
-        Kind::Message(message_descriptor) => Ok(Box::new(RepeatedMessageBuilderWrapper::new(
-            &message_descriptor,
-        ))),
+        Kind::Message(message_descriptor) => {
+            let message_builder = get_message_array_builder(&message_descriptor)?;
+            Ok(Box::new(RepeatedMessageBuilderWrapper::new(
+                message_builder,
+            )))
+        }
     }
 }
 
@@ -280,6 +288,10 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
             Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
         ))
     }
+
+    fn len(&self) -> usize {
+        self.is_valid.len()
+    }
 }
 
 struct PrimitiveBuilderWrapper<T>
@@ -317,6 +329,10 @@ where
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
     }
 }
 
@@ -381,20 +397,21 @@ where
 
         Arc::new(ListArray::from(list_data))
     }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
 }
 
 struct RepeatedMessageBuilderWrapper {
-    builder: MessageArrayBuilder,
+    builder: Box<dyn ProtoArrayBuilder>,
     offsets: Vec<i32>,
 }
 
 impl RepeatedMessageBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(builder: Box<dyn ProtoArrayBuilder>) -> Self {
         let offsets: Vec<i32> = vec![0];
-        Self {
-            builder: MessageArrayBuilder::new(message_descriptor),
-            offsets,
-        }
+        Self { builder, offsets }
     }
 }
 
@@ -405,11 +422,11 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
                 self.builder.append(each_value);
             }
         }
-        self.offsets.push(self.builder.is_valid.len() as i32);
+        self.offsets.push(self.builder.len() as i32);
     }
 
     fn append_null(&mut self) {
-        self.offsets.push(self.builder.is_valid.len() as i32);
+        self.offsets.push(self.builder.len() as i32);
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
@@ -430,6 +447,10 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
             .unwrap();
 
         Arc::new(ListArray::from(list_data))
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
     }
 }
 
@@ -477,6 +498,10 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
 
         Arc::new(ListArray::from(list_data))
     }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
 }
 
 struct RepeatedBinaryBuilderWrapper {
@@ -522,6 +547,10 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
             .unwrap();
 
         Arc::new(ListArray::from(list_data))
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
     }
 }
 
@@ -569,6 +598,10 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
 
         Arc::new(ListArray::from(list_data))
     }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
 }
 
 struct BooleanBuilderWrapper {
@@ -594,6 +627,10 @@ impl ProtoArrayBuilder for BooleanBuilderWrapper {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
     }
 }
 
@@ -634,6 +671,10 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
     }
 }
 
@@ -684,6 +725,10 @@ impl ProtoArrayBuilder for DateArrayBuilder {
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
 }
 
 struct StringBuilderWrapper {
@@ -710,6 +755,10 @@ impl ProtoArrayBuilder for StringBuilderWrapper {
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
 }
 
 struct BinaryBuilderWrapper {
@@ -735,5 +784,9 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
     }
 }
