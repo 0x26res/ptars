@@ -128,7 +128,7 @@ message ExampleMessage {
 //  map<string, sfixed32> sfixed32_string_map = 127;
 //  map<string, sfixed64> sfixed64_string_map = 128;
 //  map<string, bool> bool_string_map = 129;
-//  map<string, string> string_string_map = 130;
+  map<string, string> string_string_map = 130;
 //  map<string, bytes> bytes_string_map = 131;
 //  map<string, google.protobuf.DoubleValue> wrapped_double_string_map = 132;
 //  map<string, google.protobuf.FloatValue> wrapped_float_string_map = 133;
