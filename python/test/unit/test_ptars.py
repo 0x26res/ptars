@@ -184,6 +184,34 @@ def test_date_missing(pool):
     ]
 
 
+def test_repeated_date(pool):
+    handler = pool.get_for_message(simple_pb2.WithDate.DESCRIPTOR)
+    messages = [
+        simple_pb2.WithDate(
+            dates=[
+                Date(year=2024, month=4, day=9),
+                Date(year=2024, month=4, day=10),
+            ]
+        ),
+        simple_pb2.WithDate(dates=[]),
+        simple_pb2.WithDate(),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+    record_batch = handler.list_to_record_batch(payloads)
+
+    assert pa.types.is_list(record_batch["dates"].type)
+    assert pa.types.is_date32(record_batch["dates"].type.value_type)
+
+    assert record_batch["dates"].to_pylist() == [
+        [
+            datetime.date(2024, 4, 9),
+            datetime.date(2024, 4, 10),
+        ],
+        [],
+        [],
+    ]
+
+
 def run_round_trip(messages, message_type):
     payloads = [message.SerializeToString() for message in messages]
 
