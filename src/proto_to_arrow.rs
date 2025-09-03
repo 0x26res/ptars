@@ -14,6 +14,7 @@ pub trait ProtoArrayBuilder {
     fn append_null(&mut self);
     fn finish(&mut self) -> Arc<dyn Array>;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
 }
 
 pub static CE_OFFSET: i32 = 719163;
@@ -292,6 +293,10 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
     fn len(&self) -> usize {
         self.is_valid.len()
     }
+
+    fn is_empty(&self) -> bool {
+        self.is_valid.is_empty()
+    }
 }
 
 struct PrimitiveBuilderWrapper<T>
@@ -333,6 +338,10 @@ where
 
     fn len(&self) -> usize {
         self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -401,6 +410,10 @@ where
     fn len(&self) -> usize {
         self.offsets.len() - 1
     }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.iter().len() == 1
+    }
 }
 
 struct RepeatedMessageBuilderWrapper {
@@ -452,6 +465,10 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
     fn len(&self) -> usize {
         self.offsets.len() - 1
     }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
+    }
 }
 
 struct RepeatedBooleanBuilderWrapper {
@@ -501,6 +518,10 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
 
     fn len(&self) -> usize {
         self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
     }
 }
 
@@ -552,6 +573,10 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
     fn len(&self) -> usize {
         self.offsets.len() - 1
     }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
+    }
 }
 
 struct RepeatedStringBuilderWrapper {
@@ -602,6 +627,10 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
     fn len(&self) -> usize {
         self.offsets.len() - 1
     }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
+    }
 }
 
 struct BooleanBuilderWrapper {
@@ -631,6 +660,10 @@ impl ProtoArrayBuilder for BooleanBuilderWrapper {
 
     fn len(&self) -> usize {
         self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -675,6 +708,10 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
 
     fn len(&self) -> usize {
         self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -729,6 +766,10 @@ impl ProtoArrayBuilder for DateArrayBuilder {
     fn len(&self) -> usize {
         self.builder.len()
     }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
 }
 
 struct StringBuilderWrapper {
@@ -759,6 +800,10 @@ impl ProtoArrayBuilder for StringBuilderWrapper {
     fn len(&self) -> usize {
         self.builder.len()
     }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
 }
 
 struct BinaryBuilderWrapper {
@@ -788,5 +833,9 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
 
     fn len(&self) -> usize {
         self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
