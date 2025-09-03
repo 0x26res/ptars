@@ -10,7 +10,7 @@ env:
 
 
 .PHONY: develop
-develop: env
+develop: env protoc
 	. .venv/bin/activate && \
 		maturin develop
 

@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
+import "google/type/date.proto";
 
 package messages;
 
@@ -142,4 +143,9 @@ message WithOptionalMessage {
 message WithTimestamp {
     google.protobuf.Timestamp timestamp = 1;
     repeated google.protobuf.Timestamp timestamps = 2;
+}
+
+message WithDate {
+    google.type.Date date = 1;
+    repeated google.type.Date dates = 2;
 }

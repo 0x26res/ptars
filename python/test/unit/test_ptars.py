@@ -1,9 +1,11 @@
+import datetime
 import sys
 
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
 from google.protobuf.timestamp_pb2 import Timestamp
+from google.type.date_pb2 import Date
 from ptars import HandlerPool
 from ptars._lib import MessageHandler
 
@@ -162,6 +164,22 @@ def test_timestamp_missing(pool):
     assert record_batch["timestamp"].is_null().to_pylist() == [False, True]
     assert record_batch["timestamp"].cast(pa.int64()).to_pylist() == [
         1712660619123456789,
+        None,
+    ]
+
+
+def test_date_missing(pool):
+    handler = pool.get_for_message(simple_pb2.WithDate.DESCRIPTOR)
+    messages = [
+        simple_pb2.WithDate(date=Date(year=2024, month=4, day=9)),
+        simple_pb2.WithDate(),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+    record_batch = handler.list_to_record_batch(payloads)
+
+    assert record_batch["date"].is_null().to_pylist() == [False, True]
+    assert record_batch["date"].to_pylist() == [
+        datetime.date(2024, 4, 9),
         None,
     ]
 
