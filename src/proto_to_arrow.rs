@@ -1,4 +1,5 @@
 use arrow::array::ArrayData;
+use arrow::array::MapArray;
 use arrow::buffer::Buffer;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, StringBuilder};
 use arrow_array::types::{Date32Type, TimestampNanosecondType};
@@ -105,28 +106,24 @@ pub fn get_repeated_array_builder(
 pub fn get_array_builder(
     field_descriptor: &FieldDescriptor,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
-    if field_descriptor.is_list() {
+    if field_descriptor.is_map() {
+        if let Kind::Message(message_descriptor) = field_descriptor.kind() {
+            Ok(Box::new(MapArrayBuilder::new(&message_descriptor)))
+        } else {
+            Err("map field is not a message")
+        }
+    } else if field_descriptor.is_list() {
         get_repeated_array_builder(field_descriptor)
-    } else if field_descriptor.is_map() {
-        Err("map not supported")
     } else {
         get_singular_array_builder(field_descriptor)
     }
 }
 
-pub fn singular_field_to_array(
+pub fn field_to_array(
     field_descriptor: &FieldDescriptor,
     messages: &[DynamicMessage],
 ) -> Result<Arc<dyn Array>, &'static str> {
-    let builder = get_singular_array_builder(field_descriptor)?;
-    Ok(read_primitive(messages, field_descriptor, builder))
-}
-
-pub fn read_primitive(
-    messages: &[DynamicMessage],
-    field_descriptor: &FieldDescriptor,
-    mut builder: Box<dyn ProtoArrayBuilder>,
-) -> Arc<dyn Array> {
+    let mut builder = get_array_builder(field_descriptor)?;
     for message in messages {
         if field_descriptor.supports_presence() && !message.has_field(field_descriptor) {
             builder.append_null();
@@ -134,31 +131,7 @@ pub fn read_primitive(
             builder.append(&message.get_field(field_descriptor));
         }
     }
-    builder.finish()
-}
-
-pub fn repeated_field_to_array(
-    field_descriptor: &FieldDescriptor,
-    messages: &[DynamicMessage],
-) -> Result<Arc<dyn Array>, &'static str> {
-    let mut builder = get_repeated_array_builder(field_descriptor)?;
-    for message in messages {
-        builder.append(&message.get_field(field_descriptor));
-    }
     Ok(builder.finish())
-}
-
-pub fn field_to_array(
-    field_descriptor: &FieldDescriptor,
-    messages: &[DynamicMessage],
-) -> Result<Arc<dyn Array>, &'static str> {
-    if field_descriptor.is_list() {
-        repeated_field_to_array(field_descriptor, messages)
-    } else if field_descriptor.is_map() {
-        Err("map not supported")
-    } else {
-        singular_field_to_array(field_descriptor, messages)
-    }
 }
 
 pub fn is_nullable(field: &FieldDescriptor) -> bool {
@@ -197,6 +170,100 @@ use arrow_array::builder::BooleanBuilder;
 
 use arrow_array::builder::PrimitiveBuilder;
 use arrow_array::ArrowPrimitiveType;
+
+struct MapArrayBuilder {
+    key_builder: Box<dyn ProtoArrayBuilder>,
+    value_builder: Box<dyn ProtoArrayBuilder>,
+    key_field_descriptor: FieldDescriptor,
+    value_field_descriptor: FieldDescriptor,
+    offsets: Vec<i32>,
+}
+
+impl MapArrayBuilder {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        let key_field_descriptor = message_descriptor.get_field_by_name("key").unwrap();
+        let value_field_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+        let key_builder = get_singular_array_builder(&key_field_descriptor).unwrap();
+        let value_builder = get_singular_array_builder(&value_field_descriptor).unwrap();
+        Self {
+            key_builder,
+            value_builder,
+            key_field_descriptor,
+            value_field_descriptor,
+            offsets: vec![0],
+        }
+    }
+}
+
+impl ProtoArrayBuilder for MapArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                let message = each_value.as_message().unwrap();
+                self.key_builder
+                    .append(&message.get_field(&self.key_field_descriptor));
+                self.value_builder
+                    .append(&message.get_field(&self.value_field_descriptor));
+            }
+        }
+        let last_offset = *self.offsets.last().unwrap();
+        self.offsets
+            .push(last_offset + value.as_list().map_or(0, |v| v.len() as i32));
+    }
+
+    fn append_null(&mut self) {
+        let last_offset = *self.offsets.last().unwrap();
+        self.offsets.push(last_offset);
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let key_array = self.key_builder.finish();
+        let value_array = self.value_builder.finish();
+
+        let key_field = Arc::new(Field::new(
+            "key",
+            key_array.data_type().clone(),
+            is_nullable(&self.key_field_descriptor),
+        ));
+        let value_field = Arc::new(Field::new(
+            "value",
+            value_array.data_type().clone(),
+            is_nullable(&self.value_field_descriptor),
+        ));
+
+        let entry_struct =
+            StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
+
+        let map_data_type = DataType::Map(
+            Arc::new(Field::new(
+                "entries",
+                entry_struct.data_type().clone(),
+                false,
+            )),
+            false,
+        );
+
+        let len = self.offsets.len() - 1;
+        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
+
+        let map_data = ArrayData::builder(map_data_type)
+            .len(len)
+            .add_buffer(offsets_buffer)
+            .add_child_data(entry_struct.into_data())
+            .build()
+            .unwrap();
+
+        Arc::new(MapArray::from(map_data))
+    }
+
+    fn len(&self) -> usize {
+        self.key_builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.key_builder.is_empty()
+    }
+}
 
 struct MessageArrayBuilder {
     builders: BTreeMap<u32, Box<dyn ProtoArrayBuilder>>,
