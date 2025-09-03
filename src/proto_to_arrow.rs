@@ -14,11 +14,25 @@ pub trait ProtoArrayBuilder {
     fn append(&mut self, value: &Value);
     fn append_null(&mut self);
     fn finish(&mut self) -> Arc<dyn Array>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
 }
 
 pub static CE_OFFSET: i32 = 719163;
 
 use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
+
+pub fn get_message_array_builder(
+    message_descriptor: &MessageDescriptor,
+) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
+    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+        Ok(Box::new(TimestampArrayBuilder::new(message_descriptor)))
+    } else if message_descriptor.full_name() == "google.type.Date" {
+        Ok(Box::new(DateArrayBuilder::new(message_descriptor)))
+    } else {
+        Ok(Box::new(MessageArrayBuilder::new(message_descriptor)))
+    }
+}
 
 pub fn get_singular_array_builder(
     field_descriptor: &FieldDescriptor,
@@ -48,15 +62,7 @@ pub fn get_singular_array_builder(
         ))),
         Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
-        Kind::Message(message_descriptor) => {
-            if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-                Ok(Box::new(TimestampArrayBuilder::new(&message_descriptor)))
-            } else if message_descriptor.full_name() == "google.type.Date" {
-                Ok(Box::new(DateArrayBuilder::new(&message_descriptor)))
-            } else {
-                Ok(Box::new(MessageArrayBuilder::new(&message_descriptor)))
-            }
-        }
+        Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor),
     }
 }
 
@@ -88,9 +94,12 @@ pub fn get_repeated_array_builder(
         ))),
         Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new())),
-        Kind::Message(message_descriptor) => Ok(Box::new(RepeatedMessageBuilderWrapper::new(
-            &message_descriptor,
-        ))),
+        Kind::Message(message_descriptor) => {
+            let message_builder = get_message_array_builder(&message_descriptor)?;
+            Ok(Box::new(RepeatedMessageBuilderWrapper::new(
+                message_builder,
+            )))
+        }
     }
 }
 
@@ -155,19 +164,6 @@ pub fn fields_to_arrays(
         .fields()
         .map(|x| field_to_tuple(&x, messages).unwrap())
         .collect()
-}
-
-pub fn messages_to_record_batch(
-    messages: &[DynamicMessage],
-    message_descriptor: &MessageDescriptor,
-) -> RecordBatch {
-    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> = fields_to_arrays(messages, message_descriptor);
-    let struct_array = if arrays.is_empty() {
-        StructArray::new_empty_fields(messages.len(), None)
-    } else {
-        StructArray::from(arrays)
-    };
-    RecordBatch::from(struct_array)
 }
 
 use arrow_array::builder::BooleanBuilder;
@@ -282,40 +278,26 @@ impl MessageArrayBuilder {
             is_valid: BooleanBuilder::new(),
         }
     }
-}
 
-impl ProtoArrayBuilder for MessageArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            self.is_valid.append_value(true);
-            for field_descriptor in self.message_descriptor.fields() {
-                let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-                if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
-                    builder.append_null();
-                } else {
-                    builder.append(&message.get_field(&field_descriptor));
-                }
-            }
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.is_valid.append_value(false);
+    fn append(&mut self, message: &DynamicMessage) {
+        self.is_valid.append_value(true);
         for field_descriptor in self.message_descriptor.fields() {
             let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-            builder.append_null();
+            if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
+                builder.append_null();
+            } else {
+                builder.append(&message.get_field(&field_descriptor));
+            }
         }
     }
 
-    fn finish(&mut self) -> Arc<dyn Array> {
+    fn build_struct_array(&mut self) -> StructArray {
         let is_valid = std::mem::take(&mut self.is_valid).finish();
         if self.message_descriptor.fields().next().is_none() {
-            return Arc::new(StructArray::new_empty_fields(
+            return StructArray::new_empty_fields(
                 is_valid.len(),
                 Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
-            ));
+            );
         }
 
         let (fields, columns): (Vec<_>, Vec<_>) = self
@@ -333,11 +315,41 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
             })
             .unzip();
 
-        Arc::new(StructArray::new(
+        StructArray::new(
             arrow_schema::Fields::from(fields),
             columns,
             Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
-        ))
+        )
+    }
+}
+
+impl ProtoArrayBuilder for MessageArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            self.append(message);
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.is_valid.append_value(false);
+        for field_descriptor in self.message_descriptor.fields() {
+            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+            builder.append_null();
+        }
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(self.build_struct_array())
+    }
+
+    fn len(&self) -> usize {
+        self.is_valid.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_valid.is_empty()
     }
 }
 
@@ -376,6 +388,14 @@ where
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -440,20 +460,25 @@ where
 
         Arc::new(ListArray::from(list_data))
     }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.iter().len() == 1
+    }
 }
 
 struct RepeatedMessageBuilderWrapper {
-    builder: MessageArrayBuilder,
+    builder: Box<dyn ProtoArrayBuilder>,
     offsets: Vec<i32>,
 }
 
 impl RepeatedMessageBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(builder: Box<dyn ProtoArrayBuilder>) -> Self {
         let offsets: Vec<i32> = vec![0];
-        Self {
-            builder: MessageArrayBuilder::new(message_descriptor),
-            offsets,
-        }
+        Self { builder, offsets }
     }
 }
 
@@ -464,11 +489,11 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
                 self.builder.append(each_value);
             }
         }
-        self.offsets.push(self.builder.is_valid.len() as i32);
+        self.offsets.push(self.builder.len() as i32);
     }
 
     fn append_null(&mut self) {
-        self.offsets.push(self.builder.is_valid.len() as i32);
+        self.offsets.push(self.builder.len() as i32);
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
@@ -489,6 +514,14 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
             .unwrap();
 
         Arc::new(ListArray::from(list_data))
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
     }
 }
 
@@ -536,6 +569,14 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
 
         Arc::new(ListArray::from(list_data))
     }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
+    }
 }
 
 struct RepeatedBinaryBuilderWrapper {
@@ -581,6 +622,14 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
             .unwrap();
 
         Arc::new(ListArray::from(list_data))
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
     }
 }
 
@@ -628,6 +677,14 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
 
         Arc::new(ListArray::from(list_data))
     }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
+    }
 }
 
 struct BooleanBuilderWrapper {
@@ -653,6 +710,14 @@ impl ProtoArrayBuilder for BooleanBuilderWrapper {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -693,6 +758,14 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -743,6 +816,14 @@ impl ProtoArrayBuilder for DateArrayBuilder {
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
 }
 
 struct StringBuilderWrapper {
@@ -768,6 +849,14 @@ impl ProtoArrayBuilder for StringBuilderWrapper {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
     }
 }
 
@@ -795,4 +884,23 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+pub fn messages_to_record_batch(
+    messages: &[DynamicMessage],
+    message_descriptor: &MessageDescriptor,
+) -> RecordBatch {
+    let mut builder = MessageArrayBuilder::new(message_descriptor);
+    messages.iter().for_each(|message| {
+        builder.append(message);
+    });
+    RecordBatch::from(builder.build_struct_array())
 }
