@@ -1,8 +1,8 @@
 use arrow::array::ArrayData;
+use arrow::array::MapArray;
 use arrow::buffer::Buffer;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, StringBuilder};
 use arrow_array::types::{Date32Type, TimestampNanosecondType};
-use arrow::array::MapArray;
 use arrow_array::{Array, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
@@ -109,7 +109,6 @@ pub fn get_array_builder(
         get_singular_array_builder(field_descriptor)
     }
 }
-
 
 pub fn field_to_array(
     field_descriptor: &FieldDescriptor,
@@ -236,7 +235,8 @@ impl ProtoArrayBuilder for MapArrayBuilder {
             is_nullable(&self.value_field_descriptor),
         ));
 
-        let entry_struct = StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
+        let entry_struct =
+            StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
 
         let map_data_type = DataType::Map(
             Arc::new(Field::new(
