@@ -193,19 +193,6 @@ pub fn fields_to_arrays(
         .collect()
 }
 
-pub fn messages_to_record_batch(
-    messages: &[DynamicMessage],
-    message_descriptor: &MessageDescriptor,
-) -> RecordBatch {
-    let arrays: Vec<(Arc<Field>, Arc<dyn Array>)> = fields_to_arrays(messages, message_descriptor);
-    let struct_array = if arrays.is_empty() {
-        StructArray::new_empty_fields(messages.len(), None)
-    } else {
-        StructArray::from(arrays)
-    };
-    RecordBatch::from(struct_array)
-}
-
 use arrow_array::builder::BooleanBuilder;
 
 use arrow_array::builder::PrimitiveBuilder;
@@ -232,40 +219,26 @@ impl MessageArrayBuilder {
             is_valid: BooleanBuilder::new(),
         }
     }
-}
 
-impl ProtoArrayBuilder for MessageArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            self.is_valid.append_value(true);
-            for field_descriptor in self.message_descriptor.fields() {
-                let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-                if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
-                    builder.append_null();
-                } else {
-                    builder.append(&message.get_field(&field_descriptor));
-                }
-            }
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.is_valid.append_value(false);
+    fn append(&mut self, message: &DynamicMessage) {
+        self.is_valid.append_value(true);
         for field_descriptor in self.message_descriptor.fields() {
             let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-            builder.append_null();
+            if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
+                builder.append_null();
+            } else {
+                builder.append(&message.get_field(&field_descriptor));
+            }
         }
     }
 
-    fn finish(&mut self) -> Arc<dyn Array> {
+    fn build_struct_array(&mut self) -> StructArray {
         let is_valid = std::mem::take(&mut self.is_valid).finish();
         if self.message_descriptor.fields().next().is_none() {
-            return Arc::new(StructArray::new_empty_fields(
+            return StructArray::new_empty_fields(
                 is_valid.len(),
                 Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
-            ));
+            );
         }
 
         let (fields, columns): (Vec<_>, Vec<_>) = self
@@ -283,11 +256,33 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
             })
             .unzip();
 
-        Arc::new(StructArray::new(
+        StructArray::new(
             arrow_schema::Fields::from(fields),
             columns,
             Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
-        ))
+        )
+    }
+}
+
+impl ProtoArrayBuilder for MessageArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            self.append(message);
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.is_valid.append_value(false);
+        for field_descriptor in self.message_descriptor.fields() {
+            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+            builder.append_null();
+        }
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(self.build_struct_array())
     }
 
     fn len(&self) -> usize {
@@ -838,4 +833,15 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
     fn is_empty(&self) -> bool {
         self.builder.is_empty()
     }
+}
+
+pub fn messages_to_record_batch(
+    messages: &[DynamicMessage],
+    message_descriptor: &MessageDescriptor,
+) -> RecordBatch {
+    let mut builder = MessageArrayBuilder::new(message_descriptor);
+    messages.iter().for_each(|message| {
+        builder.append(message);
+    });
+    RecordBatch::from(builder.build_struct_array())
 }
