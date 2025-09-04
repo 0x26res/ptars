@@ -36,3 +36,11 @@ protoc: env
 .PHONY: lint
 lint:
 	cargo clippy -- -D warnings
+
+.PHONY: coverage
+coverage: develop
+	. .venv/bin/activate && \
+		coverage run --source=python/ptars -m pytest python/test/unit && \
+		coverage xml -o coverage.xml
+	CARGO_INCREMENTAL=0 RUSTFLAGS="-Cinstrument-coverage" LLVM_PROFILE_FILE="ptars-%p-%m.profraw" cargo test
+	grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing --ignore "target/*" --ignore "python/*" -o lcov.info
