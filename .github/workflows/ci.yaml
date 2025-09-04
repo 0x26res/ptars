@@ -40,13 +40,23 @@ jobs:
         version: "0.7.19"
 
 
+    - name: Install grcov
+      run: cargo install grcov
+
     - name: Build
       run: |
         make develop
         make protoc
 
-    - name: Test
-      run: make test
+    - name: Run coverage
+      run: make coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./lcov.info,./coverage.xml
+        fail_ci_if_error: true
 
   all-tests-pass:
     if: always()
