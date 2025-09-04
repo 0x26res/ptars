@@ -6,7 +6,6 @@ use arrow_array::{Array, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub trait ProtoArrayBuilder {
@@ -198,63 +197,75 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_array::builder::PrimitiveBuilder;
 use arrow_array::ArrowPrimitiveType;
 
+struct FieldBuilder {
+    field_number: u32,
+    field_name: String,
+    supports_presence: bool,
+    builder: Box<dyn ProtoArrayBuilder>,
+}
+
 struct MessageArrayBuilder {
-    builders: BTreeMap<u32, Box<dyn ProtoArrayBuilder>>,
-    message_descriptor: MessageDescriptor,
+    field_builders: Vec<FieldBuilder>,
     is_valid: BooleanBuilder,
 }
 
 impl MessageArrayBuilder {
     fn new(message_descriptor: &MessageDescriptor) -> Self {
-        let mut builders = BTreeMap::new();
-
-        for field_descriptor in message_descriptor.fields() {
-            let builder = get_array_builder(&field_descriptor).unwrap();
-            builders.insert(field_descriptor.number(), builder);
-        }
+        let field_builders = message_descriptor
+            .fields()
+            .map(|field_descriptor| {
+                let builder = get_array_builder(&field_descriptor).unwrap();
+                FieldBuilder {
+                    field_number: field_descriptor.number(),
+                    field_name: field_descriptor.name().to_string(),
+                    supports_presence: field_descriptor.supports_presence(),
+                    builder,
+                }
+            })
+            .collect();
 
         Self {
-            builders,
-            message_descriptor: message_descriptor.clone(),
+            field_builders,
             is_valid: BooleanBuilder::new(),
         }
     }
 
     fn append(&mut self, message: &DynamicMessage) {
         self.is_valid.append_value(true);
-        for field_descriptor in self.message_descriptor.fields() {
-            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-            if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
-                builder.append_null();
+        for field_builder in &mut self.field_builders {
+            if field_builder.supports_presence
+                && !message.has_field_by_number(field_builder.field_number)
+            {
+                field_builder.builder.append_null();
             } else {
-                builder.append(&message.get_field(&field_descriptor));
+                let value = message
+                    .get_field_by_number(field_builder.field_number)
+                    .unwrap()
+                    .into_owned();
+                field_builder.builder.append(&value);
             }
         }
     }
 
     fn build_struct_array(&mut self) -> StructArray {
         let is_valid = std::mem::take(&mut self.is_valid).finish();
-        if self.message_descriptor.fields().next().is_none() {
+        if self.field_builders.is_empty() {
             return StructArray::new_empty_fields(
                 is_valid.len(),
                 Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
             );
         }
 
-        let (fields, columns): (Vec<_>, Vec<_>) = self
-            .message_descriptor
-            .fields()
-            .map(|field_descriptor| {
-                let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-                let array = builder.finish();
+        let (fields, columns): (Vec<_>, Vec<_>) =
+            self.field_builders.iter_mut().map(|field_builder| {
+                let array = field_builder.builder.finish();
                 let field = Field::new(
-                    field_descriptor.name(),
+                    &field_builder.field_name,
                     array.data_type().clone(),
-                    field_descriptor.supports_presence(),
+                    field_builder.supports_presence,
                 );
                 (field, array)
-            })
-            .unzip();
+            }).unzip();
 
         StructArray::new(
             arrow_schema::Fields::from(fields),
@@ -275,9 +286,8 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
 
     fn append_null(&mut self) {
         self.is_valid.append_value(false);
-        for field_descriptor in self.message_descriptor.fields() {
-            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-            builder.append_null();
+        for field_builder in &mut self.field_builders {
+            field_builder.builder.append_null();
         }
     }
 
