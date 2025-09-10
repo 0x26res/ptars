@@ -104,7 +104,7 @@ ptars_to_proto          6.5013 (1.0)
 [versions-url]: https://pypi.org/project/ptars/
 [license-image]: http://img.shields.io/:license-Apache%202-blue.svg
 [license-url]: https://github.com/0x26res/ptars/blob/master/LICENSE
-[codecov-image]: https://codecov.io/gh/0x26res/ptars/branch/master/graph/badge.svg?token=XMFH27IL70
+[codecov-image]: https://codecov.io/gh/0x26res/ptars/branch/main/graph/badge.svg?token=XMFH27IL70
 [codecov-url]: https://codecov.io/gh/0x26res/ptars
 [downloads-image]: https://pepy.tech/badge/ptars
 [downloads-url]: https://static.pepy.tech/badge/ptars

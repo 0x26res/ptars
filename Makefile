@@ -37,8 +37,13 @@ protoc: env
 lint:
 	cargo clippy -- -D warnings
 
+.PHONY: coverage-env
+coverage-env:
+	cargo install grcov
+	rustup component add llvm-tools
+
 .PHONY: coverage
-coverage: develop
+coverage: develop coverage-env
 	. .venv/bin/activate && \
 		coverage run --source=python/ptars -m pytest python/test/unit && \
 		coverage xml -o coverage.xml
