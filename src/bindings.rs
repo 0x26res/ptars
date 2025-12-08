@@ -23,7 +23,7 @@ impl MessageHandler {
         &self,
         values: &Bound<'_, PyList>,
         py: Python<'_>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Bound<PyAny>> {
         let mut messages: Vec<DynamicMessage> = Vec::with_capacity(values.len());
         for value in values.iter() {
             let bytes: &[u8] = value.extract()?;
