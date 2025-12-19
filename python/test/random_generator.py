@@ -21,6 +21,7 @@ def is_map(field_descriptor: FieldDescriptor) -> bool:
         and field_descriptor.message_type.GetOptions().map_entry
     )
 
+
 EPOCH_RATIO = 24 * 60 * 60
 
 UNIT_IN_NANOS = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
