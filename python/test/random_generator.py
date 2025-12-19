@@ -14,7 +14,6 @@ from protarrow.common import M
 
 
 def is_map(field_descriptor: FieldDescriptor) -> bool:
-    """Check if a field is a map field (uses is_repeated instead of deprecated label)."""
     return (
         field_descriptor.type == FieldDescriptor.TYPE_MESSAGE
         and field_descriptor.is_repeated
