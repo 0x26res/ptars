@@ -130,10 +130,10 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: macos-13
-            target: x86_64
-          - runner: macos-14
-            target: aarch64
+          - runner: macos-15
+            target: intel
+          - runner: macos-15
+            target: arm64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
