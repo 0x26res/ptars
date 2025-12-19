@@ -11,7 +11,15 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.date_pb2 import Date
 from google.type.timeofday_pb2 import TimeOfDay
 from protarrow.common import M
-from protarrow.proto_to_arrow import is_map
+
+
+def is_map(field_descriptor: FieldDescriptor) -> bool:
+    """Check if a field is a map field (uses is_repeated instead of deprecated label)."""
+    return (
+        field_descriptor.type == FieldDescriptor.TYPE_MESSAGE
+        and field_descriptor.is_repeated
+        and field_descriptor.message_type.GetOptions().map_entry
+    )
 
 EPOCH_RATIO = 24 * 60 * 60
 
@@ -88,7 +96,7 @@ def generate_message(message_type: typing.Type[M], repeated_count: int) -> M:
     for field in message_type.DESCRIPTOR.fields:
         if field.containing_oneof is None:
             if (
-                field.label == FieldDescriptor.LABEL_REPEATED
+                field.is_repeated
                 or field.type != FieldDescriptor.TYPE_MESSAGE
                 or random.getrandbits(1) == 1
             ):
@@ -105,7 +113,7 @@ def generate_messages(
 def set_field(message: Message, field: FieldDescriptor, count: int) -> None:
     data = generate_field_data(field, count)
 
-    if field.label == FieldDescriptor.LABEL_REPEATED:
+    if field.is_repeated:
         field_value = getattr(message, field.name)
         if is_map(field):
             if (
@@ -130,7 +138,7 @@ def set_field(message: Message, field: FieldDescriptor, count: int) -> None:
 
 
 def generate_field_data(field: FieldDescriptor, count: int):
-    if field.label == FieldDescriptor.LABEL_REPEATED:
+    if field.is_repeated:
         size = random.randint(0, count)
         return [_generate_data(field, count) for _ in range(size)]
     else:
@@ -203,7 +211,7 @@ def truncate_nanos_message(
     time_unit: str,
     timestamp_unit: str,
 ) -> None:
-    if field.label == FieldDescriptor.LABEL_REPEATED:
+    if field.is_repeated:
         field_value = getattr(message, field.name)
         if field.message_type is not None and field.message_type.GetOptions().map_entry:
             if (
