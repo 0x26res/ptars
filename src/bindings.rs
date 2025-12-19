@@ -6,7 +6,8 @@ use arrow_array::{Float32Array, Int32Array};
 use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
-use pyo3::prelude::{pyfunction, pymodule, PyModule, PyObject, PyResult, Python};
+use pyo3::prelude::{pyfunction, pymodule, PyModule, PyResult, Python};
+use pyo3::Py;
 use pyo3::types::{PyAnyMethods, PyList, PyListMethods, PyModuleMethods};
 use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
 use std::io::Cursor;
@@ -23,7 +24,7 @@ impl MessageHandler {
         &self,
         values: &Bound<'_, PyList>,
         py: Python<'_>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let mut messages: Vec<DynamicMessage> = Vec::with_capacity(values.len());
         for value in values.iter() {
             let bytes: &[u8] = value.extract()?;
@@ -31,7 +32,7 @@ impl MessageHandler {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             messages.push(message);
         }
-        proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor).to_pyarrow(py)
+        Ok(proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor).to_pyarrow(py)?.unbind())
     }
 
     fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {
@@ -45,11 +46,11 @@ impl MessageHandler {
         &self,
         record_batch: &Bound<PyAny>,
         py: Python<'_>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let arrow_record_batch: RecordBatch =
             RecordBatch::from_pyarrow_bound(record_batch).unwrap();
-        arrow_to_proto::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
-            .to_pyarrow(py)
+        Ok(arrow_to_proto::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
+            .to_pyarrow(py)?.unbind())
     }
 }
 
@@ -93,12 +94,12 @@ impl ProtoCache {
 }
 
 #[pyfunction]
-fn get_a_table(py: Python<'_>) -> PyResult<PyObject> {
+fn get_a_table(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let col_1 = Arc::new(Int32Array::from_iter([1, 2, 3])) as _;
     let col_2 = Arc::new(Float32Array::from_iter([1., 6.3, 4.])) as _;
 
     let batch = RecordBatch::try_from_iter([("col1", col_1), ("col_2", col_2)]).unwrap();
-    batch.to_pyarrow(py)
+    Ok(batch.to_pyarrow(py)?.unbind())
 }
 
 #[pymodule]
