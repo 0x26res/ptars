@@ -7,8 +7,8 @@ use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyResult, Python};
-use pyo3::Py;
 use pyo3::types::{PyAnyMethods, PyList, PyListMethods, PyModuleMethods};
+use pyo3::Py;
 use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -32,7 +32,11 @@ impl MessageHandler {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             messages.push(message);
         }
-        Ok(proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor).to_pyarrow(py)?.unbind())
+        Ok(
+            proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor)
+                .to_pyarrow(py)?
+                .unbind(),
+        )
     }
 
     fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {
@@ -49,8 +53,11 @@ impl MessageHandler {
     ) -> PyResult<Py<PyAny>> {
         let arrow_record_batch: RecordBatch =
             RecordBatch::from_pyarrow_bound(record_batch).unwrap();
-        Ok(arrow_to_proto::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
-            .to_pyarrow(py)?.unbind())
+        Ok(
+            arrow_to_proto::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
+                .to_pyarrow(py)?
+                .unbind(),
+        )
     }
 }
 
