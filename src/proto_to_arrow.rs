@@ -197,7 +197,23 @@ impl MapArrayBuilder {
 
 impl ProtoArrayBuilder for MapArrayBuilder {
     fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
+        let entry_count = if let Some(map) = value.as_map() {
+            // Handle Value::Map (when map is set directly)
+            for (key, val) in map {
+                let key_value = match key {
+                    prost_reflect::MapKey::Bool(b) => Value::Bool(*b),
+                    prost_reflect::MapKey::I32(i) => Value::I32(*i),
+                    prost_reflect::MapKey::I64(i) => Value::I64(*i),
+                    prost_reflect::MapKey::U32(u) => Value::U32(*u),
+                    prost_reflect::MapKey::U64(u) => Value::U64(*u),
+                    prost_reflect::MapKey::String(s) => Value::String(s.clone()),
+                };
+                self.key_builder.append(&key_value);
+                self.value_builder.append(val);
+            }
+            map.len() as i32
+        } else if let Some(values) = value.as_list() {
+            // Handle Value::List of entry messages (when map comes as repeated message entries)
             for each_value in values {
                 let message = each_value.as_message().unwrap();
                 self.key_builder
@@ -205,10 +221,12 @@ impl ProtoArrayBuilder for MapArrayBuilder {
                 self.value_builder
                     .append(&message.get_field(&self.value_field_descriptor));
             }
-        }
+            values.len() as i32
+        } else {
+            0
+        };
         let last_offset = *self.offsets.last().unwrap();
-        self.offsets
-            .push(last_offset + value.as_list().map_or(0, |v| v.len() as i32));
+        self.offsets.push(last_offset + entry_count);
     }
 
     fn append_null(&mut self) {
