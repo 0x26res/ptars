@@ -131,9 +131,9 @@ jobs:
       matrix:
         platform:
           - runner: macos-15
-            target: intel
+            target: x86_64
           - runner: macos-15
-            target: arm64
+            target: aarch64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
