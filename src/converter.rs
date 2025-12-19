@@ -158,8 +158,7 @@ mod tests {
 
     #[test]
     fn test_int64_field_conversion() {
-        let (_pool, message_descriptor) =
-            create_primitive_message_descriptor("value", Type::Int64);
+        let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int64);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
         let mut message1 = DynamicMessage::new(message_descriptor.clone());
@@ -339,8 +338,7 @@ mod tests {
 
     #[test]
     fn test_repeated_int32_field_conversion() {
-        let (_pool, message_descriptor) =
-            create_repeated_message_descriptor("values", Type::Int32);
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
         let field = message_descriptor.get_field_by_name("values").unwrap();
 
         let mut message1 = DynamicMessage::new(message_descriptor.clone());
@@ -410,7 +408,11 @@ mod tests {
         let mut message1 = DynamicMessage::new(message_descriptor.clone());
         message1.set_field_by_name(
             "values",
-            Value::List(vec![Value::Bool(true), Value::Bool(false), Value::Bool(true)]),
+            Value::List(vec![
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Bool(true),
+            ]),
         );
 
         let messages = vec![message1];
@@ -494,8 +496,7 @@ mod tests {
 
     #[test]
     fn test_empty_repeated_field() {
-        let (_pool, message_descriptor) =
-            create_repeated_message_descriptor("values", Type::Int32);
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
         let field = message_descriptor.get_field_by_name("values").unwrap();
 
         let mut message1 = DynamicMessage::new(message_descriptor.clone());
@@ -620,8 +621,7 @@ mod tests {
 
     #[test]
     fn test_primitive_builder_wrapper_len_and_is_empty() {
-        let (_pool, message_descriptor) =
-            create_primitive_message_descriptor("value", Type::Int32);
+        let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int32);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
         let mut builder = get_singular_array_builder(&field).unwrap();
@@ -638,8 +638,7 @@ mod tests {
 
     #[test]
     fn test_primitive_builder_append_null() {
-        let (_pool, message_descriptor) =
-            create_primitive_message_descriptor("value", Type::Int32);
+        let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int32);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
         let mut builder = get_singular_array_builder(&field).unwrap();
@@ -691,8 +690,7 @@ mod tests {
 
     #[test]
     fn test_repeated_builder_len_and_is_empty() {
-        let (_pool, message_descriptor) =
-            create_repeated_message_descriptor("values", Type::Int32);
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
         let field = message_descriptor.get_field_by_name("values").unwrap();
 
         let mut builder = get_array_builder(&field).unwrap();
@@ -881,10 +879,7 @@ mod tests {
         let decoded =
             DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
 
-        assert_eq!(
-            decoded.get_field_by_name("id").unwrap().as_i32(),
-            Some(42)
-        );
+        assert_eq!(decoded.get_field_by_name("id").unwrap().as_i32(), Some(42));
         assert_eq!(
             decoded.get_field_by_name("name").unwrap().as_str(),
             Some("roundtrip")
@@ -893,8 +888,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_with_repeated_fields() {
-        let (_pool, message_descriptor) =
-            create_repeated_message_descriptor("values", Type::Int32);
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
 
         let mut original = DynamicMessage::new(message_descriptor.clone());
         original.set_field_by_name(
@@ -1037,22 +1031,26 @@ mod tests {
             decoded.get_field_by_name("uint64_field").unwrap().as_u64(),
             Some(9999999999u64)
         );
-        assert!((decoded
-            .get_field_by_name("float_field")
-            .unwrap()
-            .as_f32()
-            .unwrap()
-            - 3.14)
-            .abs()
-            < 0.001);
-        assert!((decoded
-            .get_field_by_name("double_field")
-            .unwrap()
-            .as_f64()
-            .unwrap()
-            - 2.71828)
-            .abs()
-            < 1e-5);
+        assert!(
+            (decoded
+                .get_field_by_name("float_field")
+                .unwrap()
+                .as_f32()
+                .unwrap()
+                - 3.14)
+                .abs()
+                < 0.001
+        );
+        assert!(
+            (decoded
+                .get_field_by_name("double_field")
+                .unwrap()
+                .as_f64()
+                .unwrap()
+                - 2.71828)
+                .abs()
+                < 1e-5
+        );
         assert_eq!(
             decoded.get_field_by_name("bool_field").unwrap().as_bool(),
             Some(true)
@@ -1326,11 +1324,7 @@ mod tests {
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name(
             "values",
-            Value::List(vec![
-                Value::F32(1.5),
-                Value::F32(2.5),
-                Value::F32(3.5),
-            ]),
+            Value::List(vec![Value::F32(1.5), Value::F32(2.5), Value::F32(3.5)]),
         );
 
         let messages = vec![msg];
@@ -1517,8 +1511,7 @@ mod tests {
 
     #[test]
     fn test_arrow_to_proto_empty_repeated() {
-        let (_pool, message_descriptor) =
-            create_repeated_message_descriptor("values", Type::Int32);
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
 
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("values", Value::List(vec![]));
@@ -1538,8 +1531,7 @@ mod tests {
 
     #[test]
     fn test_arrow_to_proto_single_repeated_element() {
-        let (_pool, message_descriptor) =
-            create_repeated_message_descriptor("values", Type::Int32);
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
 
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("values", Value::List(vec![Value::I32(42)]));
