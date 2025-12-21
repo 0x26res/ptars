@@ -6,7 +6,7 @@ all:
 env:
 	test -d .venv || python3 -m venv .venv
 	. .venv/bin/activate && \
-		uv sync --all-groups
+		uv sync --group=test --no-dev
 
 
 .PHONY: develop
