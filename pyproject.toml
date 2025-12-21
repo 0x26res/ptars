@@ -43,7 +43,6 @@ classifiers = [
 dependencies = [
   "pyarrow",
   "protobuf",
-  "pyarrow"
 ]
 description = "Convert from protobuf to arrow and back in rust"
 keywords = ["apache-arrow", "protobuf", "data", "rust"]
