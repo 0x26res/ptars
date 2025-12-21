@@ -96,6 +96,10 @@ message WithRepeated {
   repeated double repeated_double = 1;
 }
 
+message WithMap {
+  map<string, double> string_to_double = 1;
+}
+
 message DataRow {
   int64 id = 1;
   double cost = 2;

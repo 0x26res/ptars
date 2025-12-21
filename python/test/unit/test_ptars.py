@@ -20,6 +20,7 @@ from ptars_protos.simple_pb2 import (
     SearchRequest,
     SimpleMessage,
     TestEnum,
+    WithMap,
     WithRepeated,
 )
 from python.test.random_generator import generate_messages
@@ -215,6 +216,11 @@ def test_repeated_date(pool):
 def test_repeated():
     messages = generate_messages(WithRepeated, count=10)
     run_round_trip(messages, WithRepeated)
+
+
+def test_map():
+    messages = generate_messages(WithMap, count=10)
+    run_round_trip(messages, WithMap)
 
 
 def run_round_trip(messages, message_type):

@@ -5,12 +5,13 @@ use arrow_array::types::{
     UInt32Type, UInt64Type,
 };
 use arrow_array::{
-    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, PrimitiveArray,
-    RecordBatch, StringArray, StructArray,
+    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, MapArray,
+    PrimitiveArray, RecordBatch, StringArray, StructArray,
 };
 use chrono::{Datelike, NaiveDate};
 use prost::Message;
-use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
+use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MapKey, MessageDescriptor, Value};
+use std::collections::HashMap;
 
 // Days from CE epoch to Unix epoch (1970-01-01)
 const CE_OFFSET: i32 = 719163;
@@ -563,13 +564,207 @@ pub fn extract_single_bool(
         })
 }
 
+pub fn extract_map_array(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let map_array = array.as_any().downcast_ref::<MapArray>().unwrap();
+    let entries = map_array.entries();
+    let key_array = entries.column_by_name("key").unwrap();
+    let value_array = entries.column_by_name("value").unwrap();
+
+    // Get the key and value field descriptors from the map entry message type
+    let map_entry_descriptor = match field_descriptor.kind() {
+        Kind::Message(desc) => desc,
+        _ => return,
+    };
+    let key_field = map_entry_descriptor.get_field_by_name("key").unwrap();
+    let value_field = map_entry_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !map_array.is_null(i) {
+            let start = map_array.value_offsets()[i] as usize;
+            let end = map_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let mut map: HashMap<MapKey, Value> = HashMap::new();
+
+                for idx in start..end {
+                    let key = extract_map_key(key_array, idx, &key_field);
+                    let value = extract_map_value(value_array, idx, &value_field);
+                    if let (Some(k), Some(v)) = (key, value) {
+                        map.insert(k, v);
+                    }
+                }
+
+                message.set_field(field_descriptor, Value::Map(map));
+            }
+        }
+    }
+}
+
+fn extract_map_key(array: &ArrayRef, idx: usize, field: &FieldDescriptor) -> Option<MapKey> {
+    match field.kind() {
+        Kind::String => {
+            let arr = array.as_any().downcast_ref::<StringArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(MapKey::String(arr.value(idx).to_string()))
+            }
+        }
+        Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(MapKey::I32(arr.value(idx)))
+            }
+        }
+        Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(MapKey::I64(arr.value(idx)))
+            }
+        }
+        Kind::Uint32 | Kind::Fixed32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(MapKey::U32(arr.value(idx)))
+            }
+        }
+        Kind::Uint64 | Kind::Fixed64 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(MapKey::U64(arr.value(idx)))
+            }
+        }
+        Kind::Bool => {
+            let arr = array.as_any().downcast_ref::<BooleanArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(MapKey::Bool(arr.value(idx)))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn extract_map_value(array: &ArrayRef, idx: usize, field: &FieldDescriptor) -> Option<Value> {
+    match field.kind() {
+        Kind::Double => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Float64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::F64(arr.value(idx)))
+            }
+        }
+        Kind::Float => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Float32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::F32(arr.value(idx)))
+            }
+        }
+        Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::I32(arr.value(idx)))
+            }
+        }
+        Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::I64(arr.value(idx)))
+            }
+        }
+        Kind::Uint32 | Kind::Fixed32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::U32(arr.value(idx)))
+            }
+        }
+        Kind::Uint64 | Kind::Fixed64 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::U64(arr.value(idx)))
+            }
+        }
+        Kind::Bool => {
+            let arr = array.as_any().downcast_ref::<BooleanArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::Bool(arr.value(idx)))
+            }
+        }
+        Kind::String => {
+            let arr = array.as_any().downcast_ref::<StringArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::String(arr.value(idx).to_string()))
+            }
+        }
+        Kind::Bytes => {
+            let arr = array.as_any().downcast_ref::<BinaryArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::Bytes(prost::bytes::Bytes::from(
+                    arr.value(idx).to_vec(),
+                )))
+            }
+        }
+        Kind::Enum(_) => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::EnumNumber(arr.value(idx)))
+            }
+        }
+        _ => None, // Message values in maps would need more complex handling
+    }
+}
+
 pub fn extract_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
     if field_descriptor.is_map() {
-        // TODO:
+        extract_map_array(array, field_descriptor, messages)
     } else if field_descriptor.is_list() {
         extract_repeated_array(array, field_descriptor, messages)
     } else {
