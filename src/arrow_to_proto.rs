@@ -1,12 +1,19 @@
 use arrow::array::ArrayData;
 use arrow_array::builder::BinaryBuilder;
-use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
+use arrow_array::types::{
+    Date32Type, Float32Type, Float64Type, Int32Type, Int64Type, TimestampNanosecondType,
+    UInt32Type, UInt64Type,
+};
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, PrimitiveArray,
     RecordBatch, StringArray, StructArray,
 };
+use chrono::{Datelike, NaiveDate};
 use prost::Message;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
+
+// Days from CE epoch to Unix epoch (1970-01-01)
+const CE_OFFSET: i32 = 719163;
 
 pub fn extract_single_primitive<P: ArrowPrimitiveType>(
     array: &ArrayRef,
@@ -95,6 +102,16 @@ pub fn extract_repeated_message(
     field_descriptor: &FieldDescriptor,
     message_descriptor: MessageDescriptor,
 ) {
+    // Handle special message types
+    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+        extract_repeated_timestamp(list_array, messages, field_descriptor, &message_descriptor);
+        return;
+    }
+    if message_descriptor.full_name() == "google.type.Date" {
+        extract_repeated_date(list_array, messages, field_descriptor, &message_descriptor);
+        return;
+    }
+
     let struct_array = list_array
         .values()
         .as_any()
@@ -126,6 +143,87 @@ pub fn extract_repeated_message(
                 // Set the repeated field as Value::List of Value::Message
                 let values: Vec<Value> = sub_messages.into_iter().map(Value::Message).collect();
                 message.set_field(field_descriptor, Value::List(values));
+            }
+        }
+    }
+}
+
+fn extract_repeated_timestamp(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values: &PrimitiveArray<TimestampNanosecondType> = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
+        .unwrap();
+
+    let seconds_descriptor = message_descriptor.get_field_by_name("seconds").unwrap();
+    let nanos_descriptor = message_descriptor.get_field_by_name("nanos").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let nanos_total = values.value(idx);
+                        let seconds = nanos_total / 1_000_000_000;
+                        let nanos = (nanos_total % 1_000_000_000) as i32;
+
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&seconds_descriptor, Value::I64(seconds));
+                        sub_message.set_field(&nanos_descriptor, Value::I32(nanos));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_date(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values: &PrimitiveArray<Date32Type> = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Date32Type>>()
+        .unwrap();
+
+    let year_descriptor = message_descriptor.get_field_by_name("year").unwrap();
+    let month_descriptor = message_descriptor.get_field_by_name("month").unwrap();
+    let day_descriptor = message_descriptor.get_field_by_name("day").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let days = values.value(idx);
+                        let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&year_descriptor, Value::I32(date.year()));
+                        sub_message.set_field(&month_descriptor, Value::I32(date.month() as i32));
+                        sub_message.set_field(&day_descriptor, Value::I32(date.day() as i32));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+
+                message.set_field(field_descriptor, Value::List(sub_messages));
             }
         }
     }
