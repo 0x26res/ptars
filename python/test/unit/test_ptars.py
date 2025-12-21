@@ -238,14 +238,19 @@ def test_round_trip():
     )
 
 
-@pytest.mark.skip(reason="WIP")
-def test_round_trip_not_ready():
+def test_round_trip_repeated_nested_message():
     run_round_trip(
         [
             RepeatedNestedMessageSimple(
                 search_results=[
-                    simple_pb2.SearchResult(),
-                    simple_pb2.SearchResult(),
+                    simple_pb2.SearchResult(
+                        return_code=1,
+                        message="HELLO"
+                    ),
+                    simple_pb2.SearchResult(
+                        return_code=200,
+                        message="WOLRD"
+                    ),
                 ]
             )
         ],

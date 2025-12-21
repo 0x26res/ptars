@@ -1181,6 +1181,85 @@ mod tests {
         assert_eq!(items_array.value_length(0), 2);
     }
 
+    #[test]
+    fn test_repeated_nested_messages_round_trip() {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("Item".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("value".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("Container".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("items".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Item".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let pool = create_pool_with_message(file_descriptor);
+        let container_descriptor = pool.get_message_by_name("test.Container").unwrap();
+        let item_descriptor = pool.get_message_by_name("test.Item").unwrap();
+
+        let mut item1 = DynamicMessage::new(item_descriptor.clone());
+        item1.set_field_by_name("value", Value::I32(10));
+
+        let mut item2 = DynamicMessage::new(item_descriptor.clone());
+        item2.set_field_by_name("value", Value::I32(20));
+
+        let mut container = DynamicMessage::new(container_descriptor.clone());
+        container.set_field_by_name(
+            "items",
+            Value::List(vec![Value::Message(item1), Value::Message(item2)]),
+        );
+
+        let messages = vec![container];
+
+        // Convert to Arrow
+        let record_batch = messages_to_record_batch(&messages, &container_descriptor);
+
+        // Convert back to Proto
+        let array_data = record_batch_to_array(&record_batch, &container_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+
+        assert_eq!(binary_array.len(), 1);
+
+        // Decode and verify
+        let decoded =
+            DynamicMessage::decode(container_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let items = decoded.get_field_by_name("items").unwrap();
+        let items_list = items.as_list().unwrap();
+
+        assert_eq!(items_list.len(), 2);
+        assert_eq!(
+            items_list[0].as_message().unwrap().get_field_by_name("value").unwrap().as_i32(),
+            Some(10)
+        );
+        assert_eq!(
+            items_list[1].as_message().unwrap().get_field_by_name("value").unwrap().as_i32(),
+            Some(20)
+        );
+    }
+
     // ==================== Arrow to Proto Tests ====================
 
     #[test]

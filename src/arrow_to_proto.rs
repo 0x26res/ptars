@@ -89,6 +89,48 @@ pub fn extract_repeated_boolean(
     }
 }
 
+pub fn extract_repeated_message(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: MessageDescriptor,
+) {
+    let struct_array = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<StructArray>()
+        .unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                // Create sub-messages for each list element
+                let mut sub_messages: Vec<DynamicMessage> = (start..end)
+                    .map(|_| DynamicMessage::new(message_descriptor.clone()))
+                    .collect();
+
+                // Extract fields into sub-messages
+                let mut sub_refs: Vec<&mut DynamicMessage> = sub_messages.iter_mut().collect();
+
+                for sub_field in message_descriptor.fields() {
+                    if let Some(column) = struct_array.column_by_name(sub_field.name()) {
+                        // Slice the column to match the range for this list
+                        let sliced = column.slice(start, end - start);
+                        extract_array(&sliced, &sub_field, &mut sub_refs);
+                    }
+                }
+
+                // Set the repeated field as Value::List of Value::Message
+                let values: Vec<Value> = sub_messages.into_iter().map(Value::Message).collect();
+                message.set_field(field_descriptor, Value::List(values));
+            }
+        }
+    }
+}
+
 pub fn extract_repeated_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
@@ -168,8 +210,15 @@ pub fn extract_repeated_array(
                 }
             }
         }
-        Kind::Message(_) => {}
-        Kind::Enum(_) => {}
+        Kind::Message(message_descriptor) => {
+            extract_repeated_message(list_array, messages, field_descriptor, message_descriptor)
+        }
+        Kind::Enum(_) => extract_repeated_primitive_type::<Int32Type>(
+            list_array,
+            messages,
+            field_descriptor,
+            &Value::EnumNumber,
+        )
     }
 }
 
@@ -229,7 +278,12 @@ pub fn extract_singular_array(
         Kind::Message(message_descriptor) => {
             extract_single_message(array, field_descriptor, message_descriptor, messages)
         }
-        Kind::Enum(_) => {}
+        Kind::Enum(_) => extract_single_primitive::<Int32Type>(
+            array,
+            messages,
+            field_descriptor,
+            &Value::EnumNumber,
+        )
     }
 }
 
