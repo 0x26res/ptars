@@ -10,6 +10,8 @@ from ptars import HandlerPool
 from ptars._lib import MessageHandler
 
 from ptars_protos import bench_pb2, simple_pb2
+from ptars_protos.bench_pb2 import ExampleMessage, NestedExampleMessage, SuperNestedExampleMessage
+from ptars_protos.simple_pb2 import RepeatedNestedMessageSimple, SimpleMessage, TestEnum, SearchRequest
 from ptars_protos.bench_pb2 import ExampleMessage
 from ptars_protos.simple_pb2 import (
     RepeatedNestedMessageSimple,
@@ -19,7 +21,7 @@ from ptars_protos.simple_pb2 import (
 )
 from python.test.random_generator import generate_messages
 
-MESSAGES = [ExampleMessage]
+MESSAGES = [ExampleMessage,NestedExampleMessage,SuperNestedExampleMessage ]
 
 
 @pytest.fixture()
@@ -102,18 +104,14 @@ def test_generate_proto(simple_message_handler):
     ]
 
 
-@pytest.mark.parametrize("message_type", MESSAGES)
+@pytest.mark.parametrize("message_type", MESSAGES[:1])
 def test_back_and_forth(message_type: type[Message], pool):
     handler = pool.get_for_message(message_type.DESCRIPTOR)
-
     messages = generate_messages(message_type, 10)
-    payloads = [message.SerializeToString() for message in messages]
+    run_round_trip(
+        messages, message_type
+    )
 
-    record_batch = handler.list_to_record_batch(payloads)
-
-    assert isinstance(record_batch, pa.RecordBatch)
-    # print(record_batch["date_value"].to_pylist())
-    # print([m.date_value for m in messages])
 
 
 def test_arrow_to_proto(pool):
