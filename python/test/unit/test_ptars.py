@@ -11,7 +11,7 @@ from ptars._lib import MessageHandler
 
 from ptars_protos import bench_pb2, simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
-from ptars_protos.simple_pb2 import RepeatedNestedMessageSimple, SimpleMessage
+from ptars_protos.simple_pb2 import RepeatedNestedMessageSimple, SimpleMessage, TestEnum, SearchRequest
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]
@@ -28,8 +28,8 @@ def simple_message_handler(pool: HandlerPool) -> MessageHandler:
 
 
 def test_generate_proto(simple_message_handler):
-    simple_pb2.SearchRequest()
-    search_request = simple_pb2.SearchRequest(
+    SearchRequest()
+    search_request = SearchRequest(
         query="hello", page_number=0, result_per_page=10
     )
     protos = [
@@ -59,7 +59,7 @@ def test_generate_proto(simple_message_handler):
             bool_value=True,
             string_value="14",
             bytes_value=b"15",
-            enum_value=1,
+            enum_value=TestEnum.HELLO,
             int32_values=[1, 2, 3],
             int64_values=[1, 2, 3],
             bool_values=[True, False, True],
@@ -255,12 +255,12 @@ def test_round_trip_not_ready():
 
 def test_example():
     messages = [
-        simple_pb2.SearchRequest(
+        SearchRequest(
             query="protobuf to arrow",
             page_number=0,
             result_per_page=10,
         ),
-        simple_pb2.SearchRequest(
+        SearchRequest(
             query="protobuf to arrow",
             page_number=1,
             result_per_page=10,
@@ -269,7 +269,7 @@ def test_example():
     payloads = [message.SerializeToString() for message in messages]
 
     pool = HandlerPool([simple_pb2.DESCRIPTOR])
-    handler = pool.get_for_message(simple_pb2.SearchRequest.DESCRIPTOR)
+    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
     try:
         record_batch.to_pandas().to_markdown(sys.stdout, index=False)
@@ -277,7 +277,7 @@ def test_example():
         pass
 
     array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
-    messages_back: list[simple_pb2.SearchRequest] = [
-        simple_pb2.SearchRequest.FromString(s.as_py()) for s in array
+    messages_back: list[SearchRequest] = [
+        SearchRequest.FromString(s.as_py()) for s in array
     ]
     assert messages_back == messages
