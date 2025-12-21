@@ -20,7 +20,9 @@ dev = [
   "pytest>=7.2.0",
   "pytest-benchmark>=4.0.0",
   "pytest-xdist>=3.1.0",
-  "ruff"
+  "ruff",
+  "pandas",
+  "tabulate"
 ]
 
 [project]

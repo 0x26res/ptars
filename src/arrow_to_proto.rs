@@ -15,6 +15,19 @@ use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Va
 // Days from CE epoch to Unix epoch (1970-01-01)
 const CE_OFFSET: i32 = 719163;
 
+/// Convert total nanoseconds to (seconds, nanos) tuple.
+/// Handles negative timestamps correctly by ensuring nanos is always in [0, 999999999].
+fn nanos_to_seconds_and_nanos(nanos_total: i64) -> (i64, i32) {
+    let mut seconds = nanos_total / 1_000_000_000;
+    let mut nanos = (nanos_total % 1_000_000_000) as i32;
+    // Ensure nanos is non-negative (protobuf requirement)
+    if nanos < 0 {
+        seconds -= 1;
+        nanos += 1_000_000_000;
+    }
+    (seconds, nanos)
+}
+
 pub fn extract_single_primitive<P: ArrowPrimitiveType>(
     array: &ArrayRef,
     messages: &mut [&mut DynamicMessage],
@@ -172,8 +185,7 @@ fn extract_repeated_timestamp(
                 let sub_messages: Vec<Value> = (start..end)
                     .map(|idx| {
                         let nanos_total = values.value(idx);
-                        let seconds = nanos_total / 1_000_000_000;
-                        let nanos = (nanos_total % 1_000_000_000) as i32;
+                        let (seconds, nanos) = nanos_to_seconds_and_nanos(nanos_total);
 
                         let mut sub_message = DynamicMessage::new(message_descriptor.clone());
                         sub_message.set_field(&seconds_descriptor, Value::I64(seconds));
@@ -435,10 +447,12 @@ pub fn extract_single_message(
     message_descriptor: MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    if message_descriptor.full_name() == "google.protobuf.Timestamp"
-        || message_descriptor.full_name() == "google.type.Date"
-    {
-        // TODO!!!
+    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
+        extract_single_timestamp(array, field_descriptor, &message_descriptor, messages);
+        return;
+    }
+    if message_descriptor.full_name() == "google.type.Date" {
+        extract_single_date(array, field_descriptor, &message_descriptor, messages);
         return;
     }
 
@@ -467,6 +481,66 @@ pub fn extract_single_message(
             x.clear_field(field_descriptor)
         }
     });
+}
+
+fn extract_single_timestamp(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let timestamp_array = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
+        .unwrap();
+
+    let seconds_descriptor = message_descriptor.get_field_by_name("seconds").unwrap();
+    let nanos_descriptor = message_descriptor.get_field_by_name("nanos").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !timestamp_array.is_null(i) {
+            let nanos_total = timestamp_array.value(i);
+            let (seconds, nanos) = nanos_to_seconds_and_nanos(nanos_total);
+
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&seconds_descriptor, Value::I64(seconds));
+            sub_message.set_field(&nanos_descriptor, Value::I32(nanos));
+        }
+    }
+}
+
+fn extract_single_date(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let date_array = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Date32Type>>()
+        .unwrap();
+
+    let year_descriptor = message_descriptor.get_field_by_name("year").unwrap();
+    let month_descriptor = message_descriptor.get_field_by_name("month").unwrap();
+    let day_descriptor = message_descriptor.get_field_by_name("day").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !date_array.is_null(i) {
+            let days = date_array.value(i);
+            let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&year_descriptor, Value::I32(date.year()));
+            sub_message.set_field(&month_descriptor, Value::I32(date.month() as i32));
+            sub_message.set_field(&day_descriptor, Value::I32(date.day() as i32));
+        }
+    }
 }
 
 pub fn extract_single_bool(
