@@ -92,6 +92,10 @@ message TestMessage {
   repeated TestEnum enum_values = 35;
 }
 
+message WithRepeated {
+  repeated double repeated_double = 1;
+}
+
 message DataRow {
   int64 id = 1;
   double cost = 2;

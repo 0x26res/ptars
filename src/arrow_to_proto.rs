@@ -55,7 +55,7 @@ pub fn extract_repeated_primitive_type<P>(
             let start = list_array.value_offsets()[i] as usize;
             let end = list_array.value_offsets()[i + 1] as usize;
             if start < end {
-                let slice = values.slice(start, end);
+                let slice = values.slice(start, end - start);
                 let values = slice
                     .iter()
                     .map(|value| match value {
