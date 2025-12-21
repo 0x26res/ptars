@@ -11,7 +11,12 @@ from ptars._lib import MessageHandler
 
 from ptars_protos import bench_pb2, simple_pb2
 from ptars_protos.bench_pb2 import ExampleMessage
-from ptars_protos.simple_pb2 import RepeatedNestedMessageSimple, SimpleMessage, TestEnum, SearchRequest
+from ptars_protos.simple_pb2 import (
+    RepeatedNestedMessageSimple,
+    SearchRequest,
+    SimpleMessage,
+    TestEnum,
+)
 from python.test.random_generator import generate_messages
 
 MESSAGES = [ExampleMessage]
@@ -29,9 +34,7 @@ def simple_message_handler(pool: HandlerPool) -> MessageHandler:
 
 def test_generate_proto(simple_message_handler):
     SearchRequest()
-    search_request = SearchRequest(
-        query="hello", page_number=0, result_per_page=10
-    )
+    search_request = SearchRequest(query="hello", page_number=0, result_per_page=10)
     protos = [
         simple_pb2.SimpleMessage(
             int64_value=123,
@@ -243,14 +246,8 @@ def test_round_trip_repeated_nested_message():
         [
             RepeatedNestedMessageSimple(
                 search_results=[
-                    simple_pb2.SearchResult(
-                        return_code=1,
-                        message="HELLO"
-                    ),
-                    simple_pb2.SearchResult(
-                        return_code=200,
-                        message="WOLRD"
-                    ),
+                    simple_pb2.SearchResult(return_code=1, message="HELLO"),
+                    simple_pb2.SearchResult(return_code=200, message="WOLRD"),
                 ]
             )
         ],

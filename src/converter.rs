@@ -1251,11 +1251,21 @@ mod tests {
 
         assert_eq!(items_list.len(), 2);
         assert_eq!(
-            items_list[0].as_message().unwrap().get_field_by_name("value").unwrap().as_i32(),
+            items_list[0]
+                .as_message()
+                .unwrap()
+                .get_field_by_name("value")
+                .unwrap()
+                .as_i32(),
             Some(10)
         );
         assert_eq!(
-            items_list[1].as_message().unwrap().get_field_by_name("value").unwrap().as_i32(),
+            items_list[1]
+                .as_message()
+                .unwrap()
+                .get_field_by_name("value")
+                .unwrap()
+                .as_i32(),
             Some(20)
         );
     }

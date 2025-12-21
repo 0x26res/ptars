@@ -316,7 +316,7 @@ pub fn extract_repeated_array(
             messages,
             field_descriptor,
             &Value::EnumNumber,
-        )
+        ),
     }
 }
 
@@ -381,7 +381,7 @@ pub fn extract_singular_array(
             messages,
             field_descriptor,
             &Value::EnumNumber,
-        )
+        ),
     }
 }
 
