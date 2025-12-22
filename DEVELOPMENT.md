@@ -54,12 +54,13 @@ uv run pytest python/test/benchmark \
 ## TODO
 
 - [x] finish arrow to proto
-- [ ] handle repeated messages both ways
-- [ ] handle maps
-- [ ] more generic code
-- [ ] add rust unit tests
+- [x] handle repeated messages both ways
+- [x] handle maps
+- [x] more generic code
+- [x] add rust unit tests
 - [ ] add configuration for enums, timestamp, date, wrapped types, duration
-- [ ] reuse protarrow tests and random generator
+- [x] reuse protarrow tests and random generator
+- [ ] test parity with arrow
 
 ## Resources
 

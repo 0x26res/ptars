@@ -58,7 +58,7 @@ maintainers = [
 name = "ptars"
 readme = "README.md"
 requires-python = "<4.0,>=3.10"
-version = "0.0.5"
+version = "0.0.7"
 
 [project.urls]
 documentation = "https://ptars.readthedocs.io/en/latest/"
