@@ -117,13 +117,97 @@ pub fn extract_repeated_message(
     message_descriptor: MessageDescriptor,
 ) {
     // Handle special message types
-    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-        extract_repeated_timestamp(list_array, messages, field_descriptor, &message_descriptor);
-        return;
-    }
-    if message_descriptor.full_name() == "google.type.Date" {
-        extract_repeated_date(list_array, messages, field_descriptor, &message_descriptor);
-        return;
+    match message_descriptor.full_name() {
+        "google.protobuf.Timestamp" => {
+            extract_repeated_timestamp(list_array, messages, field_descriptor, &message_descriptor);
+            return;
+        }
+        "google.type.Date" => {
+            extract_repeated_date(list_array, messages, field_descriptor, &message_descriptor);
+            return;
+        }
+        "google.protobuf.DoubleValue" => {
+            extract_repeated_wrapper_f64(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.FloatValue" => {
+            extract_repeated_wrapper_f32(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.Int64Value" => {
+            extract_repeated_wrapper_i64(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.UInt64Value" => {
+            extract_repeated_wrapper_u64(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.Int32Value" => {
+            extract_repeated_wrapper_i32(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.UInt32Value" => {
+            extract_repeated_wrapper_u32(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.BoolValue" => {
+            extract_repeated_wrapper_bool(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.StringValue" => {
+            extract_repeated_wrapper_string(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        "google.protobuf.BytesValue" => {
+            extract_repeated_wrapper_bytes(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
+            return;
+        }
+        _ => {}
     }
 
     let struct_array = list_array
@@ -236,6 +320,302 @@ fn extract_repeated_date(
                     })
                     .collect();
 
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+// Repeated wrapper type extraction functions
+
+fn extract_repeated_wrapper_f64(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Float64Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::F64(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_f32(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Float32Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::F32(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_i64(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Int64Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::I64(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_u64(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<UInt64Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::U64(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_i32(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Int32Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::I32(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_u32(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<UInt32Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::U32(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_bool(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<BooleanArray>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(&value_descriptor, Value::Bool(values.value(idx)));
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_string(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(
+                            &value_descriptor,
+                            Value::String(values.value(idx).to_string()),
+                        );
+                        Value::Message(sub_message)
+                    })
+                    .collect();
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_wrapper_bytes(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<BinaryArray>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                        sub_message.set_field(
+                            &value_descriptor,
+                            Value::Bytes(prost::bytes::Bytes::from(values.value(idx).to_vec())),
+                        );
+                        Value::Message(sub_message)
+                    })
+                    .collect();
                 message.set_field(field_descriptor, Value::List(sub_messages));
             }
         }
@@ -448,13 +828,52 @@ pub fn extract_single_message(
     message_descriptor: MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-        extract_single_timestamp(array, field_descriptor, &message_descriptor, messages);
-        return;
-    }
-    if message_descriptor.full_name() == "google.type.Date" {
-        extract_single_date(array, field_descriptor, &message_descriptor, messages);
-        return;
+    match message_descriptor.full_name() {
+        "google.protobuf.Timestamp" => {
+            extract_single_timestamp(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.type.Date" => {
+            extract_single_date(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.DoubleValue" => {
+            extract_single_wrapper_f64(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.FloatValue" => {
+            extract_single_wrapper_f32(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.Int64Value" => {
+            extract_single_wrapper_i64(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.UInt64Value" => {
+            extract_single_wrapper_u64(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.Int32Value" => {
+            extract_single_wrapper_i32(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.UInt32Value" => {
+            extract_single_wrapper_u32(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.BoolValue" => {
+            extract_single_wrapper_bool(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.StringValue" => {
+            extract_single_wrapper_string(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        "google.protobuf.BytesValue" => {
+            extract_single_wrapper_bytes(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
+        _ => {}
     }
 
     let struct_array = array.as_any().downcast_ref::<StructArray>().unwrap();
@@ -540,6 +959,209 @@ fn extract_single_date(
             sub_message.set_field(&year_descriptor, Value::I32(date.year()));
             sub_message.set_field(&month_descriptor, Value::I32(date.month() as i32));
             sub_message.set_field(&day_descriptor, Value::I32(date.day() as i32));
+        }
+    }
+}
+
+// Wrapper type extraction functions
+
+fn extract_single_wrapper_f64(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Float64Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::F64(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_f32(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Float32Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::F32(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_i64(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Int64Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::I64(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_u64(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<UInt64Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::U64(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_i32(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Int32Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::I32(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_u32(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<UInt32Type>>()
+        .unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::U32(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_bool(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::Bool(arr.value(i)));
+        }
+    }
+}
+
+fn extract_single_wrapper_string(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(&value_descriptor, Value::String(arr.value(i).to_string()));
+        }
+    }
+}
+
+fn extract_single_wrapper_bytes(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let arr = array.as_any().downcast_ref::<BinaryArray>().unwrap();
+    let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !arr.is_null(i) {
+            let sub_message = message
+                .get_field_mut(field_descriptor)
+                .as_message_mut()
+                .unwrap();
+            sub_message.set_field(
+                &value_descriptor,
+                Value::Bytes(prost::bytes::Bytes::from(arr.value(i).to_vec())),
+            );
         }
     }
 }
