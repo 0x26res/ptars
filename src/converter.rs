@@ -1746,4 +1746,1186 @@ mod tests {
             Some(131415)
         );
     }
+
+    // ==================== Timestamp Field Tests ====================
+
+    fn create_timestamp_pool() -> DescriptorPool {
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("google/protobuf/timestamp.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Timestamp".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int64.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        pool
+    }
+
+    fn create_date_pool() -> DescriptorPool {
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("google/type/date.proto".to_string()),
+            package: Some("google.type".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Date".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("year".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("month".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("day".to_string()),
+                        number: Some(3),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        pool
+    }
+
+    #[test]
+    fn test_timestamp_field_roundtrip() {
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(1700000000));
+        ts.set_field_by_name("nanos", Value::I32(123456789));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_value = decoded.get_field_by_name("ts").unwrap();
+        let ts_msg = ts_value.as_message().unwrap();
+        assert_eq!(
+            ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(1700000000)
+        );
+        assert_eq!(
+            ts_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(123456789)
+        );
+    }
+
+    #[test]
+    fn test_timestamp_negative_roundtrip() {
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Test negative timestamp (before Unix epoch - e.g., 1960)
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(-315619200)); // Jan 1, 1960
+        ts.set_field_by_name("nanos", Value::I32(500000000));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_value = decoded.get_field_by_name("ts").unwrap();
+        let ts_msg = ts_value.as_message().unwrap();
+        assert_eq!(
+            ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(-315619200)
+        );
+        assert_eq!(
+            ts_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500000000)
+        );
+    }
+
+    #[test]
+    fn test_repeated_timestamp_roundtrip() {
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamps".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("timestamps".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamps").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        let mut ts1 = DynamicMessage::new(timestamp_descriptor.clone());
+        ts1.set_field_by_name("seconds", Value::I64(1000));
+        ts1.set_field_by_name("nanos", Value::I32(100));
+
+        let mut ts2 = DynamicMessage::new(timestamp_descriptor.clone());
+        ts2.set_field_by_name("seconds", Value::I64(2000));
+        ts2.set_field_by_name("nanos", Value::I32(200));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "timestamps",
+            Value::List(vec![Value::Message(ts1), Value::Message(ts2)]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_list = decoded.get_field_by_name("timestamps").unwrap();
+        let list = ts_list.as_list().unwrap();
+        assert_eq!(list.len(), 2);
+
+        let ts1_decoded = list[0].as_message().unwrap();
+        assert_eq!(
+            ts1_decoded.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(1000)
+        );
+        assert_eq!(
+            ts1_decoded.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(100)
+        );
+
+        let ts2_decoded = list[1].as_message().unwrap();
+        assert_eq!(
+            ts2_decoded.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(2000)
+        );
+        assert_eq!(
+            ts2_decoded.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(200)
+        );
+    }
+
+    // ==================== Date Field Tests ====================
+
+    #[test]
+    fn test_date_field_roundtrip() {
+        let mut pool = create_date_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/date.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDate".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("date".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.type.Date".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDate").unwrap();
+        let date_descriptor = pool.get_message_by_name("google.type.Date").unwrap();
+
+        let mut date = DynamicMessage::new(date_descriptor.clone());
+        date.set_field_by_name("year", Value::I32(2024));
+        date.set_field_by_name("month", Value::I32(12));
+        date.set_field_by_name("day", Value::I32(25));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("date", Value::Message(date));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let date_value = decoded.get_field_by_name("date").unwrap();
+        let date_msg = date_value.as_message().unwrap();
+        assert_eq!(
+            date_msg.get_field_by_name("year").unwrap().as_i32(),
+            Some(2024)
+        );
+        assert_eq!(
+            date_msg.get_field_by_name("month").unwrap().as_i32(),
+            Some(12)
+        );
+        assert_eq!(
+            date_msg.get_field_by_name("day").unwrap().as_i32(),
+            Some(25)
+        );
+    }
+
+    #[test]
+    fn test_repeated_date_roundtrip() {
+        let mut pool = create_date_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/date.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDates".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dates".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.type.Date".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDates").unwrap();
+        let date_descriptor = pool.get_message_by_name("google.type.Date").unwrap();
+
+        let mut date1 = DynamicMessage::new(date_descriptor.clone());
+        date1.set_field_by_name("year", Value::I32(2020));
+        date1.set_field_by_name("month", Value::I32(1));
+        date1.set_field_by_name("day", Value::I32(15));
+
+        let mut date2 = DynamicMessage::new(date_descriptor.clone());
+        date2.set_field_by_name("year", Value::I32(2021));
+        date2.set_field_by_name("month", Value::I32(6));
+        date2.set_field_by_name("day", Value::I32(30));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "dates",
+            Value::List(vec![Value::Message(date1), Value::Message(date2)]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dates_list = decoded.get_field_by_name("dates").unwrap();
+        let list = dates_list.as_list().unwrap();
+        assert_eq!(list.len(), 2);
+
+        let date1_decoded = list[0].as_message().unwrap();
+        assert_eq!(
+            date1_decoded.get_field_by_name("year").unwrap().as_i32(),
+            Some(2020)
+        );
+        assert_eq!(
+            date1_decoded.get_field_by_name("month").unwrap().as_i32(),
+            Some(1)
+        );
+        assert_eq!(
+            date1_decoded.get_field_by_name("day").unwrap().as_i32(),
+            Some(15)
+        );
+
+        let date2_decoded = list[1].as_message().unwrap();
+        assert_eq!(
+            date2_decoded.get_field_by_name("year").unwrap().as_i32(),
+            Some(2021)
+        );
+        assert_eq!(
+            date2_decoded.get_field_by_name("month").unwrap().as_i32(),
+            Some(6)
+        );
+        assert_eq!(
+            date2_decoded.get_field_by_name("day").unwrap().as_i32(),
+            Some(30)
+        );
+    }
+
+    // ==================== Enum Field Tests ====================
+
+    fn create_enum_message_descriptor() -> (DescriptorPool, MessageDescriptor) {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            enum_type: vec![prost_reflect::prost_types::EnumDescriptorProto {
+                name: Some("Status".to_string()),
+                value: vec![
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("UNKNOWN".to_string()),
+                        number: Some(0),
+                        ..Default::default()
+                    },
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("ACTIVE".to_string()),
+                        number: Some(1),
+                        ..Default::default()
+                    },
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("INACTIVE".to_string()),
+                        number: Some(2),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            message_type: vec![DescriptorProto {
+                name: Some("WithEnum".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("status".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Enum.into()),
+                        type_name: Some(".test.Status".to_string()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("statuses".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Enum.into()),
+                        type_name: Some(".test.Status".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let pool = create_pool_with_message(file_descriptor);
+        let message_descriptor = pool.get_message_by_name("test.WithEnum").unwrap();
+        (pool, message_descriptor)
+    }
+
+    #[test]
+    fn test_enum_field_roundtrip() {
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(1)); // ACTIVE
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        assert_eq!(
+            decoded
+                .get_field_by_name("status")
+                .unwrap()
+                .as_enum_number(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_repeated_enum_field_roundtrip() {
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "statuses",
+            Value::List(vec![
+                Value::EnumNumber(0), // UNKNOWN
+                Value::EnumNumber(1), // ACTIVE
+                Value::EnumNumber(2), // INACTIVE
+            ]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let statuses = decoded.get_field_by_name("statuses").unwrap();
+        let list = statuses.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].as_enum_number(), Some(0));
+        assert_eq!(list[1].as_enum_number(), Some(1));
+        assert_eq!(list[2].as_enum_number(), Some(2));
+    }
+
+    // ==================== Map Field Tests with Various Key Types ====================
+
+    fn create_map_descriptor(
+        key_type: Type,
+        value_type: Type,
+    ) -> (DescriptorPool, MessageDescriptor) {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("MapEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(key_type.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(value_type.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("MessageWithMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("my_map".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.MapEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pool = create_pool_with_message(file_descriptor);
+        let message_descriptor = pool.get_message_by_name("test.MessageWithMap").unwrap();
+        (pool, message_descriptor)
+    }
+
+    #[test]
+    fn test_map_int32_key_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::Int32, Type::String);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(
+            prost_reflect::MapKey::I32(1),
+            Value::String("one".to_string()),
+        );
+        map.insert(
+            prost_reflect::MapKey::I32(2),
+            Value::String("two".to_string()),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_map_int64_key_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::Int64, Type::Int32);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(prost_reflect::MapKey::I64(100), Value::I32(1000));
+        map.insert(prost_reflect::MapKey::I64(200), Value::I32(2000));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_map_uint32_key_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::Uint32, Type::Double);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(prost_reflect::MapKey::U32(10), Value::F64(1.5));
+        map.insert(prost_reflect::MapKey::U32(20), Value::F64(2.5));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_map_uint64_key_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::Uint64, Type::Float);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(prost_reflect::MapKey::U64(1000), Value::F32(1.1));
+        map.insert(prost_reflect::MapKey::U64(2000), Value::F32(2.2));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_map_bool_key_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::Bool, Type::Int64);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(prost_reflect::MapKey::Bool(true), Value::I64(100));
+        map.insert(prost_reflect::MapKey::Bool(false), Value::I64(200));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_map_with_bool_value_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::String, Type::Bool);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(
+            prost_reflect::MapKey::String("enabled".to_string()),
+            Value::Bool(true),
+        );
+        map.insert(
+            prost_reflect::MapKey::String("disabled".to_string()),
+            Value::Bool(false),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn test_map_with_bytes_value_roundtrip() {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(Type::String, Type::Bytes);
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(
+            prost_reflect::MapKey::String("data1".to_string()),
+            Value::Bytes(prost::bytes::Bytes::from(vec![1, 2, 3])),
+        );
+        map.insert(
+            prost_reflect::MapKey::String("data2".to_string()),
+            Value::Bytes(prost::bytes::Bytes::from(vec![4, 5, 6])),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
+
+    // ==================== Repeated sfixed/sint/fixed Types Tests ====================
+
+    #[test]
+    fn test_repeated_sfixed32_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Sfixed32);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![Value::I32(-100), Value::I32(0), Value::I32(100)]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].as_i32(), Some(-100));
+        assert_eq!(list[1].as_i32(), Some(0));
+        assert_eq!(list[2].as_i32(), Some(100));
+    }
+
+    #[test]
+    fn test_repeated_sfixed64_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Sfixed64);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![
+                Value::I64(i64::MIN),
+                Value::I64(0),
+                Value::I64(i64::MAX),
+            ]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].as_i64(), Some(i64::MIN));
+        assert_eq!(list[1].as_i64(), Some(0));
+        assert_eq!(list[2].as_i64(), Some(i64::MAX));
+    }
+
+    #[test]
+    fn test_repeated_sint32_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Sint32);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![
+                Value::I32(i32::MIN),
+                Value::I32(-1),
+                Value::I32(0),
+                Value::I32(1),
+                Value::I32(i32::MAX),
+            ]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 5);
+        assert_eq!(list[0].as_i32(), Some(i32::MIN));
+        assert_eq!(list[1].as_i32(), Some(-1));
+        assert_eq!(list[2].as_i32(), Some(0));
+        assert_eq!(list[3].as_i32(), Some(1));
+        assert_eq!(list[4].as_i32(), Some(i32::MAX));
+    }
+
+    #[test]
+    fn test_repeated_sint64_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Sint64);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![
+                Value::I64(i64::MIN),
+                Value::I64(-1),
+                Value::I64(0),
+                Value::I64(1),
+                Value::I64(i64::MAX),
+            ]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 5);
+        assert_eq!(list[0].as_i64(), Some(i64::MIN));
+        assert_eq!(list[1].as_i64(), Some(-1));
+        assert_eq!(list[2].as_i64(), Some(0));
+        assert_eq!(list[3].as_i64(), Some(1));
+        assert_eq!(list[4].as_i64(), Some(i64::MAX));
+    }
+
+    #[test]
+    fn test_repeated_fixed32_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Fixed32);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![Value::U32(0), Value::U32(100), Value::U32(u32::MAX)]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].as_u32(), Some(0));
+        assert_eq!(list[1].as_u32(), Some(100));
+        assert_eq!(list[2].as_u32(), Some(u32::MAX));
+    }
+
+    #[test]
+    fn test_repeated_fixed64_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Fixed64);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![Value::U64(0), Value::U64(100), Value::U64(u64::MAX)]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].as_u64(), Some(0));
+        assert_eq!(list[1].as_u64(), Some(100));
+        assert_eq!(list[2].as_u64(), Some(u64::MAX));
+    }
+
+    // ==================== Additional Coverage Tests ====================
+
+    #[test]
+    fn test_repeated_double_roundtrip() {
+        let (_pool, message_descriptor) =
+            create_repeated_message_descriptor("values", Type::Double);
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "values",
+            Value::List(vec![
+                Value::F64(-std::f64::consts::PI),
+                Value::F64(0.0),
+                Value::F64(std::f64::consts::E),
+            ]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let values = decoded.get_field_by_name("values").unwrap();
+        let list = values.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert!((list[0].as_f64().unwrap() + std::f64::consts::PI).abs() < 1e-10);
+        assert!((list[1].as_f64().unwrap()).abs() < 1e-10);
+        assert!((list[2].as_f64().unwrap() - std::f64::consts::E).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_null_nested_message_roundtrip() {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("Inner".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("value".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("Outer".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("id".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("inner".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".test.Inner".to_string()),
+                            proto3_optional: Some(true),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let pool = create_pool_with_message(file_descriptor);
+        let outer_descriptor = pool.get_message_by_name("test.Outer").unwrap();
+
+        // Create message without setting the inner field (it will be null)
+        let mut msg = DynamicMessage::new(outer_descriptor.clone());
+        msg.set_field_by_name("id", Value::I32(42));
+        // Don't set inner - it should be null
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &outer_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &outer_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(outer_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        assert_eq!(decoded.get_field_by_name("id").unwrap().as_i32(), Some(42));
+    }
+
+    #[test]
+    fn test_multiple_rows_with_different_repeated_lengths() {
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
+
+        let mut msg1 = DynamicMessage::new(message_descriptor.clone());
+        msg1.set_field_by_name("values", Value::List(vec![Value::I32(1)]));
+
+        let mut msg2 = DynamicMessage::new(message_descriptor.clone());
+        msg2.set_field_by_name(
+            "values",
+            Value::List(vec![Value::I32(1), Value::I32(2), Value::I32(3)]),
+        );
+
+        let mut msg3 = DynamicMessage::new(message_descriptor.clone());
+        msg3.set_field_by_name("values", Value::List(vec![]));
+
+        let messages = vec![msg1, msg2, msg3];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        assert_eq!(binary_array.len(), 3);
+
+        let decoded1 =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+        let values1 = decoded1.get_field_by_name("values").unwrap();
+        let list1 = values1.as_list().unwrap();
+        assert_eq!(list1.len(), 1);
+
+        let decoded2 =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(1)).unwrap();
+        let values2 = decoded2.get_field_by_name("values").unwrap();
+        let list2 = values2.as_list().unwrap();
+        assert_eq!(list2.len(), 3);
+
+        let decoded3 =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(2)).unwrap();
+        let values3 = decoded3.get_field_by_name("values").unwrap();
+        let list3 = values3.as_list().unwrap();
+        assert_eq!(list3.len(), 0);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_roundtrip() {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            enum_type: vec![prost_reflect::prost_types::EnumDescriptorProto {
+                name: Some("Priority".to_string()),
+                value: vec![
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("LOW".to_string()),
+                        number: Some(0),
+                        ..Default::default()
+                    },
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("HIGH".to_string()),
+                        number: Some(1),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("PriorityEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Enum.into()),
+                            type_name: Some(".test.Priority".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithEnumMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("priorities".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.PriorityEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        use std::collections::HashMap;
+        let pool = create_pool_with_message(file_descriptor);
+        let message_descriptor = pool.get_message_by_name("test.WithEnumMap").unwrap();
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(
+            prost_reflect::MapKey::String("task1".to_string()),
+            Value::EnumNumber(0), // LOW
+        );
+        map.insert(
+            prost_reflect::MapKey::String("task2".to_string()),
+            Value::EnumNumber(1), // HIGH
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("priorities", Value::Map(map));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("priorities").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+    }
 }

@@ -2,6 +2,10 @@
 all:
 	@echo "Run my targets individually!"
 
+.PHONY: clean
+clean:
+	cargo clean && rm -rf target
+
 .PHONY: env
 env:
 	test -d .venv || python3 -m venv .venv
@@ -35,7 +39,8 @@ protoc: env
 
 .PHONY: lint
 lint:
-	cargo clippy -- -D warnings
+	cargo clippy -- -D warnings && \
+    pre-commit run --all-files
 
 .PHONY: coverage-env
 coverage-env:
