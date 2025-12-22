@@ -20,7 +20,8 @@ from ptars_protos.simple_pb2 import (
     SearchRequest,
     SimpleMessage,
     TestEnum,
-    WithMap,
+    WithMap
+,WithMapOfWrapper,
     WithRepeated,
 )
 from python.test.random_generator import generate_messages
@@ -222,6 +223,10 @@ def test_map():
     messages = generate_messages(WithMap, count=10)
     run_round_trip(messages, WithMap)
 
+
+def test_map_of_wrapper():
+    messages = generate_messages(WithMapOfWrapper, count=10)
+    run_round_trip(messages, WithMapOfWrapper)
 
 def run_round_trip(messages, message_type):
     payloads = [message.SerializeToString() for message in messages]

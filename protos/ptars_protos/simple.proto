@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
 import "google/type/date.proto";
 
 package messages;
@@ -98,6 +99,10 @@ message WithRepeated {
 
 message WithMap {
   map<string, double> string_to_double = 1;
+}
+
+message WithMapOfWrapper {
+  map<int32, google.protobuf.DoubleValue> wrapped_double_int32_map = 103;
 }
 
 message DataRow {
