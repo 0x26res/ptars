@@ -21,8 +21,8 @@ from ptars_protos.simple_pb2 import (
     SimpleMessage,
     TestEnum,
     WithMap,
-    WithMapOfWrapper,
     WithMapOfDate,
+    WithMapOfWrapper,
     WithRepeated,
 )
 from python.test.random_generator import generate_messages
@@ -228,6 +228,7 @@ def test_map():
 def test_map_of_wrapper():
     messages = generate_messages(WithMapOfWrapper, count=10)
     run_round_trip(messages, WithMapOfWrapper)
+
 
 def test_map_of_date():
     messages = generate_messages(WithMapOfDate, count=10)
