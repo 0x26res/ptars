@@ -1,11 +1,11 @@
 import datetime
-import sys
 
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
 from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.date_pb2 import Date
+from google.type.timeofday_pb2 import TimeOfDay
 from ptars import HandlerPool
 from ptars._lib import MessageHandler
 
@@ -215,6 +215,48 @@ def test_repeated_date(pool):
     ]
 
 
+def test_time_of_day_missing(pool):
+    handler = pool.get_for_message(simple_pb2.WithTimeOfDay.DESCRIPTOR)
+    messages = [
+        simple_pb2.WithTimeOfDay(
+            time_of_day=TimeOfDay(hours=14, minutes=30, seconds=45, nanos=123456789)
+        ),
+        simple_pb2.WithTimeOfDay(),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+    record_batch = handler.list_to_record_batch(payloads)
+
+    assert record_batch["time_of_day"].is_null().to_pylist() == [False, True]
+    assert record_batch["time_of_day"].cast(pa.int64()).to_pylist() == [
+        52245123456789,
+        None,
+    ]
+
+
+def test_repeated_time_of_day(pool):
+    handler = pool.get_for_message(simple_pb2.WithTimeOfDay.DESCRIPTOR)
+    messages = [
+        simple_pb2.WithTimeOfDay(
+            time_of_days=[
+                TimeOfDay(hours=9, minutes=0, seconds=0, nanos=0),
+                TimeOfDay(hours=17, minutes=30, seconds=0, nanos=0),
+            ]
+        ),
+        simple_pb2.WithTimeOfDay(time_of_days=[]),
+        simple_pb2.WithTimeOfDay(),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+    record_batch = handler.list_to_record_batch(payloads)
+
+    assert pa.types.is_list(record_batch["time_of_days"].type)
+    assert pa.types.is_time64(record_batch["time_of_days"].type.value_type)
+
+    # 9:00:00 = 9*3_600_000_000_000 = 32_400_000_000_000 ns
+    # 17:30:00 = 17*3_600_000_000_000 + 30*60_000_000_000 = 63_000_000_000_000 ns
+    flattened = record_batch["time_of_days"].flatten().cast(pa.int64())
+    assert flattened.to_pylist() == [32400000000000, 63000000000000]
+
+
 def test_repeated():
     messages = generate_messages(WithRepeated, count=10)
     run_round_trip(messages, WithRepeated)
@@ -293,10 +335,6 @@ def test_example():
     pool = HandlerPool([simple_pb2.DESCRIPTOR])
     handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
     record_batch = handler.list_to_record_batch(payloads)
-    try:
-        record_batch.to_pandas().to_markdown(sys.stdout, index=False)
-    except ImportError:
-        pass
 
     array: pa.BinaryArray = handler.record_batch_to_array(record_batch)
     messages_back: list[SearchRequest] = [

@@ -3,6 +3,7 @@ syntax = "proto3";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 import "google/type/date.proto";
+import "google/type/timeofday.proto";
 
 package messages;
 
@@ -165,4 +166,9 @@ message WithTimestamp {
 message WithDate {
     google.type.Date date = 1;
     repeated google.type.Date dates = 2;
+}
+
+message WithTimeOfDay {
+    google.type.TimeOfDay time_of_day = 1;
+    repeated google.type.TimeOfDay time_of_days = 2;
 }

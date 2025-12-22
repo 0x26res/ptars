@@ -42,6 +42,7 @@ def test_get_dependencies():
         "google/protobuf/timestamp.proto",
         "google/protobuf/wrappers.proto",
         "google/type/date.proto",
+        "google/type/timeofday.proto",
         "ptars_protos/simple.proto",
     ]
 
