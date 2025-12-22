@@ -2,7 +2,7 @@ use crate::arrow_to_proto;
 use crate::proto_to_arrow;
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
-use arrow_array::{Float32Array, Int32Array};
+use arrow_array::{BinaryArray, Float32Array, Int32Array};
 use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
@@ -58,6 +58,23 @@ impl MessageHandler {
                 .to_pyarrow(py)?
                 .unbind(),
         )
+    }
+
+    /// Convert a binary array of serialized protobuf messages to a record batch.
+    ///
+    /// Each element in the binary array is expected to be a serialized protobuf message.
+    /// The resulting record batch will have one column per field in the message descriptor.
+    fn array_to_record_batch(
+        &self,
+        array: &Bound<PyAny>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let array_data = arrow::array::ArrayData::from_pyarrow_bound(array)
+            .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e)))?;
+        let arrow_array = BinaryArray::from(array_data);
+        let record_batch = proto_to_arrow::binary_array_to_record_batch(&arrow_array, &self.message_descriptor)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 }
 

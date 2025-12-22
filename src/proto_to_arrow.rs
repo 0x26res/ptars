@@ -1204,3 +1204,38 @@ pub fn messages_to_record_batch(
     });
     RecordBatch::from(builder.build_struct_array())
 }
+
+use arrow_array::BinaryArray;
+
+/// Convert a binary array to a vector of DynamicMessage.
+///
+/// Each element in the binary array is expected to be a serialized protobuf message.
+/// Null values in the array will result in default (empty) messages.
+pub fn binary_array_to_messages(
+    array: &BinaryArray,
+    message_descriptor: &MessageDescriptor,
+) -> Result<Vec<DynamicMessage>, prost::DecodeError> {
+    let mut messages = Vec::with_capacity(array.len());
+    for i in 0..array.len() {
+        let message = if array.is_null(i) {
+            DynamicMessage::new(message_descriptor.clone())
+        } else {
+            let bytes = array.value(i);
+            DynamicMessage::decode(message_descriptor.clone(), bytes)?
+        };
+        messages.push(message);
+    }
+    Ok(messages)
+}
+
+/// Convert a binary array to a record batch.
+///
+/// Each element in the binary array is expected to be a serialized protobuf message.
+/// The resulting record batch will have one column per field in the message descriptor.
+pub fn binary_array_to_record_batch(
+    array: &BinaryArray,
+    message_descriptor: &MessageDescriptor,
+) -> Result<RecordBatch, prost::DecodeError> {
+    let messages = binary_array_to_messages(array, message_descriptor)?;
+    Ok(messages_to_record_batch(&messages, message_descriptor))
+}

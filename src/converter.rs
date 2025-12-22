@@ -3633,4 +3633,221 @@ mod tests {
             }
         }
     }
+
+    // ==================== Binary Array Conversion Tests ====================
+
+    #[test]
+    fn test_binary_array_to_messages() {
+        use crate::proto_to_arrow::binary_array_to_messages;
+        use arrow_array::BinaryArray;
+        use prost::Message;
+
+        let file_descriptor_proto = file_descriptor_proto_fixture();
+        let pool = create_pool_with_message(file_descriptor_proto);
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+
+        // Create some messages and serialize them
+        let messages = dynamic_messages_fixture(&message_descriptor);
+        let serialized: Vec<Vec<u8>> = messages.iter().map(|m| m.encode_to_vec()).collect();
+
+        // Create a binary array from the serialized messages
+        let binary_array = BinaryArray::from_iter_values(serialized.iter().map(|v| v.as_slice()));
+
+        // Convert back to messages
+        let decoded_messages =
+            binary_array_to_messages(&binary_array, &message_descriptor).unwrap();
+
+        assert_eq!(decoded_messages.len(), 2);
+        assert_eq!(
+            decoded_messages[0]
+                .get_field_by_name("id")
+                .unwrap()
+                .as_i32()
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            decoded_messages[0]
+                .get_field_by_name("name")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "test"
+        );
+        assert_eq!(
+            decoded_messages[1]
+                .get_field_by_name("id")
+                .unwrap()
+                .as_i32()
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            decoded_messages[1]
+                .get_field_by_name("name")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "test2"
+        );
+    }
+
+    #[test]
+    fn test_binary_array_to_messages_with_nulls() {
+        use crate::proto_to_arrow::binary_array_to_messages;
+        use arrow_array::BinaryArray;
+        use prost::Message;
+
+        let file_descriptor_proto = file_descriptor_proto_fixture();
+        let pool = create_pool_with_message(file_descriptor_proto);
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+
+        // Create a message and serialize it
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("id", prost_reflect::Value::I32(42));
+        message.set_field_by_name("name", prost_reflect::Value::String("hello".to_string()));
+        let serialized = message.encode_to_vec();
+
+        // Create a binary array with a null value
+        let binary_array = BinaryArray::from_iter(vec![
+            Some(serialized.as_slice()),
+            None,
+            Some(serialized.as_slice()),
+        ]);
+
+        // Convert back to messages
+        let decoded_messages =
+            binary_array_to_messages(&binary_array, &message_descriptor).unwrap();
+
+        assert_eq!(decoded_messages.len(), 3);
+        // First message
+        assert_eq!(
+            decoded_messages[0]
+                .get_field_by_name("id")
+                .unwrap()
+                .as_i32()
+                .unwrap(),
+            42
+        );
+        // Null becomes default message
+        assert_eq!(
+            decoded_messages[1]
+                .get_field_by_name("id")
+                .unwrap()
+                .as_i32()
+                .unwrap(),
+            0
+        );
+        // Third message
+        assert_eq!(
+            decoded_messages[2]
+                .get_field_by_name("id")
+                .unwrap()
+                .as_i32()
+                .unwrap(),
+            42
+        );
+    }
+
+    #[test]
+    fn test_binary_array_to_record_batch() {
+        use crate::proto_to_arrow::binary_array_to_record_batch;
+        use arrow_array::BinaryArray;
+        use prost::Message;
+
+        let file_descriptor_proto = file_descriptor_proto_fixture();
+        let pool = create_pool_with_message(file_descriptor_proto);
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+
+        // Create some messages and serialize them
+        let messages = dynamic_messages_fixture(&message_descriptor);
+        let serialized: Vec<Vec<u8>> = messages.iter().map(|m| m.encode_to_vec()).collect();
+
+        // Create a binary array from the serialized messages
+        let binary_array = BinaryArray::from_iter_values(serialized.iter().map(|v| v.as_slice()));
+
+        // Convert to record batch
+        let record_batch =
+            binary_array_to_record_batch(&binary_array, &message_descriptor).unwrap();
+
+        assert_eq!(record_batch.num_rows(), 2);
+        assert_eq!(record_batch.num_columns(), 2);
+
+        // Check column names
+        assert_eq!(record_batch.schema().field(0).name(), "id");
+        assert_eq!(record_batch.schema().field(1).name(), "name");
+
+        // Check values
+        let id_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+        assert_eq!(id_array.value(0), 1);
+        assert_eq!(id_array.value(1), 2);
+
+        let name_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(name_array.value(0), "test");
+        assert_eq!(name_array.value(1), "test2");
+    }
+
+    #[test]
+    fn test_binary_array_roundtrip() {
+        use crate::proto_to_arrow::binary_array_to_record_batch;
+        use arrow_array::BinaryArray;
+        use prost::Message;
+
+        let file_descriptor_proto = file_descriptor_proto_fixture();
+        let pool = create_pool_with_message(file_descriptor_proto);
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+
+        // Create some messages and serialize them
+        let original_messages = dynamic_messages_fixture(&message_descriptor);
+        let serialized: Vec<Vec<u8>> = original_messages
+            .iter()
+            .map(|m| m.encode_to_vec())
+            .collect();
+
+        // Binary array -> Record batch -> Binary array -> Messages
+        let binary_array = BinaryArray::from_iter_values(serialized.iter().map(|v| v.as_slice()));
+        let record_batch =
+            binary_array_to_record_batch(&binary_array, &message_descriptor).unwrap();
+        let result_array = record_batch_to_array(&record_batch, &message_descriptor);
+        let result_binary = arrow::array::BinaryArray::from(result_array);
+
+        // Decode and compare
+        for i in 0..result_binary.len() {
+            let decoded =
+                DynamicMessage::decode(message_descriptor.clone(), result_binary.value(i)).unwrap();
+            let original = &original_messages[i];
+            assert_eq!(
+                decoded
+                    .get_field_by_name("id")
+                    .unwrap()
+                    .as_i32()
+                    .unwrap(),
+                original
+                    .get_field_by_name("id")
+                    .unwrap()
+                    .as_i32()
+                    .unwrap()
+            );
+            assert_eq!(
+                decoded
+                    .get_field_by_name("name")
+                    .unwrap()
+                    .as_str()
+                    .unwrap(),
+                original
+                    .get_field_by_name("name")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+            );
+        }
+    }
 }

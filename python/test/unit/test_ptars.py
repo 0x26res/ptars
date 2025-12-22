@@ -341,3 +341,75 @@ def test_example():
         SearchRequest.FromString(s.as_py()) for s in array
     ]
     assert messages_back == messages
+
+
+def test_array_to_record_batch(pool):
+    """Test converting a binary array of serialized messages to a record batch."""
+    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+
+    messages = [
+        SearchRequest(query="hello", page_number=1, result_per_page=10),
+        SearchRequest(query="world", page_number=2, result_per_page=20),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+
+    # Create a binary array from the payloads
+    binary_array = pa.array(payloads, type=pa.binary())
+
+    # Convert to record batch
+    record_batch = handler.array_to_record_batch(binary_array)
+
+    assert isinstance(record_batch, pa.RecordBatch)
+    assert record_batch.num_rows == 2
+    assert record_batch["query"].to_pylist() == ["hello", "world"]
+    assert record_batch["page_number"].to_pylist() == [1, 2]
+    assert record_batch["result_per_page"].to_pylist() == [10, 20]
+
+
+def test_array_to_record_batch_roundtrip(pool):
+    """Test roundtrip: binary array -> record batch -> binary array."""
+    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+
+    messages = [
+        SearchRequest(query="test1", page_number=0, result_per_page=5),
+        SearchRequest(query="test2", page_number=1, result_per_page=15),
+        SearchRequest(query="", page_number=0, result_per_page=0),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+
+    # Binary array -> Record batch -> Binary array
+    binary_array = pa.array(payloads, type=pa.binary())
+    record_batch = handler.array_to_record_batch(binary_array)
+    result_array = handler.record_batch_to_array(record_batch)
+
+    # Decode and compare
+    messages_back = [SearchRequest.FromString(b.as_py()) for b in result_array]
+    assert messages_back == messages
+
+
+def test_array_to_record_batch_complex_message(pool):
+    """Test array_to_record_batch with a complex message type."""
+    handler = pool.get_for_message(SimpleMessage.DESCRIPTOR)
+
+    messages = [
+        SimpleMessage(
+            int32_value=42,
+            string_value="hello",
+            bool_value=True,
+            double_value=3.14,
+        ),
+        SimpleMessage(
+            int32_value=0,
+            string_value="",
+            bool_value=False,
+        ),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+
+    binary_array = pa.array(payloads, type=pa.binary())
+    record_batch = handler.array_to_record_batch(binary_array)
+
+    assert record_batch.num_rows == 2
+    assert record_batch["int32_value"].to_pylist() == [42, 0]
+    assert record_batch["string_value"].to_pylist() == ["hello", ""]
+    assert record_batch["bool_value"].to_pylist() == [True, False]
