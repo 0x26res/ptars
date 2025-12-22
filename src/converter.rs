@@ -3019,7 +3019,9 @@ mod tests {
         .unwrap();
 
         let message_descriptor = pool.get_message_by_name("test.WithTimestampMap").unwrap();
-        let timestamp_descriptor = pool.get_message_by_name("google.protobuf.Timestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
 
         let mut ts1 = DynamicMessage::new(timestamp_descriptor.clone());
         ts1.set_field_by_name("seconds", Value::I64(1700000000));
@@ -3057,7 +3059,11 @@ mod tests {
         // Check that we can access the timestamp values
         for (key, value) in map {
             let ts_msg = value.as_message().unwrap();
-            let seconds = ts_msg.get_field_by_name("seconds").unwrap().as_i64().unwrap();
+            let seconds = ts_msg
+                .get_field_by_name("seconds")
+                .unwrap()
+                .as_i64()
+                .unwrap();
             let nanos = ts_msg.get_field_by_name("nanos").unwrap().as_i32().unwrap();
             match key.as_str().unwrap() {
                 "event1" => {
@@ -3165,8 +3171,16 @@ mod tests {
 
         for (key, value) in map {
             let date_msg = value.as_message().unwrap();
-            let year = date_msg.get_field_by_name("year").unwrap().as_i32().unwrap();
-            let month = date_msg.get_field_by_name("month").unwrap().as_i32().unwrap();
+            let year = date_msg
+                .get_field_by_name("year")
+                .unwrap()
+                .as_i32()
+                .unwrap();
+            let month = date_msg
+                .get_field_by_name("month")
+                .unwrap()
+                .as_i32()
+                .unwrap();
             let day = date_msg.get_field_by_name("day").unwrap().as_i32().unwrap();
             match key.as_str().unwrap() {
                 "christmas" => {
@@ -3237,7 +3251,9 @@ mod tests {
         .unwrap();
 
         let message_descriptor = pool.get_message_by_name("test.WithDoubleValueMap").unwrap();
-        let wrapper_descriptor = pool.get_message_by_name("google.protobuf.DoubleValue").unwrap();
+        let wrapper_descriptor = pool
+            .get_message_by_name("google.protobuf.DoubleValue")
+            .unwrap();
 
         let mut val1 = DynamicMessage::new(wrapper_descriptor.clone());
         val1.set_field_by_name("value", Value::F64(3.14159));
@@ -3272,7 +3288,11 @@ mod tests {
 
         for (key, value) in map {
             let wrapper_msg = value.as_message().unwrap();
-            let val = wrapper_msg.get_field_by_name("value").unwrap().as_f64().unwrap();
+            let val = wrapper_msg
+                .get_field_by_name("value")
+                .unwrap()
+                .as_f64()
+                .unwrap();
             match key.as_str().unwrap() {
                 "pi" => assert!((val - 3.14159).abs() < 1e-5),
                 "e" => assert!((val - 2.71828).abs() < 1e-5),

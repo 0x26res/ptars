@@ -40,7 +40,7 @@ def test_get_dependencies():
 
     assert [d.name for d in _get_dependencies(simple_pb2.DESCRIPTOR)] == [
         "google/protobuf/timestamp.proto",
-        'google/protobuf/wrappers.proto',
+        "google/protobuf/wrappers.proto",
         "google/type/date.proto",
         "ptars_protos/simple.proto",
     ]

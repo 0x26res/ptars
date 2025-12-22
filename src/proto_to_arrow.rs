@@ -26,9 +26,7 @@ pub fn get_message_array_builder(
     message_descriptor: &MessageDescriptor,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     match message_descriptor.full_name() {
-        "google.protobuf.Timestamp" => {
-            Ok(Box::new(TimestampArrayBuilder::new(message_descriptor)))
-        }
+        "google.protobuf.Timestamp" => Ok(Box::new(TimestampArrayBuilder::new(message_descriptor))),
         "google.type.Date" => Ok(Box::new(DateArrayBuilder::new(message_descriptor))),
         // Wrapper types - stored as nullable primitives
         "google.protobuf.DoubleValue" => Ok(Box::new(WrapperBuilderWrapper::<Float64Type>::new(
@@ -55,9 +53,9 @@ pub fn get_message_array_builder(
             message_descriptor,
             Value::as_u32,
         ))),
-        "google.protobuf.BoolValue" => Ok(Box::new(BoolWrapperBuilderWrapper::new(
-            message_descriptor,
-        ))),
+        "google.protobuf.BoolValue" => {
+            Ok(Box::new(BoolWrapperBuilderWrapper::new(message_descriptor)))
+        }
         "google.protobuf.StringValue" => Ok(Box::new(StringWrapperBuilderWrapper::new(
             message_descriptor,
         ))),
@@ -901,7 +899,10 @@ impl<T> WrapperBuilderWrapper<T>
 where
     T: ArrowPrimitiveType,
 {
-    fn new(message_descriptor: &MessageDescriptor, extractor: fn(&Value) -> Option<T::Native>) -> Self {
+    fn new(
+        message_descriptor: &MessageDescriptor,
+        extractor: fn(&Value) -> Option<T::Native>,
+    ) -> Self {
         Self {
             builder: PrimitiveBuilder::<T>::new(),
             value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
