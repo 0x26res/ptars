@@ -39,8 +39,9 @@ protoc: env
 
 .PHONY: lint
 lint:
-	cargo clippy -- -D warnings && \
-    pre-commit run --all-files
+	cargo fmt && \
+		cargo clippy -- -D warnings && \
+		pre-commit run --all-files
 
 .PHONY: coverage-env
 coverage-env:

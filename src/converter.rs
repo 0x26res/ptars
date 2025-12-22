@@ -2154,6 +2154,215 @@ mod tests {
         );
     }
 
+    // ==================== TimeOfDay Field Tests ====================
+
+    fn create_time_of_day_pool() -> DescriptorPool {
+        let mut pool = DescriptorPool::new();
+
+        // Add google.type.TimeOfDay dependency
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("google/type/timeofday.proto".to_string()),
+            package: Some("google.type".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("TimeOfDay".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("hours".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("minutes".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(3),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(4),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        pool
+    }
+
+    #[test]
+    fn test_time_of_day_field_roundtrip() {
+        let mut pool = create_time_of_day_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/timeofday.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimeOfDay".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("time".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.type.TimeOfDay".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimeOfDay").unwrap();
+        let time_descriptor = pool.get_message_by_name("google.type.TimeOfDay").unwrap();
+
+        let mut time = DynamicMessage::new(time_descriptor.clone());
+        time.set_field_by_name("hours", Value::I32(14));
+        time.set_field_by_name("minutes", Value::I32(30));
+        time.set_field_by_name("seconds", Value::I32(45));
+        time.set_field_by_name("nanos", Value::I32(123456789));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("time", Value::Message(time));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let time_value = decoded.get_field_by_name("time").unwrap();
+        let time_msg = time_value.as_message().unwrap();
+        assert_eq!(
+            time_msg.get_field_by_name("hours").unwrap().as_i32(),
+            Some(14)
+        );
+        assert_eq!(
+            time_msg.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(30)
+        );
+        assert_eq!(
+            time_msg.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(45)
+        );
+        assert_eq!(
+            time_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(123456789)
+        );
+    }
+
+    #[test]
+    fn test_repeated_time_of_day_roundtrip() {
+        let mut pool = create_time_of_day_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/timeofday.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimes".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("times".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.type.TimeOfDay".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimes").unwrap();
+        let time_descriptor = pool.get_message_by_name("google.type.TimeOfDay").unwrap();
+
+        let mut time1 = DynamicMessage::new(time_descriptor.clone());
+        time1.set_field_by_name("hours", Value::I32(9));
+        time1.set_field_by_name("minutes", Value::I32(0));
+        time1.set_field_by_name("seconds", Value::I32(0));
+        time1.set_field_by_name("nanos", Value::I32(0));
+
+        let mut time2 = DynamicMessage::new(time_descriptor.clone());
+        time2.set_field_by_name("hours", Value::I32(17));
+        time2.set_field_by_name("minutes", Value::I32(30));
+        time2.set_field_by_name("seconds", Value::I32(59));
+        time2.set_field_by_name("nanos", Value::I32(999999999));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "times",
+            Value::List(vec![Value::Message(time1), Value::Message(time2)]),
+        );
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let times_list = decoded.get_field_by_name("times").unwrap();
+        let list = times_list.as_list().unwrap();
+        assert_eq!(list.len(), 2);
+
+        let time1_decoded = list[0].as_message().unwrap();
+        assert_eq!(
+            time1_decoded.get_field_by_name("hours").unwrap().as_i32(),
+            Some(9)
+        );
+        assert_eq!(
+            time1_decoded.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(0)
+        );
+        assert_eq!(
+            time1_decoded.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(0)
+        );
+        assert_eq!(
+            time1_decoded.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(0)
+        );
+
+        let time2_decoded = list[1].as_message().unwrap();
+        assert_eq!(
+            time2_decoded.get_field_by_name("hours").unwrap().as_i32(),
+            Some(17)
+        );
+        assert_eq!(
+            time2_decoded.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(30)
+        );
+        assert_eq!(
+            time2_decoded.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(59)
+        );
+        assert_eq!(
+            time2_decoded.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(999999999)
+        );
+    }
+
     // ==================== Enum Field Tests ====================
 
     fn create_enum_message_descriptor() -> (DescriptorPool, MessageDescriptor) {

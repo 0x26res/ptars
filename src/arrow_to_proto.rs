@@ -1,8 +1,8 @@
 use arrow::array::ArrayData;
 use arrow_array::builder::BinaryBuilder;
 use arrow_array::types::{
-    Date32Type, Float32Type, Float64Type, Int32Type, Int64Type, TimestampNanosecondType,
-    UInt32Type, UInt64Type,
+    Date32Type, Float32Type, Float64Type, Int32Type, Int64Type, Time64NanosecondType,
+    TimestampNanosecondType, UInt32Type, UInt64Type,
 };
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, MapArray,
@@ -79,6 +79,39 @@ fn create_date_message(days: i32, message_descriptor: &MessageDescriptor) -> Dyn
             Value::I32(date.day() as i32),
         );
     }
+    msg
+}
+
+/// Create a google.type.TimeOfDay DynamicMessage from total nanoseconds since midnight.
+fn create_time_of_day_message(
+    total_nanos: i64,
+    message_descriptor: &MessageDescriptor,
+) -> DynamicMessage {
+    let mut msg = DynamicMessage::new(message_descriptor.clone());
+
+    let hours = (total_nanos / 3_600_000_000_000) as i32;
+    let remaining = total_nanos % 3_600_000_000_000;
+    let minutes = (remaining / 60_000_000_000) as i32;
+    let remaining = remaining % 60_000_000_000;
+    let seconds = (remaining / 1_000_000_000) as i32;
+    let nanos = (remaining % 1_000_000_000) as i32;
+
+    msg.set_field(
+        &message_descriptor.get_field_by_name("hours").unwrap(),
+        Value::I32(hours),
+    );
+    msg.set_field(
+        &message_descriptor.get_field_by_name("minutes").unwrap(),
+        Value::I32(minutes),
+    );
+    msg.set_field(
+        &message_descriptor.get_field_by_name("seconds").unwrap(),
+        Value::I32(seconds),
+    );
+    msg.set_field(
+        &message_descriptor.get_field_by_name("nanos").unwrap(),
+        Value::I32(nanos),
+    );
     msg
 }
 
@@ -177,6 +210,15 @@ pub fn extract_repeated_message(
         }
         "google.type.Date" => {
             extract_repeated_date(list_array, messages, field_descriptor, &message_descriptor);
+            return;
+        }
+        "google.type.TimeOfDay" => {
+            extract_repeated_time_of_day(
+                list_array,
+                messages,
+                field_descriptor,
+                &message_descriptor,
+            );
             return;
         }
         "google.protobuf.DoubleValue" => {
@@ -359,6 +401,39 @@ fn extract_repeated_date(
                 let sub_messages: Vec<Value> = (start..end)
                     .map(|idx| {
                         Value::Message(create_date_message(values.value(idx), message_descriptor))
+                    })
+                    .collect();
+
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_time_of_day(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values: &PrimitiveArray<Time64NanosecondType> = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
+        .unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        Value::Message(create_time_of_day_message(
+                            values.value(idx),
+                            message_descriptor,
+                        ))
                     })
                     .collect();
 
@@ -719,6 +794,10 @@ pub fn extract_single_message(
             extract_single_date(array, field_descriptor, &message_descriptor, messages);
             return;
         }
+        "google.type.TimeOfDay" => {
+            extract_single_time_of_day(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
         "google.protobuf.DoubleValue" => {
             extract_single_wrapper_primitive::<Float64Type>(
                 array,
@@ -855,6 +934,25 @@ fn extract_single_date(
         if !date_array.is_null(i) {
             let date_msg = create_date_message(date_array.value(i), message_descriptor);
             message.set_field(field_descriptor, Value::Message(date_msg));
+        }
+    }
+}
+
+fn extract_single_time_of_day(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let time_array = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
+        .unwrap();
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !time_array.is_null(i) {
+            let time_msg = create_time_of_day_message(time_array.value(i), message_descriptor);
+            message.set_field(field_descriptor, Value::Message(time_msg));
         }
     }
 }
@@ -1190,6 +1288,20 @@ fn extract_map_message_value(
             return None;
         }
         return Some(Value::Message(create_date_message(
+            arr.value(idx),
+            message_descriptor,
+        )));
+    }
+
+    // Handle google.type.TimeOfDay
+    if full_name == "google.type.TimeOfDay" {
+        let arr = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()?;
+        if arr.is_null(idx) {
+            return None;
+        }
+        return Some(Value::Message(create_time_of_day_message(
             arr.value(idx),
             message_descriptor,
         )));

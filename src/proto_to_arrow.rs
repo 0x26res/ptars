@@ -2,7 +2,7 @@ use arrow::array::ArrayData;
 use arrow::array::MapArray;
 use arrow::buffer::Buffer;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, StringBuilder};
-use arrow_array::types::{Date32Type, TimestampNanosecondType};
+use arrow_array::types::{Date32Type, Time64NanosecondType, TimestampNanosecondType};
 use arrow_array::{Array, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
@@ -28,6 +28,7 @@ pub fn get_message_array_builder(
     match message_descriptor.full_name() {
         "google.protobuf.Timestamp" => Ok(Box::new(TimestampArrayBuilder::new(message_descriptor))),
         "google.type.Date" => Ok(Box::new(DateArrayBuilder::new(message_descriptor))),
+        "google.type.TimeOfDay" => Ok(Box::new(TimeOfDayArrayBuilder::new(message_descriptor))),
         // Wrapper types - stored as nullable primitives
         "google.protobuf.DoubleValue" => Ok(Box::new(WrapperBuilderWrapper::<Float64Type>::new(
             message_descriptor,
@@ -862,6 +863,67 @@ impl ProtoArrayBuilder for DateArrayBuilder {
                         - CE_OFFSET,
                 );
             }
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+struct TimeOfDayArrayBuilder {
+    builder: PrimitiveBuilder<Time64NanosecondType>,
+    hours_descriptor: FieldDescriptor,
+    minutes_descriptor: FieldDescriptor,
+    seconds_descriptor: FieldDescriptor,
+    nanos_descriptor: FieldDescriptor,
+}
+
+impl TimeOfDayArrayBuilder {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            builder: PrimitiveBuilder::<Time64NanosecondType>::new(),
+            hours_descriptor: message_descriptor.get_field_by_name("hours").unwrap(),
+            minutes_descriptor: message_descriptor.get_field_by_name("minutes").unwrap(),
+            seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
+            nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let hours = message.get_field(&self.hours_descriptor).as_i32().unwrap() as i64;
+            let minutes = message
+                .get_field(&self.minutes_descriptor)
+                .as_i32()
+                .unwrap() as i64;
+            let seconds = message
+                .get_field(&self.seconds_descriptor)
+                .as_i32()
+                .unwrap() as i64;
+            let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap() as i64;
+
+            let total_nanos = hours * 3_600_000_000_000
+                + minutes * 60_000_000_000
+                + seconds * 1_000_000_000
+                + nanos;
+            self.builder.append_value(total_nanos);
         } else {
             self.append_null();
         }
