@@ -77,12 +77,10 @@ src_paths = ["ptars", "tests"]
 bindings = "pyo3"
 exclude = ["python/test/**", ".**", "sdist/**", ".github/**"]
 features = ["pyo3/extension-module"]
+manifest-path = "ptars-python/Cargo.toml"
 module-name = "ptars._lib"
 python-packages = ["ptars"]
 python-source = "python"
-
-[tool.pdm.build]
-includes = ["python/ptars", "ptars/*", "ptarslib/*", "ptarslib/src/*"]
 
 [tool.ruff]
 lint.select = ["E", "F", "C", "I"]

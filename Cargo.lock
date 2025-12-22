@@ -727,7 +727,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ptarslib"
+name = "ptars"
 version = "0.0.7"
 dependencies = [
  "arrow",
@@ -736,6 +736,17 @@ dependencies = [
  "chrono",
  "prost",
  "prost-reflect",
+]
+
+[[package]]
+name = "ptars-python"
+version = "0.0.7"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "prost",
+ "prost-reflect",
+ "ptars",
  "pyo3",
 ]
 

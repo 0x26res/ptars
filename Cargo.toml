@@ -1,35 +1,3 @@
-[dependencies]
-arrow = {version = "57.1.0", features = ["pyarrow"]}
-arrow-array = {version = "57.1.0"}
-arrow-schema = {version = "57.1.0"}
-chrono = {version = "0.4.42"}
-prost = {version = "0.14.1"}
-prost-reflect = {version = "0.16.3"}
-pyo3 = {version = "0.26.0", features = ["abi3-py310"]}
-
-[features]
-default = ["extension-module"]
-extension-module = ["pyo3/extension-module"]
-
-[lib]
-crate-type = ["cdylib"]
-name = "ptars"
-path = "src/lib.rs"
-
-[package]
-authors = ["0x26res <0x26res@gmail.net>"]
-description = "Fast python conversion from protobuf to arrow using rust"
-edition = "2021"
-homepage = "https://github.com/0x26res/ptars"
-license = "Apache-2.0"
-name = "ptarslib"
-readme = "README.md"
-repository = "https://github.com/0x26res/ptars"
-version = "0.0.7"
-
-[package.metadata.maturin]
-name = "ptars._lib"
-
-[package.metadata.release]
-publish = false  # handled by GitHub Actions
-push = true
+[workspace]
+members = ["ptars", "ptars-python"]
+resolver = "2"
