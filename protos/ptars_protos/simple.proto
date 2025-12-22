@@ -102,7 +102,11 @@ message WithMap {
 }
 
 message WithMapOfWrapper {
-  map<int32, google.protobuf.DoubleValue> wrapped_double_int32_map = 103;
+  map<int32, google.protobuf.DoubleValue> wrapped_double_int32_map = 1;
+}
+
+message WithMapOfDate {
+  map<int32, google.type.Date> date_int32_map = 1;
 }
 
 message DataRow {

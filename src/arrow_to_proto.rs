@@ -1420,20 +1420,36 @@ fn extract_map_message_value(
             return None;
         }
         let days = arr.value(idx);
-        let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
         let mut msg = DynamicMessage::new(message_descriptor.clone());
-        msg.set_field(
-            &message_descriptor.get_field_by_name("year").unwrap(),
-            Value::I32(date.year()),
-        );
-        msg.set_field(
-            &message_descriptor.get_field_by_name("month").unwrap(),
-            Value::I32(date.month() as i32),
-        );
-        msg.set_field(
-            &message_descriptor.get_field_by_name("day").unwrap(),
-            Value::I32(date.day() as i32),
-        );
+        // Special case: days == 0 means empty date (year=0, month=0, day=0)
+        if days == 0 {
+            msg.set_field(
+                &message_descriptor.get_field_by_name("year").unwrap(),
+                Value::I32(0),
+            );
+            msg.set_field(
+                &message_descriptor.get_field_by_name("month").unwrap(),
+                Value::I32(0),
+            );
+            msg.set_field(
+                &message_descriptor.get_field_by_name("day").unwrap(),
+                Value::I32(0),
+            );
+        } else {
+            let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+            msg.set_field(
+                &message_descriptor.get_field_by_name("year").unwrap(),
+                Value::I32(date.year()),
+            );
+            msg.set_field(
+                &message_descriptor.get_field_by_name("month").unwrap(),
+                Value::I32(date.month() as i32),
+            );
+            msg.set_field(
+                &message_descriptor.get_field_by_name("day").unwrap(),
+                Value::I32(date.day() as i32),
+            );
+        }
         return Some(Value::Message(msg));
     }
 
