@@ -754,7 +754,331 @@ fn extract_map_value(array: &ArrayRef, idx: usize, field: &FieldDescriptor) -> O
                 Some(Value::EnumNumber(arr.value(idx)))
             }
         }
-        _ => None, // Message values in maps would need more complex handling
+        Kind::Message(message_descriptor) => {
+            extract_map_message_value(array, idx, &message_descriptor)
+        }
+    }
+}
+
+fn extract_map_message_value(
+    array: &ArrayRef,
+    idx: usize,
+    message_descriptor: &MessageDescriptor,
+) -> Option<Value> {
+    let full_name = message_descriptor.full_name();
+
+    // Handle google.protobuf.Timestamp
+    if full_name == "google.protobuf.Timestamp" {
+        let arr = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()?;
+        if arr.is_null(idx) {
+            return None;
+        }
+        let nanos_total = arr.value(idx);
+        let (seconds, nanos) = nanos_to_seconds_and_nanos(nanos_total);
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field(
+            &message_descriptor.get_field_by_name("seconds").unwrap(),
+            Value::I64(seconds),
+        );
+        msg.set_field(
+            &message_descriptor.get_field_by_name("nanos").unwrap(),
+            Value::I32(nanos),
+        );
+        return Some(Value::Message(msg));
+    }
+
+    // Handle google.type.Date
+    if full_name == "google.type.Date" {
+        let arr = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<Date32Type>>()?;
+        if arr.is_null(idx) {
+            return None;
+        }
+        let days = arr.value(idx);
+        let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field(
+            &message_descriptor.get_field_by_name("year").unwrap(),
+            Value::I32(date.year()),
+        );
+        msg.set_field(
+            &message_descriptor.get_field_by_name("month").unwrap(),
+            Value::I32(date.month() as i32),
+        );
+        msg.set_field(
+            &message_descriptor.get_field_by_name("day").unwrap(),
+            Value::I32(date.day() as i32),
+        );
+        return Some(Value::Message(msg));
+    }
+
+    // Handle wrapper types
+    match full_name {
+        "google.protobuf.DoubleValue" => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Float64Type>>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::F64(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.FloatValue" => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Float32Type>>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::F32(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.Int64Value" => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int64Type>>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::I64(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.UInt64Value" => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt64Type>>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::U64(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.Int32Value" => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::I32(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.UInt32Value" => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt32Type>>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::U32(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.BoolValue" => {
+            let arr = array.as_any().downcast_ref::<BooleanArray>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::Bool(arr.value(idx)),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.StringValue" => {
+            let arr = array.as_any().downcast_ref::<StringArray>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::String(arr.value(idx).to_string()),
+            );
+            return Some(Value::Message(msg));
+        }
+        "google.protobuf.BytesValue" => {
+            let arr = array.as_any().downcast_ref::<BinaryArray>()?;
+            if arr.is_null(idx) {
+                return None;
+            }
+            let mut msg = DynamicMessage::new(message_descriptor.clone());
+            msg.set_field(
+                &message_descriptor.get_field_by_name("value").unwrap(),
+                Value::Bytes(prost::bytes::Bytes::from(arr.value(idx).to_vec())),
+            );
+            return Some(Value::Message(msg));
+        }
+        _ => {}
+    }
+
+    // Handle regular messages (StructArray)
+    let struct_array = array.as_any().downcast_ref::<StructArray>()?;
+    if !struct_array.is_valid(idx) {
+        return None;
+    }
+
+    let mut msg = DynamicMessage::new(message_descriptor.clone());
+    for field_desc in message_descriptor.fields() {
+        if let Some(column) = struct_array.column_by_name(field_desc.name()) {
+            if let Some(value) = extract_struct_field_value(column, idx, &field_desc) {
+                msg.set_field(&field_desc, value);
+            }
+        }
+    }
+    Some(Value::Message(msg))
+}
+
+fn extract_struct_field_value(
+    array: &ArrayRef,
+    idx: usize,
+    field: &FieldDescriptor,
+) -> Option<Value> {
+    if field.is_list() {
+        // Handle repeated fields
+        let list_array = array.as_any().downcast_ref::<ListArray>()?;
+        if list_array.is_null(idx) {
+            return None;
+        }
+        let start = list_array.value_offsets()[idx] as usize;
+        let end = list_array.value_offsets()[idx + 1] as usize;
+        if start >= end {
+            return Some(Value::List(vec![]));
+        }
+        let values_array = list_array.values();
+        let mut values = Vec::with_capacity(end - start);
+        for i in start..end {
+            if let Some(v) = extract_single_field_value(values_array, i, field) {
+                values.push(v);
+            }
+        }
+        return Some(Value::List(values));
+    }
+
+    extract_single_field_value(array, idx, field)
+}
+
+fn extract_single_field_value(
+    array: &ArrayRef,
+    idx: usize,
+    field: &FieldDescriptor,
+) -> Option<Value> {
+    match field.kind() {
+        Kind::Double => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Float64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::F64(arr.value(idx)))
+            }
+        }
+        Kind::Float => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Float32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::F32(arr.value(idx)))
+            }
+        }
+        Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::I32(arr.value(idx)))
+            }
+        }
+        Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::I64(arr.value(idx)))
+            }
+        }
+        Kind::Uint32 | Kind::Fixed32 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::U32(arr.value(idx)))
+            }
+        }
+        Kind::Uint64 | Kind::Fixed64 => {
+            let arr = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<UInt64Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::U64(arr.value(idx)))
+            }
+        }
+        Kind::Bool => {
+            let arr = array.as_any().downcast_ref::<BooleanArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::Bool(arr.value(idx)))
+            }
+        }
+        Kind::String => {
+            let arr = array.as_any().downcast_ref::<StringArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::String(arr.value(idx).to_string()))
+            }
+        }
+        Kind::Bytes => {
+            let arr = array.as_any().downcast_ref::<BinaryArray>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::Bytes(prost::bytes::Bytes::from(
+                    arr.value(idx).to_vec(),
+                )))
+            }
+        }
+        Kind::Enum(_) => {
+            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
+            if arr.is_null(idx) {
+                None
+            } else {
+                Some(Value::EnumNumber(arr.value(idx)))
+            }
+        }
+        Kind::Message(msg_desc) => extract_map_message_value(array, idx, &msg_desc),
     }
 }
 

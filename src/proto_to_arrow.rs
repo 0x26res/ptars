@@ -25,12 +25,46 @@ use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32T
 pub fn get_message_array_builder(
     message_descriptor: &MessageDescriptor,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
-    if message_descriptor.full_name() == "google.protobuf.Timestamp" {
-        Ok(Box::new(TimestampArrayBuilder::new(message_descriptor)))
-    } else if message_descriptor.full_name() == "google.type.Date" {
-        Ok(Box::new(DateArrayBuilder::new(message_descriptor)))
-    } else {
-        Ok(Box::new(MessageArrayBuilder::new(message_descriptor)))
+    match message_descriptor.full_name() {
+        "google.protobuf.Timestamp" => {
+            Ok(Box::new(TimestampArrayBuilder::new(message_descriptor)))
+        }
+        "google.type.Date" => Ok(Box::new(DateArrayBuilder::new(message_descriptor))),
+        // Wrapper types - stored as nullable primitives
+        "google.protobuf.DoubleValue" => Ok(Box::new(WrapperBuilderWrapper::<Float64Type>::new(
+            message_descriptor,
+            Value::as_f64,
+        ))),
+        "google.protobuf.FloatValue" => Ok(Box::new(WrapperBuilderWrapper::<Float32Type>::new(
+            message_descriptor,
+            Value::as_f32,
+        ))),
+        "google.protobuf.Int64Value" => Ok(Box::new(WrapperBuilderWrapper::<Int64Type>::new(
+            message_descriptor,
+            Value::as_i64,
+        ))),
+        "google.protobuf.UInt64Value" => Ok(Box::new(WrapperBuilderWrapper::<UInt64Type>::new(
+            message_descriptor,
+            Value::as_u64,
+        ))),
+        "google.protobuf.Int32Value" => Ok(Box::new(WrapperBuilderWrapper::<Int32Type>::new(
+            message_descriptor,
+            Value::as_i32,
+        ))),
+        "google.protobuf.UInt32Value" => Ok(Box::new(WrapperBuilderWrapper::<UInt32Type>::new(
+            message_descriptor,
+            Value::as_u32,
+        ))),
+        "google.protobuf.BoolValue" => Ok(Box::new(BoolWrapperBuilderWrapper::new(
+            message_descriptor,
+        ))),
+        "google.protobuf.StringValue" => Ok(Box::new(StringWrapperBuilderWrapper::new(
+            message_descriptor,
+        ))),
+        "google.protobuf.BytesValue" => Ok(Box::new(BytesWrapperBuilderWrapper::new(
+            message_descriptor,
+        ))),
+        _ => Ok(Box::new(MessageArrayBuilder::new(message_descriptor))),
     }
 }
 
@@ -830,6 +864,183 @@ impl ProtoArrayBuilder for DateArrayBuilder {
                         - CE_OFFSET,
                 );
             }
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+// Wrapper type builders for google.protobuf wrapper types (DoubleValue, Int32Value, etc.)
+
+struct WrapperBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    builder: PrimitiveBuilder<T>,
+    value_descriptor: FieldDescriptor,
+    extractor: fn(&Value) -> Option<T::Native>,
+}
+
+impl<T> WrapperBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    fn new(message_descriptor: &MessageDescriptor, extractor: fn(&Value) -> Option<T::Native>) -> Self {
+        Self {
+            builder: PrimitiveBuilder::<T>::new(),
+            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
+            extractor,
+        }
+    }
+}
+
+impl<T> ProtoArrayBuilder for WrapperBuilderWrapper<T>
+where
+    T: ArrowPrimitiveType,
+{
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let v = message.get_field(&self.value_descriptor);
+            self.builder.append_value((self.extractor)(&v).unwrap());
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+struct BoolWrapperBuilderWrapper {
+    builder: BooleanBuilder,
+    value_descriptor: FieldDescriptor,
+}
+
+impl BoolWrapperBuilderWrapper {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            builder: BooleanBuilder::new(),
+            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for BoolWrapperBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let v = message.get_field(&self.value_descriptor);
+            self.builder.append_value(v.as_bool().unwrap());
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+struct StringWrapperBuilderWrapper {
+    builder: StringBuilder,
+    value_descriptor: FieldDescriptor,
+}
+
+impl StringWrapperBuilderWrapper {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            builder: StringBuilder::new(),
+            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for StringWrapperBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let v = message.get_field(&self.value_descriptor);
+            self.builder.append_value(v.as_str().unwrap());
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        Arc::new(std::mem::take(&mut self.builder).finish())
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+struct BytesWrapperBuilderWrapper {
+    builder: BinaryBuilder,
+    value_descriptor: FieldDescriptor,
+}
+
+impl BytesWrapperBuilderWrapper {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            builder: BinaryBuilder::new(),
+            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for BytesWrapperBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let v = message.get_field(&self.value_descriptor);
+            self.builder.append_value(v.as_bytes().unwrap());
         } else {
             self.append_null();
         }
