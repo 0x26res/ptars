@@ -1,28 +1,28 @@
-[package]
-name = "ptars-python"
-version = "0.0.7"
-authors = ["0x26res <0x26res@gmail.net>"]
-description = "Python bindings for ptars - Fast protobuf to Arrow conversion"
-edition = "2021"
-license = "Apache-2.0"
-publish = false  # This crate is only for Python bindings, not published to crates.io
-
 [dependencies]
-ptars = { path = "../ptars" }
-arrow = { version = "57.1.0", features = ["pyarrow"] }
+arrow = {version = "57.1.0", features = ["pyarrow"]}
 arrow-array = "57.1.0"
 prost = "0.14.1"
 prost-reflect = "0.16.3"
-pyo3 = { version = "0.26.0", features = ["abi3-py310"] }
+ptars = {path = "../ptars"}
+pyo3 = {version = "0.26.0", features = ["abi3-py310"]}
 
 [features]
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
 
 [lib]
-name = "ptars"
 crate-type = ["cdylib"]
+name = "ptars"
 path = "src/lib.rs"
+
+[package]
+authors = ["0x26res <0x26res@gmail.net>"]
+description = "Python bindings for ptars - Fast protobuf to Arrow conversion"
+edition = "2021"
+license = "Apache-2.0"
+name = "ptars-python"
+publish = false  # This crate is only for Python bindings, not published to crates.io
+version = "0.0.7"
 
 [package.metadata.maturin]
 name = "ptars._lib"

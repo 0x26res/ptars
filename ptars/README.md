@@ -70,7 +70,6 @@ for i in 0..binary_array.len() {
 }
 ```
 
-
 ## License
 
 Apache-2.0
