@@ -1,0 +1,24 @@
+[dependencies]
+arrow = "57.1.0"
+arrow-array = "57.1.0"
+arrow-schema = "57.1.0"
+chrono = "0.4.42"
+prost = "0.14.1"
+prost-reflect = "0.16.3"
+
+[lib]
+name = "ptars"
+path = "src/lib.rs"
+
+[package]
+authors = ["0x26res <0x26res@gmail.net>"]
+categories = ["encoding", "data-structures"]
+description = "Fast conversion from protobuf to Apache Arrow and back"
+edition = "2021"
+homepage = "https://github.com/0x26res/ptars"
+keywords = ["protobuf", "arrow", "serialization", "data"]
+license = "Apache-2.0"
+name = "ptars"
+readme = "README.md"
+repository = "https://github.com/0x26res/ptars"
+version = "0.0.7"

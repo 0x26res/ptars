@@ -1,5 +1,3 @@
-use crate::arrow_to_proto;
-use crate::proto_to_arrow;
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::{BinaryArray, Float32Array, Int32Array};
@@ -33,7 +31,7 @@ impl MessageHandler {
             messages.push(message);
         }
         Ok(
-            proto_to_arrow::messages_to_record_batch(&messages, &self.message_descriptor)
+            ptars::messages_to_record_batch(&messages, &self.message_descriptor)
                 .to_pyarrow(py)?
                 .unbind(),
         )
@@ -54,7 +52,7 @@ impl MessageHandler {
         let arrow_record_batch: RecordBatch =
             RecordBatch::from_pyarrow_bound(record_batch).unwrap();
         Ok(
-            arrow_to_proto::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
+            ptars::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
                 .to_pyarrow(py)?
                 .unbind(),
         )
@@ -64,16 +62,14 @@ impl MessageHandler {
     ///
     /// Each element in the binary array is expected to be a serialized protobuf message.
     /// The resulting record batch will have one column per field in the message descriptor.
-    fn array_to_record_batch(
-        &self,
-        array: &Bound<PyAny>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyAny>> {
-        let array_data = arrow::array::ArrayData::from_pyarrow_bound(array)
-            .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e)))?;
+    fn array_to_record_batch(&self, array: &Bound<PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let array_data = arrow::array::ArrayData::from_pyarrow_bound(array).map_err(|e| {
+            pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
+        })?;
         let arrow_array = BinaryArray::from(array_data);
-        let record_batch = proto_to_arrow::binary_array_to_record_batch(&arrow_array, &self.message_descriptor)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let record_batch =
+            ptars::binary_array_to_record_batch(&arrow_array, &self.message_descriptor)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 }

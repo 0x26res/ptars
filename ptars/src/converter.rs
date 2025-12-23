@@ -3825,23 +3825,11 @@ mod tests {
                 DynamicMessage::decode(message_descriptor.clone(), result_binary.value(i)).unwrap();
             let original = &original_messages[i];
             assert_eq!(
-                decoded
-                    .get_field_by_name("id")
-                    .unwrap()
-                    .as_i32()
-                    .unwrap(),
-                original
-                    .get_field_by_name("id")
-                    .unwrap()
-                    .as_i32()
-                    .unwrap()
+                decoded.get_field_by_name("id").unwrap().as_i32().unwrap(),
+                original.get_field_by_name("id").unwrap().as_i32().unwrap()
             );
             assert_eq!(
-                decoded
-                    .get_field_by_name("name")
-                    .unwrap()
-                    .as_str()
-                    .unwrap(),
+                decoded.get_field_by_name("name").unwrap().as_str().unwrap(),
                 original
                     .get_field_by_name("name")
                     .unwrap()
