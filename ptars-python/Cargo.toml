@@ -22,7 +22,7 @@ edition = "2021"
 license = "Apache-2.0"
 name = "ptars-python"
 publish = false  # This crate is only for Python bindings, not published to crates.io
-version = "0.0.7"
+version = "0.0.8"
 
 [package.metadata.maturin]
 name = "ptars._lib"

@@ -728,7 +728,7 @@ dependencies = [
 
 [[package]]
 name = "ptars"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "ptars-python"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "arrow",
  "arrow-array",
