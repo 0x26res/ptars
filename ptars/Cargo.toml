@@ -19,8 +19,6 @@ chrono = "0.4.42"
 prost = "0.14.1"
 prost-reflect = "0.16.3"
 
-[dev-dependencies]
-prost = "0.14.1"
 
 [lib]
 name = "ptars"
