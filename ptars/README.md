@@ -1,5 +1,9 @@
 # ptars
 
+[![Crates.io](https://img.shields.io/crates/v/ptars.svg)](https://crates.io/crates/ptars)
+[![Documentation](https://docs.rs/ptars/badge.svg)](https://docs.rs/ptars)
+[![License](https://img.shields.io/crates/l/ptars.svg)](https://github.com/0x26res/ptars/blob/main/LICENSE)
+
 Fast conversion between Protocol Buffers and Apache Arrow in Rust.
 
 ## Features
