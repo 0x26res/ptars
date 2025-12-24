@@ -41,7 +41,6 @@ class HandlerPool:
                 new_descriptors = _get_dependencies(file_descriptor)
                 for new_descriptor in new_descriptors:
                     if new_descriptor not in all_descriptors:
-                        print(new_descriptor.name)
                         all_descriptors.append(new_descriptor)
 
         payloads = [_file_descriptor_to_bytes(d) for d in all_descriptors]

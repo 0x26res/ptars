@@ -274,12 +274,12 @@ impl ProtoArrayBuilder for MapArrayBuilder {
         let key_field = Arc::new(Field::new(
             "key",
             key_array.data_type().clone(),
-            is_nullable(&self.key_field_descriptor),
+            false, // map keys are not nullable in protobuf
         ));
         let value_field = Arc::new(Field::new(
             "value",
             value_array.data_type().clone(),
-            is_nullable(&self.value_field_descriptor),
+            false, // map values are not nullable in protobuf
         ));
 
         let entry_struct =
@@ -816,7 +816,8 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
+        let array = std::mem::take(&mut self.builder).finish();
+        Arc::new(array.with_timezone("UTC"))
     }
 
     fn len(&self) -> usize {

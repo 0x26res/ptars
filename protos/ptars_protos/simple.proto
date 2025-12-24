@@ -166,6 +166,7 @@ message WithTimestamp {
 message WithDate {
     google.type.Date date = 1;
     repeated google.type.Date dates = 2;
+    map <int32, google.type.Date> int_to_date = 3;
 }
 
 message WithTimeOfDay {

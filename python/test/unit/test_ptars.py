@@ -1,5 +1,6 @@
 import datetime
-
+import pyarrow.compute as pc
+import protarrow
 import pyarrow as pa
 import pytest
 from google.protobuf.message import Message
@@ -21,6 +22,7 @@ from ptars_protos.simple_pb2 import (
     SimpleMessage,
     TestEnum,
     WithMap,
+    WithDate,
     WithMapOfDate,
     WithMapOfWrapper,
     WithRepeated,
@@ -111,9 +113,61 @@ def test_generate_proto(simple_message_handler):
 
 
 @pytest.mark.parametrize("message_type", MESSAGES[:1])
-def test_back_and_forth(message_type: type[Message], pool):
+def test_back_and_forth(message_type: type[Message]):
     messages = generate_messages(message_type, 10)
     run_round_trip(messages, message_type)
+
+def sort_map_by_key(map_array: pa.MapArray):
+    struct_array = pa.StructArray.from_arrays(
+        [
+            map_array.keys,
+            map_array.values
+        ],
+        names=['key', 'value']
+    )
+    key_array = pa.ListArray.from_arrays(
+        offsets=map_array.offsets,
+        values=map_array.keys
+    )
+    value_array = pa.ListArray.from_arrays(
+        offsets=map_array.offsets,
+        values=map_array.values
+    )
+
+    return pa.table({
+        "index": pc.list_parent_indices(key_array),
+        "key": pc.list_flatten(key_array),
+        "value": pc.list_flatten(value_array),
+    }).sort_by([("index", "ascending"), ("key", "ascending")])
+
+
+
+
+
+
+@pytest.mark.parametrize("message_type", MESSAGES[:1])
+def test_protarrow_parity(message_type: type[Message]):
+    messages = generate_messages(message_type, 10)
+    payloads = [m.SerializeToString() for m in messages]
+    pool = HandlerPool([message_type.DESCRIPTOR.file])
+
+    handler = pool.get_for_message(message_type.DESCRIPTOR)
+    record_batch = handler.list_to_record_batch(payloads)
+    assert isinstance(record_batch, pa.RecordBatch)
+    record_batch_protarrow = protarrow.messages_to_record_batch(messages, message_type)
+    assert record_batch.schema == record_batch_protarrow.schema
+    for field in record_batch.schema:
+        if "date" in field.name and "map" in field.name:
+            # TODO: there an issue with how defaults are handled in date
+            pass
+        elif pa.types.is_map(field.type):
+
+            assert sort_map_by_key(record_batch[field.name]) == sort_map_by_key(
+                record_batch_protarrow[field.name]
+            )
+        else:
+            assert record_batch[field.name] == record_batch_protarrow[field.name]
+
 
 
 def test_arrow_to_proto(pool):
@@ -164,6 +218,7 @@ def test_timestamp_missing(pool):
     payloads = [message.SerializeToString() for message in messages]
     record_batch = handler.list_to_record_batch(payloads)
 
+    assert record_batch["timestamp"].type == pa.timestamp("ns", "UTC")
     assert record_batch["timestamp"].is_null().to_pylist() == [False, True]
     assert record_batch["timestamp"].cast(pa.int64()).to_pylist() == [
         1712660619123456789,
@@ -172,32 +227,54 @@ def test_timestamp_missing(pool):
 
 
 def test_date_missing(pool):
-    handler = pool.get_for_message(simple_pb2.WithDate.DESCRIPTOR)
+    handler = pool.get_for_message(WithDate.DESCRIPTOR)
     messages = [
-        simple_pb2.WithDate(date=Date(year=2024, month=4, day=9)),
-        simple_pb2.WithDate(),
+        WithDate(
+            date=Date(year=2024, month=4, day=9),
+            dates=[Date(year=2024, month=4, day=10), Date()],
+            int_to_date={1: Date(),}
+        ),
+        WithDate(
+            date=Date(),
+        ),
+        WithDate(),
     ]
     payloads = [message.SerializeToString() for message in messages]
     record_batch = handler.list_to_record_batch(payloads)
 
-    assert record_batch["date"].is_null().to_pylist() == [False, True]
+    assert record_batch["date"].type == pa.date32()
+    assert record_batch["date"].is_null().to_pylist() == [False,False, True]
     assert record_batch["date"].to_pylist() == [
         datetime.date(2024, 4, 9),
+        datetime.date(1970, 1, 1),
         None,
+    ]
+    assert record_batch["dates"].to_pylist() == [
+        [datetime.date(2024, 4, 10),
+         datetime.date(1970, 1, 1)],
+        [],
+        [],
+    ]
+    assert record_batch["int_to_date"].to_pylist() == [
+        [
+            (1, datetime.date(1970, 1, 1)),
+        ],
+        [],
+        [],
     ]
 
 
 def test_repeated_date(pool):
-    handler = pool.get_for_message(simple_pb2.WithDate.DESCRIPTOR)
+    handler = pool.get_for_message(WithDate.DESCRIPTOR)
     messages = [
-        simple_pb2.WithDate(
+        WithDate(
             dates=[
                 Date(year=2024, month=4, day=9),
                 Date(year=2024, month=4, day=10),
             ]
         ),
-        simple_pb2.WithDate(dates=[]),
-        simple_pb2.WithDate(),
+        WithDate(dates=[]),
+        WithDate(),
     ]
     payloads = [message.SerializeToString() for message in messages]
     record_batch = handler.list_to_record_batch(payloads)
@@ -226,6 +303,7 @@ def test_time_of_day_missing(pool):
     payloads = [message.SerializeToString() for message in messages]
     record_batch = handler.list_to_record_batch(payloads)
 
+    assert record_batch["time_of_day"].type == pa.time64("ns")
     assert record_batch["time_of_day"].is_null().to_pylist() == [False, True]
     assert record_batch["time_of_day"].cast(pa.int64()).to_pylist() == [
         52245123456789,
@@ -264,7 +342,16 @@ def test_repeated():
 
 def test_map():
     messages = generate_messages(WithMap, count=10)
-    run_round_trip(messages, WithMap)
+    schema = run_round_trip(messages, WithMap)
+    assert schema == pa.schema([
+        pa.field(
+            "string_to_double",
+            pa.map_(pa.string(),
+                    pa.field("value",
+                    pa.float64(), nullable=False)),
+            nullable=False
+        )
+    ])
 
 
 def test_map_of_wrapper():
@@ -272,12 +359,14 @@ def test_map_of_wrapper():
     run_round_trip(messages, WithMapOfWrapper)
 
 
+
+
 def test_map_of_date():
     messages = generate_messages(WithMapOfDate, count=10)
     run_round_trip(messages, WithMapOfDate)
 
 
-def run_round_trip(messages, message_type):
+def run_round_trip(messages, message_type) -> pa.Schema:
     payloads = [message.SerializeToString() for message in messages]
 
     pool = HandlerPool([message_type.DESCRIPTOR.file])
@@ -288,6 +377,7 @@ def run_round_trip(messages, message_type):
     assert isinstance(array, pa.BinaryArray)
     messages_back = [message_type.FromString(s.as_py()) for s in array]
     assert messages_back == messages
+    return record_batch.schema
 
 
 def test_round_trip():
