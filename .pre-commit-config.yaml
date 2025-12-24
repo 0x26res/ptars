@@ -51,3 +51,13 @@ repos:
         exclude: "^gradle/libs.versions.toml$"
         args:
           - "--autofix"
+
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty-check
+        entry: uv run ty check
+        language: python
+        types: [python]
+        files: ^python/ptars/.*
+        pass_filenames: true
