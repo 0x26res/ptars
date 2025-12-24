@@ -47,7 +47,7 @@ The locally built version is much slower.
 maturin develop --release
 uv run pytest python/test/benchmark \
   --benchmark-name=short \
-  --benchmark-columns=mean \ 
+  --benchmark-columns=mean \
   --benchmark-sort=name
 ```
 

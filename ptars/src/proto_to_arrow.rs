@@ -7,7 +7,6 @@ use arrow_array::{Array, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field};
 use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub trait ProtoArrayBuilder {
@@ -317,42 +316,41 @@ impl ProtoArrayBuilder for MapArrayBuilder {
 }
 
 struct MessageArrayBuilder {
-    builders: BTreeMap<u32, Box<dyn ProtoArrayBuilder>>,
-    message_descriptor: MessageDescriptor,
+    /// Cached field descriptors and their builders, avoiding repeated iteration
+    fields: Vec<(FieldDescriptor, Box<dyn ProtoArrayBuilder>)>,
     is_valid: BooleanBuilder,
 }
 
 impl MessageArrayBuilder {
     fn new(message_descriptor: &MessageDescriptor) -> Self {
-        let mut builders = BTreeMap::new();
-
-        for field_descriptor in message_descriptor.fields() {
-            let builder = get_array_builder(&field_descriptor).unwrap();
-            builders.insert(field_descriptor.number(), builder);
-        }
+        let fields: Vec<_> = message_descriptor
+            .fields()
+            .map(|field_descriptor| {
+                let builder = get_array_builder(&field_descriptor).unwrap();
+                (field_descriptor, builder)
+            })
+            .collect();
 
         Self {
-            builders,
-            message_descriptor: message_descriptor.clone(),
+            fields,
             is_valid: BooleanBuilder::new(),
         }
     }
 
     fn append(&mut self, message: &DynamicMessage) {
         self.is_valid.append_value(true);
-        for field_descriptor in self.message_descriptor.fields() {
-            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
-            if field_descriptor.supports_presence() && !message.has_field(&field_descriptor) {
+        for (field_descriptor, builder) in &mut self.fields {
+            if field_descriptor.supports_presence() && !message.has_field(field_descriptor) {
                 builder.append_null();
             } else {
-                builder.append(&message.get_field(&field_descriptor));
+                builder.append(&message.get_field(field_descriptor));
             }
         }
     }
 
     fn build_struct_array(&mut self) -> StructArray {
         let is_valid = std::mem::take(&mut self.is_valid).finish();
-        if self.message_descriptor.fields().next().is_none() {
+        if self.fields.is_empty() {
             return StructArray::new_empty_fields(
                 is_valid.len(),
                 Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
@@ -360,10 +358,9 @@ impl MessageArrayBuilder {
         }
 
         let (fields, columns): (Vec<_>, Vec<_>) = self
-            .message_descriptor
-            .fields()
-            .map(|field_descriptor| {
-                let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+            .fields
+            .iter_mut()
+            .map(|(field_descriptor, builder)| {
                 let array = builder.finish();
                 let field = Field::new(
                     field_descriptor.name(),
@@ -393,8 +390,7 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
 
     fn append_null(&mut self) {
         self.is_valid.append_value(false);
-        for field_descriptor in self.message_descriptor.fields() {
-            let builder = self.builders.get_mut(&field_descriptor.number()).unwrap();
+        for (_, builder) in &mut self.fields {
             builder.append_null();
         }
     }
@@ -1237,6 +1233,15 @@ pub fn binary_array_to_record_batch(
     array: &BinaryArray,
     message_descriptor: &MessageDescriptor,
 ) -> Result<RecordBatch, prost::DecodeError> {
-    let messages = binary_array_to_messages(array, message_descriptor)?;
-    Ok(messages_to_record_batch(&messages, message_descriptor))
+    let mut builder = MessageArrayBuilder::new(message_descriptor);
+    for i in 0..array.len() {
+        let message = if array.is_null(i) {
+            DynamicMessage::new(message_descriptor.clone())
+        } else {
+            let bytes = array.value(i);
+            DynamicMessage::decode(message_descriptor.clone(), bytes)?
+        };
+        builder.append(&message);
+    }
+    Ok(RecordBatch::from(builder.build_struct_array()))
 }
