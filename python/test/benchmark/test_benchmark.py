@@ -2,12 +2,12 @@ import random
 import secrets
 
 import protarrow
-import ptars
 import pyarrow as pa
 import pytest
-from google.protobuf.message import Message
+from google._upb._message import MessageMeta
 from pytest_benchmark.fixture import BenchmarkFixture
 
+import ptars
 from ptars_protos import benchmark_pb2
 from ptars_protos.benchmark_pb2 import BenchmarkMessage
 
@@ -35,7 +35,7 @@ def payloads(messages: list[BenchmarkMessage]) -> list[bytes]:
 
 
 def run_protarrow_to_arrow(
-    payloads: list[bytes], message_type: type[Message]
+    payloads: list[bytes], message_type: MessageMeta
 ) -> pa.RecordBatch:
     return protarrow.messages_to_record_batch(
         [BenchmarkMessage.FromString(p) for p in payloads],

@@ -4,7 +4,7 @@ import protarrow
 import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
-from google.protobuf.message import Message
+from google._upb._message import MessageMeta
 from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.date_pb2 import Date
 from google.type.timeofday_pb2 import TimeOfDay
@@ -19,6 +19,7 @@ from ptars_protos.bench_pb2 import (
 )
 from ptars_protos.simple_pb2 import (
     RepeatedNestedMessageSimple,
+    ReturnCode,
     SearchRequest,
     SimpleMessage,
     TestEnum,
@@ -114,7 +115,7 @@ def test_generate_proto(simple_message_handler):
 
 
 @pytest.mark.parametrize("message_type", MESSAGES[:1])
-def test_back_and_forth(message_type: type[Message]):
+def test_back_and_forth(message_type: MessageMeta):
     messages = generate_messages(message_type, 10)
     run_round_trip(messages, message_type)
 
@@ -137,7 +138,7 @@ def sort_map_by_key(map_array: pa.MapArray):
 
 
 @pytest.mark.parametrize("message_type", MESSAGES[:1])
-def test_protarrow_parity(message_type: type[Message]):
+def test_protarrow_parity(message_type: MessageMeta):
     messages = generate_messages(message_type, 10)
     payloads = [m.SerializeToString() for m in messages]
     pool = HandlerPool([message_type.DESCRIPTOR.file])
@@ -386,8 +387,10 @@ def test_round_trip_repeated_nested_message():
         [
             RepeatedNestedMessageSimple(
                 search_results=[
-                    simple_pb2.SearchResult(return_code=1, message="HELLO"),
-                    simple_pb2.SearchResult(return_code=200, message="WOLRD"),
+                    simple_pb2.SearchResult(
+                        return_code=ReturnCode.ERROR, message="HELLO"
+                    ),
+                    simple_pb2.SearchResult(return_code=ReturnCode.OK, message="WOLRD"),
                 ]
             )
         ],

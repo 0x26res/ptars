@@ -1,9 +1,10 @@
 import warnings
 
 import pyarrow as pa
-from google._upb._message import Message, MessageMeta
+from google._upb._message import MessageMeta
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
+from google.protobuf.message import Message
 from ptars._lib import MessageHandler, ProtoCache
 
 
@@ -14,7 +15,7 @@ def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:
 
 
 def _get_dependencies(
-    file_descriptor: FileDescriptor, results: list[FileDescriptor] = None
+    file_descriptor: FileDescriptor, results: list[FileDescriptor] | None = None
 ) -> list[FileDescriptor]:
     """
     Return list of FileDescriptor that this file depends on, including this one.
@@ -76,4 +77,4 @@ class HandlerPool:
     ) -> list[Message]:
         handler = self.get_for_message(descriptor)
         array = handler.record_batch_to_array(record_batch)
-        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]
+        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]  # type: ignore[unresolved-attribute]

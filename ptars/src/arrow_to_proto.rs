@@ -29,63 +29,96 @@ fn nanos_to_seconds_and_nanos(nanos_total: i64) -> (i64, i32) {
     (seconds, nanos)
 }
 
+/// Cached field descriptors for google.protobuf.Timestamp
+struct TimestampFields {
+    seconds: FieldDescriptor,
+    nanos: FieldDescriptor,
+}
+
+impl TimestampFields {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            seconds: message_descriptor.get_field_by_name("seconds").unwrap(),
+            nanos: message_descriptor.get_field_by_name("nanos").unwrap(),
+        }
+    }
+}
+
 /// Create a google.protobuf.Timestamp DynamicMessage from total nanoseconds.
 fn create_timestamp_message(
     nanos_total: i64,
     message_descriptor: &MessageDescriptor,
+    fields: &TimestampFields,
 ) -> DynamicMessage {
     let (seconds, nanos) = nanos_to_seconds_and_nanos(nanos_total);
     let mut msg = DynamicMessage::new(message_descriptor.clone());
-    msg.set_field(
-        &message_descriptor.get_field_by_name("seconds").unwrap(),
-        Value::I64(seconds),
-    );
-    msg.set_field(
-        &message_descriptor.get_field_by_name("nanos").unwrap(),
-        Value::I32(nanos),
-    );
+    msg.set_field(&fields.seconds, Value::I64(seconds));
+    msg.set_field(&fields.nanos, Value::I32(nanos));
     msg
+}
+
+/// Cached field descriptors for google.type.Date
+struct DateFields {
+    year: FieldDescriptor,
+    month: FieldDescriptor,
+    day: FieldDescriptor,
+}
+
+impl DateFields {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            year: message_descriptor.get_field_by_name("year").unwrap(),
+            month: message_descriptor.get_field_by_name("month").unwrap(),
+            day: message_descriptor.get_field_by_name("day").unwrap(),
+        }
+    }
 }
 
 /// Create a google.type.Date DynamicMessage from days since Unix epoch.
 /// Special case: days == 0 represents an empty/unset date (year=0, month=0, day=0).
-fn create_date_message(days: i32, message_descriptor: &MessageDescriptor) -> DynamicMessage {
+fn create_date_message(
+    days: i32,
+    message_descriptor: &MessageDescriptor,
+    fields: &DateFields,
+) -> DynamicMessage {
     let mut msg = DynamicMessage::new(message_descriptor.clone());
     if days == 0 {
-        msg.set_field(
-            &message_descriptor.get_field_by_name("year").unwrap(),
-            Value::I32(0),
-        );
-        msg.set_field(
-            &message_descriptor.get_field_by_name("month").unwrap(),
-            Value::I32(0),
-        );
-        msg.set_field(
-            &message_descriptor.get_field_by_name("day").unwrap(),
-            Value::I32(0),
-        );
+        msg.set_field(&fields.year, Value::I32(0));
+        msg.set_field(&fields.month, Value::I32(0));
+        msg.set_field(&fields.day, Value::I32(0));
     } else {
         let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
-        msg.set_field(
-            &message_descriptor.get_field_by_name("year").unwrap(),
-            Value::I32(date.year()),
-        );
-        msg.set_field(
-            &message_descriptor.get_field_by_name("month").unwrap(),
-            Value::I32(date.month() as i32),
-        );
-        msg.set_field(
-            &message_descriptor.get_field_by_name("day").unwrap(),
-            Value::I32(date.day() as i32),
-        );
+        msg.set_field(&fields.year, Value::I32(date.year()));
+        msg.set_field(&fields.month, Value::I32(date.month() as i32));
+        msg.set_field(&fields.day, Value::I32(date.day() as i32));
     }
     msg
+}
+
+/// Cached field descriptors for google.type.TimeOfDay
+struct TimeOfDayFields {
+    hours: FieldDescriptor,
+    minutes: FieldDescriptor,
+    seconds: FieldDescriptor,
+    nanos: FieldDescriptor,
+}
+
+impl TimeOfDayFields {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            hours: message_descriptor.get_field_by_name("hours").unwrap(),
+            minutes: message_descriptor.get_field_by_name("minutes").unwrap(),
+            seconds: message_descriptor.get_field_by_name("seconds").unwrap(),
+            nanos: message_descriptor.get_field_by_name("nanos").unwrap(),
+        }
+    }
 }
 
 /// Create a google.type.TimeOfDay DynamicMessage from total nanoseconds since midnight.
 fn create_time_of_day_message(
     total_nanos: i64,
     message_descriptor: &MessageDescriptor,
+    fields: &TimeOfDayFields,
 ) -> DynamicMessage {
     let mut msg = DynamicMessage::new(message_descriptor.clone());
 
@@ -96,22 +129,10 @@ fn create_time_of_day_message(
     let seconds = (remaining / 1_000_000_000) as i32;
     let nanos = (remaining % 1_000_000_000) as i32;
 
-    msg.set_field(
-        &message_descriptor.get_field_by_name("hours").unwrap(),
-        Value::I32(hours),
-    );
-    msg.set_field(
-        &message_descriptor.get_field_by_name("minutes").unwrap(),
-        Value::I32(minutes),
-    );
-    msg.set_field(
-        &message_descriptor.get_field_by_name("seconds").unwrap(),
-        Value::I32(seconds),
-    );
-    msg.set_field(
-        &message_descriptor.get_field_by_name("nanos").unwrap(),
-        Value::I32(nanos),
-    );
+    msg.set_field(&fields.hours, Value::I32(hours));
+    msg.set_field(&fields.minutes, Value::I32(minutes));
+    msg.set_field(&fields.seconds, Value::I32(seconds));
+    msg.set_field(&fields.nanos, Value::I32(nanos));
     msg
 }
 
@@ -358,6 +379,7 @@ fn extract_repeated_timestamp(
         .as_any()
         .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
         .unwrap();
+    let fields = TimestampFields::new(message_descriptor);
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
@@ -370,6 +392,7 @@ fn extract_repeated_timestamp(
                         Value::Message(create_timestamp_message(
                             values.value(idx),
                             message_descriptor,
+                            &fields,
                         ))
                     })
                     .collect();
@@ -391,6 +414,7 @@ fn extract_repeated_date(
         .as_any()
         .downcast_ref::<PrimitiveArray<Date32Type>>()
         .unwrap();
+    let fields = DateFields::new(message_descriptor);
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
@@ -400,7 +424,11 @@ fn extract_repeated_date(
             if start < end {
                 let sub_messages: Vec<Value> = (start..end)
                     .map(|idx| {
-                        Value::Message(create_date_message(values.value(idx), message_descriptor))
+                        Value::Message(create_date_message(
+                            values.value(idx),
+                            message_descriptor,
+                            &fields,
+                        ))
                     })
                     .collect();
 
@@ -421,6 +449,7 @@ fn extract_repeated_time_of_day(
         .as_any()
         .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
         .unwrap();
+    let fields = TimeOfDayFields::new(message_descriptor);
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
@@ -433,6 +462,7 @@ fn extract_repeated_time_of_day(
                         Value::Message(create_time_of_day_message(
                             values.value(idx),
                             message_descriptor,
+                            &fields,
                         ))
                     })
                     .collect();
@@ -910,10 +940,12 @@ fn extract_single_timestamp(
         .as_any()
         .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
         .unwrap();
+    let fields = TimestampFields::new(message_descriptor);
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !timestamp_array.is_null(i) {
-            let ts_msg = create_timestamp_message(timestamp_array.value(i), message_descriptor);
+            let ts_msg =
+                create_timestamp_message(timestamp_array.value(i), message_descriptor, &fields);
             message.set_field(field_descriptor, Value::Message(ts_msg));
         }
     }
@@ -929,10 +961,11 @@ fn extract_single_date(
         .as_any()
         .downcast_ref::<PrimitiveArray<Date32Type>>()
         .unwrap();
+    let fields = DateFields::new(message_descriptor);
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !date_array.is_null(i) {
-            let date_msg = create_date_message(date_array.value(i), message_descriptor);
+            let date_msg = create_date_message(date_array.value(i), message_descriptor, &fields);
             message.set_field(field_descriptor, Value::Message(date_msg));
         }
     }
@@ -948,10 +981,12 @@ fn extract_single_time_of_day(
         .as_any()
         .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
         .unwrap();
+    let fields = TimeOfDayFields::new(message_descriptor);
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !time_array.is_null(i) {
-            let time_msg = create_time_of_day_message(time_array.value(i), message_descriptor);
+            let time_msg =
+                create_time_of_day_message(time_array.value(i), message_descriptor, &fields);
             message.set_field(field_descriptor, Value::Message(time_msg));
         }
     }
@@ -1273,9 +1308,11 @@ fn extract_map_message_value(
         if arr.is_null(idx) {
             return None;
         }
+        let fields = TimestampFields::new(message_descriptor);
         return Some(Value::Message(create_timestamp_message(
             arr.value(idx),
             message_descriptor,
+            &fields,
         )));
     }
 
@@ -1287,9 +1324,11 @@ fn extract_map_message_value(
         if arr.is_null(idx) {
             return None;
         }
+        let fields = DateFields::new(message_descriptor);
         return Some(Value::Message(create_date_message(
             arr.value(idx),
             message_descriptor,
+            &fields,
         )));
     }
 
@@ -1301,9 +1340,11 @@ fn extract_map_message_value(
         if arr.is_null(idx) {
             return None;
         }
+        let fields = TimeOfDayFields::new(message_descriptor);
         return Some(Value::Message(create_time_of_day_message(
             arr.value(idx),
             message_descriptor,
+            &fields,
         )));
     }
 
