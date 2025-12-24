@@ -1,12 +1,13 @@
-from ptars import HandlerPool
+from google.protobuf.descriptor import Descriptor
 from ptars.internal import _get_dependencies
-
+from typing import cast
+from ptars import HandlerPool
 from ptars_protos import bench_pb2, imported_pb2, importer_pb2, simple_pb2
 
 
 def test_with_imported_proto():
     handler = HandlerPool([importer_pb2.DESCRIPTOR]).get_for_message(
-        importer_pb2.ImporterMessage.DESCRIPTOR
+        cast(Descriptor, importer_pb2.ImporterMessage.DESCRIPTOR)
     )
     handler.list_to_record_batch(
         [
@@ -14,7 +15,8 @@ def test_with_imported_proto():
             for m in [
                 importer_pb2.ImporterMessage(
                     imported_message=imported_pb2.ImportedMessage(
-                        string_value="SYM1", imported_enum=1
+                        string_value="SYM1",
+                        imported_enum=imported_pb2.ImportedEnum.CORE_ENUM_FOO,
                     ),
                 )
             ]
