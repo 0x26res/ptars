@@ -1,7 +1,7 @@
 import warnings
 
+import google._upb._message
 import pyarrow as pa
-from google._upb._message import MessageMeta
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
@@ -49,10 +49,13 @@ class HandlerPool:
         self._proto_cache = ProtoCache(payloads)
         self._pool = {}
 
-    def get_for_message(self, descriptor: Descriptor) -> MessageHandler:
-        if isinstance(descriptor, MessageMeta):
+    def get_for_message(
+        self, descriptor: Descriptor | google._upb._message.Descriptor
+    ) -> MessageHandler:
+        if isinstance(descriptor, google._upb._message.MessageMeta):
             warnings.warn(
-                f"Received {MessageMeta.__name__} instead of {Descriptor.__name__}"
+                f"Received {google._upb._message.MessageMeta.__class__.__name__}"
+                f" instead of {Descriptor.__class__.__name__}"
             )
             descriptor = descriptor.DESCRIPTOR
         if not isinstance(descriptor, Descriptor):
