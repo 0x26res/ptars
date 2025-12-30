@@ -12,6 +12,11 @@ use std::sync::Arc;
 pub trait ProtoArrayBuilder {
     fn append(&mut self, value: &Value);
     fn append_null(&mut self);
+    /// Append the protobuf default value for this field type.
+    /// For primitives: 0, false, "", b""
+    /// For messages: null (messages don't have a non-null default)
+    /// For repeated: empty list
+    fn append_default(&mut self);
     fn finish(&mut self) -> Arc<dyn Array>;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
@@ -266,6 +271,12 @@ impl ProtoArrayBuilder for MapArrayBuilder {
         self.offsets.push(last_offset);
     }
 
+    fn append_default(&mut self) {
+        // Default for map is empty map
+        let last_offset = *self.offsets.last().unwrap();
+        self.offsets.push(last_offset);
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         let key_array = self.key_builder.finish();
         let value_array = self.value_builder.finish();
@@ -390,9 +401,16 @@ impl ProtoArrayBuilder for MessageArrayBuilder {
 
     fn append_null(&mut self) {
         self.is_valid.append_value(false);
+        // Use append_default for child fields to be consistent with protobuf semantics:
+        // when a message is absent, its fields have their default values
         for (_, builder) in &mut self.fields {
-            builder.append_null();
+            builder.append_default();
         }
+    }
+
+    fn append_default(&mut self) {
+        // Default for message is null (absent)
+        self.append_null();
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
@@ -431,6 +449,7 @@ where
 impl<T> ProtoArrayBuilder for PrimitiveBuilderWrapper<T>
 where
     T: ArrowPrimitiveType,
+    T::Native: Default,
 {
     fn append(&mut self, value: &Value) {
         let v = (self.extractor)(value).unwrap();
@@ -439,6 +458,10 @@ where
 
     fn append_null(&mut self) {
         self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        self.builder.append_value(T::Native::default());
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
@@ -496,6 +519,11 @@ where
         self.offsets.push(self.builder.len() as i32);
     }
 
+    fn append_default(&mut self) {
+        // Default for repeated field is empty list
+        self.offsets.push(self.builder.len() as i32);
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
@@ -548,6 +576,11 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
     }
 
     fn append_null(&mut self) {
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn append_default(&mut self) {
+        // Default for repeated field is empty list
         self.offsets.push(self.builder.len() as i32);
     }
 
@@ -609,6 +642,11 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
         self.offsets.push(self.builder.len() as i32);
     }
 
+    fn append_default(&mut self) {
+        // Default for repeated field is empty list
+        self.offsets.push(self.builder.len() as i32);
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
@@ -660,6 +698,11 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
     }
 
     fn append_null(&mut self) {
+        self.offsets.push(self.builder.len() as i32);
+    }
+
+    fn append_default(&mut self) {
+        // Default for repeated field is empty list
         self.offsets.push(self.builder.len() as i32);
     }
 
@@ -717,6 +760,11 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
         self.offsets.push(self.builder.len() as i32);
     }
 
+    fn append_default(&mut self) {
+        // Default for repeated field is empty list
+        self.offsets.push(self.builder.len() as i32);
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
@@ -761,6 +809,10 @@ impl ProtoArrayBuilder for BooleanBuilderWrapper {
 
     fn append_null(&mut self) {
         self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        self.builder.append_value(false);
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
@@ -808,6 +860,11 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
     }
 
     fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        // Timestamp is a message type, default is null
         self.builder.append_null();
     }
 
@@ -866,6 +923,11 @@ impl ProtoArrayBuilder for DateArrayBuilder {
     }
 
     fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        // Date is a message type, default is null
         self.builder.append_null();
     }
 
@@ -930,6 +992,11 @@ impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
         self.builder.append_null();
     }
 
+    fn append_default(&mut self) {
+        // TimeOfDay is a message type, default is null
+        self.builder.append_null();
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
@@ -987,6 +1054,11 @@ where
         self.builder.append_null();
     }
 
+    fn append_default(&mut self) {
+        // Wrapper types are message types, default is null
+        self.builder.append_null();
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
@@ -1025,6 +1097,11 @@ impl ProtoArrayBuilder for BoolWrapperBuilderWrapper {
     }
 
     fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        // Wrapper types are message types, default is null
         self.builder.append_null();
     }
 
@@ -1069,6 +1146,11 @@ impl ProtoArrayBuilder for StringWrapperBuilderWrapper {
         self.builder.append_null();
     }
 
+    fn append_default(&mut self) {
+        // Wrapper types are message types, default is null
+        self.builder.append_null();
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
@@ -1110,6 +1192,11 @@ impl ProtoArrayBuilder for BytesWrapperBuilderWrapper {
         self.builder.append_null();
     }
 
+    fn append_default(&mut self) {
+        // Wrapper types are message types, default is null
+        self.builder.append_null();
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
@@ -1144,6 +1231,10 @@ impl ProtoArrayBuilder for StringBuilderWrapper {
         self.builder.append_null();
     }
 
+    fn append_default(&mut self) {
+        self.builder.append_value("");
+    }
+
     fn finish(&mut self) -> Arc<dyn Array> {
         Arc::new(std::mem::take(&mut self.builder).finish())
     }
@@ -1176,6 +1267,10 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
 
     fn append_null(&mut self) {
         self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        self.builder.append_value(b"");
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {

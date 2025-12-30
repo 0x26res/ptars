@@ -333,8 +333,8 @@ def test_repeated():
 
 def test_map():
     messages = generate_messages(WithMap, count=10)
-    schema = run_round_trip(messages, WithMap)
-    assert schema == pa.schema(
+    record_batch = run_round_trip(messages, WithMap)
+    assert record_batch.schema == pa.schema(
         [
             pa.field(
                 "string_to_double",
@@ -355,7 +355,7 @@ def test_map_of_date():
     run_round_trip(messages, WithMapOfDate)
 
 
-def run_round_trip(messages, message_type) -> pa.Schema:
+def run_round_trip(messages, message_type) -> pa.RecordBatch:
     payloads = [message.SerializeToString() for message in messages]
 
     pool = HandlerPool([message_type.DESCRIPTOR.file])
@@ -366,7 +366,7 @@ def run_round_trip(messages, message_type) -> pa.Schema:
     assert isinstance(array, pa.BinaryArray)
     messages_back = [message_type.FromString(s.as_py()) for s in array]
     assert messages_back == messages
-    return record_batch.schema
+    return record_batch
 
 
 def test_round_trip():
@@ -494,3 +494,29 @@ def test_array_to_record_batch_complex_message(pool):
     assert record_batch["int32_value"].to_pylist() == [42, 0]
     assert record_batch["string_value"].to_pylist() == ["hello", ""]
     assert record_batch["bool_value"].to_pylist() == [True, False]
+
+
+def test_nested_messages():
+    data = [
+        NestedExampleMessage(
+            example_message=ExampleMessage(
+                wrapped_double_value={"value": 0.0}
+            )
+        ),
+        NestedExampleMessage(
+            example_message=None
+        )
+    ]
+    record_batch = run_round_trip(data, NestedExampleMessage)
+
+    struct_array = record_batch["example_message"]
+    array = struct_array.field(
+        struct_array.type.get_field_index("double_value")
+    )
+    # When the parent message is null, child fields should have default values
+    # (consistent with protobuf semantics where accessing a field from an
+    # unset message returns the default value)
+    assert array.to_pylist() == [0.0, 0.0]
+    assert pc.struct_field(struct_array, "double_value").to_pylist() == [0.0, None]
+
+    assert struct_array.type.field("double_value").nullable is False
