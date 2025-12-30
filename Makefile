@@ -55,3 +55,9 @@ coverage: develop coverage-env
 		coverage xml -o coverage.xml
 	CARGO_INCREMENTAL=0 RUSTFLAGS="-Cinstrument-coverage" LLVM_PROFILE_FILE="ptars-%p-%m.profraw" cargo test
 	grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing --ignore "target/*" --ignore "python/*" -o lcov.info
+
+.PHONY: update
+update:
+	cargo generate-lockfile && \
+		uv lock --upgrade && \
+		pre-commit autoupdate && pre-commit run --all-files
