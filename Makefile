@@ -16,11 +16,11 @@ env:
 .PHONY: develop
 develop: env protoc
 	. .venv/bin/activate && \
-		maturin develop
+		uv run maturin develop
 
 .PHONY: test
 test: develop
-	. .venv/bin/activate && RUST_BACKTRACE=1 python -m pytest python/test/unit && cargo test
+	RUST_BACKTRACE=1 uv run python -m pytest python/test/unit && cargo test
 
 .PHONY: build
 build: env
@@ -50,9 +50,8 @@ coverage-env:
 
 .PHONY: coverage
 coverage: develop coverage-env
-	. .venv/bin/activate && \
-		coverage run --source=python/ptars -m pytest python/test/unit && \
-		coverage xml -o coverage.xml
+	uv run coverage run --source=python/ptars -m pytest python/test/unit && \
+		uv run xml -o coverage.xml
 	CARGO_INCREMENTAL=0 RUSTFLAGS="-Cinstrument-coverage" LLVM_PROFILE_FILE="ptars-%p-%m.profraw" cargo test
 	grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing --ignore "target/*" --ignore "python/*" -o lcov.info
 
@@ -60,7 +59,8 @@ coverage: develop coverage-env
 update:
 	cargo generate-lockfile && \
 		uv lock --upgrade && \
-		pre-commit autoupdate && pre-commit run --all-files
+		pre-commit autoupdate && pre-commit run --all-files && \
+		uv pip compile docs/requirements.txt.in > docs/requirements.txt
 
 .PHONY: benchmark
 benchmark: develop
@@ -76,8 +76,8 @@ generate-ci: develop
 
 .PHONY: docs
 docs:
-	. .venv/bin/activate && mkdocs serve
+	uv run --group=docs mkdocs serve
 
 .PHONY: docs-build
 docs-build:
-	. .venv/bin/activate && mkdocs build
+	uv run --group=docs mkdocs build --strict

@@ -20,15 +20,15 @@ The `MessageHandler` class is returned by `HandlerPool.get_for_message()` and pr
 
 Convert a list of serialized protobuf messages to an Arrow RecordBatch.
 
-**Parameters:**
+__Parameters:__
 
 - `payloads`: A list of bytes, where each element is a serialized protobuf message.
 
-**Returns:**
+__Returns:__
 
 - A `pyarrow.RecordBatch` with one column per field in the protobuf message.
 
-**Example:**
+__Example:__
 
 ```python
 handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
@@ -42,15 +42,15 @@ record_batch = handler.list_to_record_batch(payloads)
 
 Convert an Arrow RecordBatch back to serialized protobuf messages.
 
-**Parameters:**
+__Parameters:__
 
 - `record_batch`: A `pyarrow.RecordBatch` with the same schema as produced by `list_to_record_batch`.
 
-**Returns:**
+__Returns:__
 
 - A `pyarrow.BinaryArray` where each element is a serialized protobuf message.
 
-**Example:**
+__Example:__
 
 ```python
 handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
@@ -64,15 +64,15 @@ messages = [SearchRequest.FromString(s.as_py()) for s in binary_array]
 
 Convert a binary array of serialized protobuf messages to a RecordBatch.
 
-**Parameters:**
+__Parameters:__
 
 - `array`: A `pyarrow.BinaryArray` where each element is a serialized protobuf message.
 
-**Returns:**
+__Returns:__
 
 - A `pyarrow.RecordBatch` with one column per field in the protobuf message.
 
-**Example:**
+__Example:__
 
 ```python
 import pyarrow as pa

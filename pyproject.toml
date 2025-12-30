@@ -65,8 +65,6 @@ test = [
   "protarrow",
   "pytest",
 ]
-
-[project.optional-dependencies]
 docs = [
   "mkdocs>=1.4.2",
   "mkdocs-material>=9.0.3",
