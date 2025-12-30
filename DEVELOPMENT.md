@@ -3,10 +3,7 @@
 ## Set up venv
 
 ```shell
-python3 -m venv --clear .venv
-source .venv/bin/activate
-uv sync --active
-python ./scripts/protoc.py
+make develop
 ```
 
 ### Special case for ARM mac
@@ -44,11 +41,7 @@ Make sure to install the release version of ptars.
 The locally built version is much slower.
 
 ```shell
-maturin develop --release
-uv run pytest python/test/benchmark \
-  --benchmark-name=short \
-  --benchmark-columns=mean \
-  --benchmark-sort=name
+make benchmark
 ```
 
 ## TODO

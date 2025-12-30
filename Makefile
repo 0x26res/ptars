@@ -61,3 +61,15 @@ update:
 	cargo generate-lockfile && \
 		uv lock --upgrade && \
 		pre-commit autoupdate && pre-commit run --all-files
+
+.PHONY: benchmark
+benchmark: develop
+	maturin develop --release && \
+    	uv run pytest python/test/benchmark \
+		  --benchmark-name=short \
+		  --benchmark-columns=mean \
+		  --benchmark-sort=name
+
+.PHONY: generate-ci
+generate-ci: develop
+	maturin generate-ci github --output=.github/workflows/release.yaml
