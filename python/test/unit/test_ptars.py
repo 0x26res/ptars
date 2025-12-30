@@ -499,20 +499,14 @@ def test_array_to_record_batch_complex_message(pool):
 def test_nested_messages():
     data = [
         NestedExampleMessage(
-            example_message=ExampleMessage(
-                wrapped_double_value={"value": 0.0}
-            )
+            example_message=ExampleMessage(wrapped_double_value={"value": 0.0})
         ),
-        NestedExampleMessage(
-            example_message=None
-        )
+        NestedExampleMessage(example_message=None),
     ]
     record_batch = run_round_trip(data, NestedExampleMessage)
 
     struct_array = record_batch["example_message"]
-    array = struct_array.field(
-        struct_array.type.get_field_index("double_value")
-    )
+    array = struct_array.field(struct_array.type.get_field_index("double_value"))
     # When the parent message is null, child fields should have default values
     # (consistent with protobuf semantics where accessing a field from an
     # unset message returns the default value)
