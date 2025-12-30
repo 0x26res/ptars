@@ -118,7 +118,7 @@ make generate-ci
 
 ## Project Structure
 
-```
+```text
 ptars/
 ├── ptars/              # Core Rust library
 ├── ptars-python/       # Python bindings (PyO3)

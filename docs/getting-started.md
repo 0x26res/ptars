@@ -1,6 +1,7 @@
 # Getting Started
 
-This guide will help you get started with ptars for converting Protocol Buffer messages to Apache Arrow format.
+This guide will help you get started with ptars for converting
+Protocol Buffer messages to Apache Arrow format.
 
 ## Installation
 
@@ -191,7 +192,8 @@ record_batch = pool.messages_to_record_batch(messages, Config.DESCRIPTOR)
 
 ## Binary Array Input
 
-For better performance when you already have a `pyarrow.BinaryArray` of serialized messages:
+For better performance when you already have a `pyarrow.BinaryArray`
+of serialized messages:
 
 ```python
 import pyarrow as pa

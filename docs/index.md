@@ -1,12 +1,14 @@
 # ptars
 
-**Protobuf to Arrow, using Rust**
+Protobuf to Arrow, using Rust.
 
 [![PyPI Version](https://img.shields.io/pypi/v/ptars)](https://pypi.org/project/ptars/)
 [![Python Version](https://img.shields.io/pypi/pyversions/ptars)](https://pypi.org/project/ptars/)
 [![License](http://img.shields.io/:license-Apache%202-blue.svg)](https://github.com/0x26res/ptars/blob/master/LICENSE)
 
-ptars is a high-performance library for converting Protocol Buffer messages to Apache Arrow format and back. It's implemented in Rust with Python bindings via PyO3.
+ptars is a high-performance library for converting Protocol Buffer messages
+to Apache Arrow format and back.
+It's implemented in Rust with Python bindings via PyO3.
 
 ## Features
 
@@ -52,12 +54,14 @@ See the [Getting Started](getting-started.md) guide for more details.
 
 ## Performance
 
-ptars is a Rust implementation of [protarrow](https://github.com/tradewelltech/protarrow), which is implemented in plain Python. Benchmarks show:
+ptars is a Rust implementation of
+[protarrow](https://github.com/tradewelltech/protarrow),
+which is implemented in plain Python. Benchmarks show:
 
 - **2.5x faster** when converting from proto to arrow
 - **3x faster** when converting from arrow to proto
 
-```
+```text
 ---- benchmark 'to_arrow': 2 tests ----
 Name (time in ms)        Mean
 ---------------------------------------

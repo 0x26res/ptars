@@ -12,7 +12,8 @@
 
 ## MessageHandler
 
-The `MessageHandler` class is returned by `HandlerPool.get_for_message()` and provides low-level conversion methods.
+The `MessageHandler` class is returned by `HandlerPool.get_for_message()`
+and provides low-level conversion methods.
 
 ### Methods
 
@@ -86,24 +87,24 @@ record_batch = handler.array_to_record_batch(binary_array)
 
 ptars converts protobuf types to Arrow types as follows:
 
-| Protobuf Type | Arrow Type |
-|---------------|------------|
-| `double` | `float64` |
-| `float` | `float32` |
-| `int32` | `int32` |
-| `int64` | `int64` |
-| `uint32` | `uint32` |
-| `uint64` | `uint64` |
-| `sint32` | `int32` |
-| `sint64` | `int64` |
-| `fixed32` | `uint32` |
-| `fixed64` | `uint64` |
-| `sfixed32` | `int32` |
-| `sfixed64` | `int64` |
-| `bool` | `bool` |
-| `string` | `utf8` |
-| `bytes` | `binary` |
-| `enum` | `int32` |
-| `message` | `struct` |
-| `repeated T` | `list<T>` |
-| `map<K, V>` | `map<K, V>` |
+| Protobuf Type | Arrow Type  |
+| ------------- | ----------- |
+| `double`      | `float64`   |
+| `float`       | `float32`   |
+| `int32`       | `int32`     |
+| `int64`       | `int64`     |
+| `uint32`      | `uint32`    |
+| `uint64`      | `uint64`    |
+| `sint32`      | `int32`     |
+| `sint64`      | `int64`     |
+| `fixed32`     | `uint32`    |
+| `fixed64`     | `uint64`    |
+| `sfixed32`    | `int32`     |
+| `sfixed64`    | `int64`     |
+| `bool`        | `bool`      |
+| `string`      | `utf8`      |
+| `bytes`       | `binary`    |
+| `enum`        | `int32`     |
+| `message`     | `struct`    |
+| `repeated T`  | `list<T>`   |
+| `map<K, V>`   | `map<K, V>` |
