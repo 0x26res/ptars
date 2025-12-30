@@ -5,7 +5,7 @@ import pyarrow as pa
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
-from ptars._lib import MessageHandler, ProtoCache
+from ptars._lib import MessageHandler, ProtoCache  # type: ignore[unresolved-import]
 
 
 def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:

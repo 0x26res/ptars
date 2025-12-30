@@ -1,9 +1,9 @@
 import pyarrow as pa
 import pytest
 from google.protobuf.descriptor import FileDescriptor
-from ptars import HandlerPool
 from ptars._lib import MessageHandler
 
+from ptars import HandlerPool
 from ptars_protos.bench_pb2 import DESCRIPTOR, ExampleMessage
 
 

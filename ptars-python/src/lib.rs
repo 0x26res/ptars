@@ -8,19 +8,14 @@ use pyo3::prelude::{pyfunction, pymodule, PyModule, PyResult, Python};
 use pyo3::types::{PyAnyMethods, PyList, PyListMethods, PyModuleMethods};
 use pyo3::Py;
 use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
-use pyo3_stub_gen::{Result as StubResult, StubInfo};
 use std::io::Cursor;
 use std::sync::Arc;
 
-/// Handler for converting protobuf messages to/from Arrow format.
-#[gen_stub_pyclass]
-#[pyclass(module = "ptars._lib")]
+#[pyclass]
 struct MessageHandler {
     message_descriptor: MessageDescriptor,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl MessageHandler {
     fn list_to_record_batch(
@@ -79,15 +74,12 @@ impl MessageHandler {
     }
 }
 
-/// Cache for protobuf descriptors, used to create MessageHandler instances.
-#[gen_stub_pyclass]
-#[pyclass(module = "ptars._lib")]
+#[pyclass]
 #[derive(Clone)]
 struct ProtoCache {
     pool: Arc<DescriptorPool>,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl ProtoCache {
     #[new]
@@ -121,8 +113,6 @@ impl ProtoCache {
     }
 }
 
-/// Get a sample Arrow table for testing.
-#[gen_stub_pyfunction(module = "ptars._lib")]
 #[pyfunction]
 fn get_a_table(py: Python<'_>) -> PyResult<Py<PyAny>> {
     let col_1 = Arc::new(Int32Array::from_iter([1, 2, 3])) as _;
@@ -138,12 +128,4 @@ fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ProtoCache>()?;
     m.add_class::<MessageHandler>()?;
     PyResult::Ok(())
-}
-
-/// Generate stub info from gathered macros and pyproject.toml in the project root
-pub fn stub_info() -> StubResult<StubInfo> {
-    // pyproject.toml is in the parent directory (project root)
-    let manifest_dir: &std::path::Path = env!("CARGO_MANIFEST_DIR").as_ref();
-    let pyproject_path = manifest_dir.parent().unwrap().join("pyproject.toml");
-    StubInfo::from_pyproject_toml(pyproject_path)
 }

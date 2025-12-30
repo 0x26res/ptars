@@ -1,15 +1,15 @@
+import importlib.resources
 import pathlib
 import warnings
 from typing import List
 
 import google.type.date_pb2
 import grpc_tools
-import importlib.resources
 
 _ROOT_DIR = pathlib.Path(__file__).parent.parent.absolute()
-_GOOGLE_COMMON_PROTOS_ROOT_DIR = pathlib.Path(
-    google.type.date_pb2.__file__
-).parents[2].absolute()
+_GOOGLE_COMMON_PROTOS_ROOT_DIR = (
+    pathlib.Path(google.type.date_pb2.__file__).parents[2].absolute()
+)
 _GRPC_PROTOS_INCLUDE = importlib.resources.files(grpc_tools) / "_proto"
 _SRC_DIR = _ROOT_DIR / "protos"
 _OUT_DIR = _ROOT_DIR / "ptars_protos"
