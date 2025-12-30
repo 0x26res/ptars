@@ -1148,6 +1148,13 @@ dependencies = [
     { name = "pyarrow" },
 ]
 
+[package.optional-dependencies]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "coverage" },
@@ -1182,16 +1189,20 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "googleapis-common-protos" },
+    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.4.2" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.0.3" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.21.2" },
     { name = "protobuf" },
     { name = "pyarrow" },
 ]
+provides-extras = ["docs"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "coverage" },
-    { name = "coverage", specifier = ">=6.5.0" },
-    { name = "git-changelog", specifier = ">=2.2.0" },
-    { name = "grpcio-tools", specifier = ">=1.46.0" },
+    { name = "coverage", specifier = ">=6.5" },
+    { name = "git-changelog", specifier = ">=2.2" },
+    { name = "grpcio-tools", specifier = ">=1.46" },
     { name = "inflection", specifier = ">=0.5.1" },
     { name = "maturin" },
     { name = "mkdocs", specifier = ">=1.4.2" },
@@ -1199,13 +1210,13 @@ dev = [
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.21.2" },
     { name = "pandas" },
     { name = "pipdeptree" },
-    { name = "pre-commit", specifier = ">=2.20.0" },
+    { name = "pre-commit", specifier = ">=2.20" },
     { name = "protarrow" },
-    { name = "pylint", specifier = ">=2.15.0" },
+    { name = "pylint", specifier = ">=2.15" },
     { name = "pytest" },
-    { name = "pytest", specifier = ">=7.2.0" },
-    { name = "pytest-benchmark", specifier = ">=4.0.0" },
-    { name = "pytest-xdist", specifier = ">=3.1.0" },
+    { name = "pytest", specifier = ">=7.2" },
+    { name = "pytest-benchmark", specifier = ">=4" },
+    { name = "pytest-xdist", specifier = ">=3.1" },
     { name = "ruff" },
     { name = "tabulate" },
     { name = "ty" },
@@ -1213,7 +1224,7 @@ dev = [
 ]
 test = [
     { name = "coverage" },
-    { name = "grpcio-tools", specifier = ">=1.46.0" },
+    { name = "grpcio-tools", specifier = ">=1.46" },
     { name = "maturin" },
     { name = "protarrow" },
     { name = "pytest" },

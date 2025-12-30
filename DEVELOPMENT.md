@@ -49,7 +49,6 @@ make benchmark
 ## TODO
 
 - [ ] add configuration for enums, timestamp, date, wrapped types, duration
-- [ ] add python documentation
 
 ## Resources
 

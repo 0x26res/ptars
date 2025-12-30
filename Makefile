@@ -73,3 +73,11 @@ benchmark: develop
 .PHONY: generate-ci
 generate-ci: develop
 	maturin generate-ci github --output=.github/workflows/release.yaml
+
+.PHONY: docs
+docs:
+	. .venv/bin/activate && mkdocs serve
+
+.PHONY: docs-build
+docs-build:
+	. .venv/bin/activate && mkdocs build
