@@ -4,7 +4,7 @@ requires = [ "maturin>=1,<2" ]
 
 [project]
 name = "ptars"
-version = "0.0.8"
+version = "0.0.9"
 description = "Convert from protobuf to arrow and back in rust"
 readme = "README.md"
 keywords = [ "apache-arrow", "data", "protobuf", "rust" ]

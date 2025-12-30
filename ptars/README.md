@@ -23,7 +23,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ptars = "0.0.7"
+ptars = "0.0.9"
 prost-reflect = "0.16"
 ```
 
