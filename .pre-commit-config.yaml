@@ -11,7 +11,7 @@ repos:
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: v0.14.10
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
   - repo: https://github.com/PyCQA/bandit
@@ -48,7 +48,7 @@ repos:
     hooks:
       - id: pretty-format-toml
         files: "^.*.toml"
-        exclude: "^gradle/libs.versions.toml$"
+        exclude: "^pyproject.toml$"
         args:
           - "--autofix"
 
@@ -61,3 +61,9 @@ repos:
         types: [python]
         files: ^python/ptars/.*
         pass_filenames: true
+
+
+  - repo: https://github.com/tox-dev/pyproject-fmt
+    rev: v2.11.1
+    hooks:
+      - id: pyproject-fmt
