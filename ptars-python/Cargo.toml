@@ -12,7 +12,7 @@ arrow-array = "57.1.0"
 prost = "0.14.1"
 prost-reflect = "0.16.3"
 ptars = {path = "../ptars"}
-pyo3 = {version = "0.26.0", features = ["abi3-py310"]}
+pyo3 = {version = "0.26.0", features = ["abi3-py311"]}
 pyo3-stub-gen = "0.17"
 
 [features]
