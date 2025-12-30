@@ -1,15 +1,17 @@
 # ptars
 
-[![Ruff][ruff-image]][ruff-url]
 [![PyPI Version][pypi-image]][pypi-url]
 [![Python Version][versions-image]][versions-url]
-[![Github Stars][stars-image]][stars-url]
-[![codecov][codecov-image]][codecov-url]
-[![Build Status][build-image]][build-url]
-[![License][license-image]][license-url]
+[![PyPI Wheel][wheel-image]][wheel-url]
+[![Documentation][docs-image]][docs-url]
 [![Downloads][downloads-image]][downloads-url]
 [![Downloads][downloads-month-image]][downloads-month-url]
+[![Build Status][build-image]][build-url]
+[![codecov][codecov-image]][codecov-url]
+[![License][license-image]][license-url]
+[![Ruff][ruff-image]][ruff-url]
 [![snyk][snyk-image]][snyk-url]
+[![Github Stars][stars-image]][stars-url]
 [![GitHub issues][github-issues-image]][github-issues-url]
 [![Contributing][contributing-image]][contributing-url]
 [![FOSSA Status][fossa-image]][fossa-url]
@@ -96,29 +98,33 @@ ptars_to_proto          6.5013 (1.0)
 
 [pypi-image]: https://img.shields.io/pypi/v/ptars
 [pypi-url]: https://pypi.org/project/ptars/
-[build-image]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml/badge.svg
-[build-url]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml
-[stars-image]: https://img.shields.io/github/stars/0x26res/ptars
-[stars-url]: https://github.com/0x26res/ptars
 [versions-image]: https://img.shields.io/pypi/pyversions/ptars
 [versions-url]: https://pypi.org/project/ptars/
-[license-image]: http://img.shields.io/:license-Apache%202-blue.svg
-[license-url]: https://github.com/0x26res/ptars/blob/master/LICENSE
-[codecov-image]: https://codecov.io/gh/0x26res/ptars/branch/main/graph/badge.svg?token=XMFH27IL70
-[codecov-url]: https://codecov.io/gh/0x26res/ptars
+[wheel-image]: https://img.shields.io/pypi/wheel/ptars
+[wheel-url]: https://pypi.org/project/ptars/
+[docs-image]: https://readthedocs.org/projects/ptars/badge/?version=latest
+[docs-url]: https://ptars.readthedocs.io/en/latest/
 [downloads-image]: https://pepy.tech/badge/ptars
 [downloads-url]: https://static.pepy.tech/badge/ptars
 [downloads-month-image]: https://pepy.tech/badge/ptars/month
 [downloads-month-url]: https://static.pepy.tech/badge/ptars/month
-[snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
-[snyk-url]: https://snyk.io/advisor/python/ptars
+[build-image]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml/badge.svg
+[build-url]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml
+[codecov-image]: https://codecov.io/gh/0x26res/ptars/branch/main/graph/badge.svg?token=XMFH27IL70
+[codecov-url]: https://codecov.io/gh/0x26res/ptars
+[license-image]: http://img.shields.io/:license-Apache%202-blue.svg
+[license-url]: https://github.com/0x26res/ptars/blob/master/LICENSE
 [ruff-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
 [ruff-url]: https://github.com/astral-sh/ruff
-[repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
-[repo-size-image]: https://img.shields.io/github/repo-size/0x26res/ptars
+[snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
+[snyk-url]: https://snyk.io/advisor/python/ptars
+[stars-image]: https://img.shields.io/github/stars/0x26res/ptars
+[stars-url]: https://github.com/0x26res/ptars
 [github-issues-image]: https://img.shields.io/badge/issue_tracking-github-blue.svg
 [github-issues-url]: https://github.com/0x26res/ptars/issues
 [contributing-image]: https://img.shields.io/badge/PR-Welcome-%23FF8300.svg?
 [contributing-url]: https://github.com/0x26res/ptars/blob/main/DEVELOPMENT.md
 [fossa-image]: https://app.fossa.com/api/projects/git%2Bgithub.com%2F0x26res%2Fptars.svg?type=shield
-[fossa-url]: https://app.fossa.com/projects/git%2Bgithub.com%2F0x26res%2ptars?ref=badge_shield
+[fossa-url]: https://app.fossa.com/projects/git%2Bgithub.com%2F0x26res%2Fptars?ref=badge_shield
+[repo-size-image]: https://img.shields.io/github/repo-size/0x26res/ptars
+[repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
