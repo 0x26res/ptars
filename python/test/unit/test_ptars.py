@@ -18,6 +18,7 @@ from ptars_protos.bench_pb2 import (
     SuperNestedExampleMessage,
 )
 from ptars_protos.simple_pb2 import (
+    NestedMap,
     RepeatedNestedMessageSimple,
     ReturnCode,
     SearchRequest,
@@ -114,7 +115,7 @@ def test_generate_proto(simple_message_handler):
     ]
 
 
-@pytest.mark.parametrize("message_type", MESSAGES[:2])
+@pytest.mark.parametrize("message_type", MESSAGES)
 def test_back_and_forth(message_type: MessageMeta):
     messages = generate_messages(message_type, 10)
     run_round_trip(messages, message_type)
@@ -331,6 +332,11 @@ def test_repeated():
     run_round_trip(messages, WithRepeated)
 
 
+def test_nested_map():
+    messages = generate_messages(NestedMap, count=10)
+    run_round_trip(messages, NestedMap)
+
+
 def test_map():
     messages = generate_messages(WithMap, count=10)
     record_batch = run_round_trip(messages, WithMap)
@@ -498,9 +504,7 @@ def test_array_to_record_batch_complex_message(pool):
 
 def test_nested_primitive():
     data = [
-        NestedExampleMessage(
-            example_message=ExampleMessage(wrapped_double_value={"value": 0.0})
-        ),
+        NestedExampleMessage(example_message=ExampleMessage()),
         NestedExampleMessage(example_message=None),
     ]
     record_batch = run_round_trip(data, NestedExampleMessage)
@@ -516,13 +520,52 @@ def test_nested_primitive():
     assert struct_array.type.field("double_value").nullable is False
 
 
-def test_nested_enums():
+def test_nested_list_of_primitive():
+    messages = [
+        NestedExampleMessage(example_message=ExampleMessage(double_values=[1.0, 2, 0])),
+        NestedExampleMessage(example_message=None),
+    ]
+    record_batch = run_round_trip(messages, NestedExampleMessage)
+
+    struct_array = record_batch["example_message"]
+    array = struct_array.field(struct_array.type.get_field_index("double_values"))
+    assert array.to_pylist() == [[1.0, 2.0, 0.0], []]
+    assert pc.struct_field(struct_array, "double_values").to_pylist() == [
+        [1.0, 2.0, 0.0],
+        None,
+    ]
+    assert struct_array.type.field("double_values").nullable is False
+
+    record_batch_protarrow = protarrow.messages_to_record_batch(
+        messages, NestedExampleMessage
+    )
+    struct_array_protarrow = record_batch_protarrow["example_message"]
+    array_protarrow = struct_array_protarrow.field(
+        struct_array.type.get_field_index("double_values")
+    )
+    assert array_protarrow.to_pylist() == [[1.0, 2.0, 0.0], None]  # Bug in protarrow
+
+
+def test_map_of_maps_complex():
     messages = [
         NestedExampleMessage(
-            example_message=ExampleMessage(example_enum_values=[0, 1, 2]),
-            repeated_example_message=[ExampleMessage(example_enum_values=[0, 1, 2])],
+            example_message=ExampleMessage(
+                example_enum_values=[0, 1, 2], double_int32_map={123: 0.12345}
+            ),
+            repeated_example_message=[
+                ExampleMessage(
+                    example_enum_values=[0, 1, 2], double_int32_map={123: 0.12345}
+                )
+            ],
             example_message_int32_map={
-                123: ExampleMessage(example_enum_values=[0, 1, 2])
+                123: ExampleMessage(
+                    example_enum_values=[0, 1, 2], double_int32_map={123: 0.12345}
+                )
+            },
+            example_message_string_map={
+                "FOO": ExampleMessage(
+                    example_enum_values=[0, 1, 2], double_int32_map={123: 0.12345}
+                )
             },
         ),
         NestedExampleMessage(example_message=None),

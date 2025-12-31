@@ -173,3 +173,7 @@ message WithTimeOfDay {
     google.type.TimeOfDay time_of_day = 1;
     repeated google.type.TimeOfDay time_of_days = 2;
 }
+
+message NestedMap {
+  map <int32, WithMap> map_of_map = 1;
+}

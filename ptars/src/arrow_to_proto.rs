@@ -1097,15 +1097,43 @@ pub fn extract_single_bool(
         })
 }
 
+/// Extract a single map value at a given index from a MapArray.
+fn extract_single_map(
+    map_array: &MapArray,
+    idx: usize,
+    key_field: &FieldDescriptor,
+    value_field: &FieldDescriptor,
+) -> Option<Value> {
+    if map_array.is_null(idx) {
+        return None;
+    }
+    let start = map_array.value_offsets()[idx] as usize;
+    let end = map_array.value_offsets()[idx + 1] as usize;
+    if start >= end {
+        return Some(Value::Map(HashMap::new()));
+    }
+
+    let entries = map_array.entries();
+    let key_array = entries.column_by_name("key")?;
+    let value_array = entries.column_by_name("value")?;
+
+    let mut map: HashMap<MapKey, Value> = HashMap::new();
+    for i in start..end {
+        let key = extract_map_key(key_array, i, key_field);
+        let value = extract_map_value(value_array, i, value_field);
+        if let (Some(k), Some(v)) = (key, value) {
+            map.insert(k, v);
+        }
+    }
+    Some(Value::Map(map))
+}
+
 pub fn extract_map_array(
     array: &ArrayRef,
     field_descriptor: &FieldDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
     let map_array = array.as_any().downcast_ref::<MapArray>().unwrap();
-    let entries = map_array.entries();
-    let key_array = entries.column_by_name("key").unwrap();
-    let value_array = entries.column_by_name("value").unwrap();
 
     // Get the key and value field descriptors from the map entry message type
     let map_entry_descriptor = match field_descriptor.kind() {
@@ -1116,23 +1144,8 @@ pub fn extract_map_array(
     let value_field = map_entry_descriptor.get_field_by_name("value").unwrap();
 
     for (i, message) in messages.iter_mut().enumerate() {
-        if !map_array.is_null(i) {
-            let start = map_array.value_offsets()[i] as usize;
-            let end = map_array.value_offsets()[i + 1] as usize;
-
-            if start < end {
-                let mut map: HashMap<MapKey, Value> = HashMap::new();
-
-                for idx in start..end {
-                    let key = extract_map_key(key_array, idx, &key_field);
-                    let value = extract_map_value(value_array, idx, &value_field);
-                    if let (Some(k), Some(v)) = (key, value) {
-                        map.insert(k, v);
-                    }
-                }
-
-                message.set_field(field_descriptor, Value::Map(map));
-            }
+        if let Some(map_value) = extract_single_map(map_array, i, &key_field, &value_field) {
+            message.set_field(field_descriptor, map_value);
         }
     }
 }
@@ -1491,6 +1504,17 @@ fn extract_struct_field_value(
     idx: usize,
     field: &FieldDescriptor,
 ) -> Option<Value> {
+    if field.is_map() {
+        let map_array = array.as_any().downcast_ref::<MapArray>()?;
+        let map_entry_descriptor = match field.kind() {
+            Kind::Message(desc) => desc,
+            _ => return None,
+        };
+        let key_field = map_entry_descriptor.get_field_by_name("key")?;
+        let value_field = map_entry_descriptor.get_field_by_name("value")?;
+        return extract_single_map(map_array, idx, &key_field, &value_field);
+    }
+
     if field.is_list() {
         // Handle repeated fields
         let list_array = array.as_any().downcast_ref::<ListArray>()?;
