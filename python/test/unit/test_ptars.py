@@ -114,7 +114,7 @@ def test_generate_proto(simple_message_handler):
     ]
 
 
-@pytest.mark.parametrize("message_type", MESSAGES[:1])
+@pytest.mark.parametrize("message_type", MESSAGES[:2])
 def test_back_and_forth(message_type: MessageMeta):
     messages = generate_messages(message_type, 10)
     run_round_trip(messages, message_type)
@@ -496,7 +496,7 @@ def test_array_to_record_batch_complex_message(pool):
     assert record_batch["bool_value"].to_pylist() == [True, False]
 
 
-def test_nested_messages():
+def test_nested_primitive():
     data = [
         NestedExampleMessage(
             example_message=ExampleMessage(wrapped_double_value={"value": 0.0})
@@ -514,3 +514,30 @@ def test_nested_messages():
     assert pc.struct_field(struct_array, "double_value").to_pylist() == [0.0, None]
 
     assert struct_array.type.field("double_value").nullable is False
+
+
+def test_nested_enums():
+    messages = [
+        NestedExampleMessage(
+            example_message=ExampleMessage(example_enum_values=[0, 1, 2]),
+            repeated_example_message=[ExampleMessage(example_enum_values=[0, 1, 2])],
+            example_message_int32_map={
+                123: ExampleMessage(example_enum_values=[0, 1, 2])
+            },
+        ),
+        NestedExampleMessage(example_message=None),
+    ]
+    record_batch = run_round_trip(messages, NestedExampleMessage)
+
+    struct_array = record_batch["example_message"]
+    array = struct_array.field(struct_array.type.get_field_index("example_enum_values"))
+
+    assert array.to_pylist() == [[0, 1, 2], []]
+    assert pc.struct_field(struct_array, "example_enum_values").to_pylist() == [
+        [0, 1, 2],
+        None,
+    ]
+    record_batch_protarrow = protarrow.messages_to_record_batch(
+        messages, NestedExampleMessage
+    )
+    assert record_batch == record_batch_protarrow
