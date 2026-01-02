@@ -54,4 +54,5 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - API Reference: api.md
+  - FAQ: faq.md
   - Development: development.md
