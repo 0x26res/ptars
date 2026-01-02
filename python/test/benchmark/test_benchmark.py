@@ -5,6 +5,7 @@ import protarrow
 import pyarrow as pa
 import pytest
 from google._upb._message import MessageMeta
+from ptars._lib import MessageHandler
 from pytest_benchmark.fixture import BenchmarkFixture
 
 import ptars
@@ -83,3 +84,19 @@ def test_ptars_to_proto(benchmark: BenchmarkFixture, payloads: list[bytes]):
     record_batch = handler.list_to_record_batch(payloads)
 
     benchmark(handler.record_batch_to_array, record_batch)
+
+
+def run_python_deserialize(payloads, message_type):
+    [message_type.FromString(p) for p in payloads]
+
+
+def test_python_deserialize(benchmark: BenchmarkFixture, payloads: list[bytes]):
+    benchmark.group = "deserialize"
+    benchmark(run_python_deserialize, payloads, BenchmarkMessage)
+
+
+def test_rust_deserialize(benchmark: BenchmarkFixture, payloads: list[bytes]):
+    benchmark.group = "deserialize"
+    pool = ptars.HandlerPool([benchmark_pb2.DESCRIPTOR])
+    handler: MessageHandler = pool.get_for_message(BenchmarkMessage.DESCRIPTOR)
+    benchmark(handler.just_convert, payloads)
