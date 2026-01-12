@@ -1,5 +1,5 @@
 [dependencies]
-arrow = "57.1.0"
+arrow = "57.2.0"
 arrow-array = "57.1.0"
 arrow-schema = "57.1.0"
 chrono = "0.4.42"
