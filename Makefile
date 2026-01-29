@@ -20,7 +20,7 @@ develop: env protoc
 
 .PHONY: test
 test: develop
-	RUST_BACKTRACE=1 uv run python -m pytest python/test/unit && cargo test
+	cargo test && RUST_BACKTRACE=1 uv run python -m pytest python/test/unit
 
 .PHONY: build
 build: env
