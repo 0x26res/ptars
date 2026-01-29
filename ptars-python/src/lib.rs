@@ -112,15 +112,14 @@ fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<
 #[pyclass]
 struct MessageHandler {
     message_descriptor: MessageDescriptor,
+    config: ptars::PtarsConfig,
 }
 
 #[pymethods]
 impl MessageHandler {
-    #[pyo3(signature = (values, config=None))]
     fn list_to_record_batch(
         &self,
         values: &Bound<'_, PyList>,
-        config: Option<&PtarsConfig>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
         let mut messages: Vec<DynamicMessage> = Vec::with_capacity(values.len());
@@ -130,13 +129,10 @@ impl MessageHandler {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             messages.push(message);
         }
-        let config = config
-            .map(|c| c.inner.clone())
-            .unwrap_or_default();
         Ok(ptars::messages_to_record_batch_with_config(
             &messages,
             &self.message_descriptor,
-            &config,
+            &self.config,
         )
         .to_pyarrow(py)?
         .unbind())
@@ -167,24 +163,15 @@ impl MessageHandler {
     ///
     /// Each element in the binary array is expected to be a serialized protobuf message.
     /// The resulting record batch will have one column per field in the message descriptor.
-    #[pyo3(signature = (array, config=None))]
-    fn array_to_record_batch(
-        &self,
-        array: &Bound<PyAny>,
-        config: Option<&PtarsConfig>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyAny>> {
+    fn array_to_record_batch(&self, array: &Bound<PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let array_data = arrow::array::ArrayData::from_pyarrow_bound(array).map_err(|e| {
             pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
         })?;
         let arrow_array = BinaryArray::from(array_data);
-        let config = config
-            .map(|c| c.inner.clone())
-            .unwrap_or_default();
         let record_batch = ptars::binary_array_to_record_batch_with_config(
             &arrow_array,
             &self.message_descriptor,
-            &config,
+            &self.config,
         )
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
@@ -217,14 +204,15 @@ impl MessageHandler {
     }
 }
 
+/// Registry of protobuf descriptors used to create message handlers.
 #[pyclass]
 #[derive(Clone)]
-struct ProtoCache {
+struct ProtoRegistry {
     pool: Arc<DescriptorPool>,
 }
 
 #[pymethods]
-impl ProtoCache {
+impl ProtoRegistry {
     #[new]
     fn new(file_descriptors_bytes: Vec<Vec<u8>>) -> Self {
         let mut pool = DescriptorPool::new();
@@ -234,7 +222,7 @@ impl ProtoCache {
             pool.add_file_descriptor_proto(proto).unwrap();
         }
 
-        ProtoCache {
+        ProtoRegistry {
             pool: Arc::new(pool),
         }
     }
@@ -246,13 +234,26 @@ impl ProtoCache {
             .collect()
     }
 
-    fn create_for_message(&mut self, message_name: String) -> PyResult<MessageHandler> {
+    #[pyo3(signature = (message_name, config=None))]
+    fn create_for_message(
+        &mut self,
+        message_name: String,
+        config: Option<&PtarsConfig>,
+    ) -> PyResult<MessageHandler> {
         let message_descriptor = self
             .pool
             .get_message_by_name(message_name.as_str())
-            .unwrap();
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Message '{}' not found in descriptor pool",
+                    message_name
+                ))
+            })?;
 
-        Ok(MessageHandler { message_descriptor })
+        Ok(MessageHandler {
+            message_descriptor,
+            config: config.map(|c| c.inner.clone()).unwrap_or_default(),
+        })
     }
 }
 
@@ -268,7 +269,7 @@ fn get_a_table(py: Python<'_>) -> PyResult<Py<PyAny>> {
 #[pymodule]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_a_table, m)?)?;
-    m.add_class::<ProtoCache>()?;
+    m.add_class::<ProtoRegistry>()?;
     m.add_class::<MessageHandler>()?;
     m.add_class::<PtarsConfig>()?;
     PyResult::Ok(())

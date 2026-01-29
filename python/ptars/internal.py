@@ -8,7 +8,7 @@ import pyarrow as pa
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
-from ptars._lib import MessageHandler, ProtoCache  # type: ignore[unresolved-import]
+from ptars._lib import MessageHandler, ProtoRegistry  # type: ignore[unresolved-import]
 
 
 def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:
@@ -70,7 +70,7 @@ class HandlerPool:
 
         payloads = [_file_descriptor_to_bytes(d) for d in all_descriptors]
 
-        self._proto_cache = ProtoCache(payloads)
+        self._proto_registry = ProtoRegistry(payloads)
         self._pool = {}
 
     def get_for_message(
@@ -101,7 +101,7 @@ class HandlerPool:
         try:
             return self._pool[descriptor.full_name]
         except KeyError:
-            result = self._proto_cache.create_for_message(descriptor.full_name)
+            result = self._proto_registry.create_for_message(descriptor.full_name)
             self._pool[descriptor.full_name] = result
             return result
 
