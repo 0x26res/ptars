@@ -132,7 +132,7 @@ impl MessageHandler {
         }
         let config = config
             .map(|c| c.inner.clone())
-            .unwrap_or_else(ptars::PtarsConfig::default);
+            .unwrap_or_default();
         Ok(ptars::messages_to_record_batch_with_config(
             &messages,
             &self.message_descriptor,
@@ -180,7 +180,7 @@ impl MessageHandler {
         let arrow_array = BinaryArray::from(array_data);
         let config = config
             .map(|c| c.inner.clone())
-            .unwrap_or_else(ptars::PtarsConfig::default);
+            .unwrap_or_default();
         let record_batch = ptars::binary_array_to_record_batch_with_config(
             &arrow_array,
             &self.message_descriptor,
