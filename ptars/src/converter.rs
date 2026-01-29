@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::arrow_to_proto::record_batch_to_array;
+    use crate::config::PtarsConfig;
     use crate::proto_to_arrow::{
         field_to_array, get_array_builder, get_singular_array_builder, is_nullable,
         messages_to_record_batch, CE_OFFSET,
@@ -168,7 +169,7 @@ mod tests {
         message2.set_field_by_name("value", Value::I64(i64::MIN));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let int64_array = array
             .as_any()
@@ -191,7 +192,7 @@ mod tests {
         message2.set_field_by_name("value", Value::U32(0));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let uint32_array = array
             .as_any()
@@ -211,7 +212,7 @@ mod tests {
         message1.set_field_by_name("value", Value::U64(u64::MAX));
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let uint64_array = array
             .as_any()
@@ -232,7 +233,7 @@ mod tests {
         message2.set_field_by_name("value", Value::F32(-2.71));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let float_array = array
             .as_any()
@@ -252,7 +253,7 @@ mod tests {
         message1.set_field_by_name("value", Value::F64(std::f64::consts::PI));
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let double_array = array
             .as_any()
@@ -273,7 +274,7 @@ mod tests {
         message2.set_field_by_name("value", Value::Bool(false));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let bool_array = array
             .as_any()
@@ -298,7 +299,7 @@ mod tests {
         message2.set_field_by_name("value", Value::Bytes(prost::bytes::Bytes::from(vec![])));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let binary_array = array
             .as_any()
@@ -351,7 +352,7 @@ mod tests {
         message2.set_field_by_name("values", Value::List(vec![Value::I32(4), Value::I32(5)]));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -383,7 +384,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -416,7 +417,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -448,7 +449,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -477,7 +478,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -503,7 +504,7 @@ mod tests {
         message1.set_field_by_name("values", Value::List(vec![]));
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -624,7 +625,7 @@ mod tests {
         let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int32);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         assert!(builder.is_empty());
         assert_eq!(builder.len(), 0);
 
@@ -641,7 +642,7 @@ mod tests {
         let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int32);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         builder.append(&Value::I32(1));
         builder.append_null();
         builder.append(&Value::I32(3));
@@ -659,7 +660,7 @@ mod tests {
             create_primitive_message_descriptor("value", Type::String);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         builder.append(&Value::String("hello".to_string()));
         builder.append_null();
         builder.append(&Value::String("world".to_string()));
@@ -676,7 +677,7 @@ mod tests {
         let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Bool);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         builder.append(&Value::Bool(true));
         builder.append_null();
         builder.append(&Value::Bool(false));
@@ -693,7 +694,7 @@ mod tests {
         let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
         let field = message_descriptor.get_field_by_name("values").unwrap();
 
-        let mut builder = get_array_builder(&field).unwrap();
+        let mut builder = get_array_builder(&field, &PtarsConfig::default()).unwrap();
         assert!(builder.is_empty());
         assert_eq!(builder.len(), 0);
 

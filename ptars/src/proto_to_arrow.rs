@@ -9,6 +9,8 @@ use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
 use std::sync::Arc;
 
+use crate::config::PtarsConfig;
+
 pub trait ProtoArrayBuilder {
     fn append(&mut self, value: &Value);
     fn append_null(&mut self);
@@ -28,9 +30,13 @@ use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32T
 
 pub fn get_message_array_builder(
     message_descriptor: &MessageDescriptor,
+    config: &PtarsConfig,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     match message_descriptor.full_name() {
-        "google.protobuf.Timestamp" => Ok(Box::new(TimestampArrayBuilder::new(message_descriptor))),
+        "google.protobuf.Timestamp" => Ok(Box::new(TimestampArrayBuilder::new(
+            message_descriptor,
+            config.timestamp_tz.clone(),
+        ))),
         "google.type.Date" => Ok(Box::new(DateArrayBuilder::new(message_descriptor))),
         "google.type.TimeOfDay" => Ok(Box::new(TimeOfDayArrayBuilder::new(message_descriptor))),
         // Wrapper types - stored as nullable primitives
@@ -67,12 +73,16 @@ pub fn get_message_array_builder(
         "google.protobuf.BytesValue" => Ok(Box::new(BytesWrapperBuilderWrapper::new(
             message_descriptor,
         ))),
-        _ => Ok(Box::new(MessageArrayBuilder::new(message_descriptor))),
+        _ => Ok(Box::new(MessageArrayBuilder::new(
+            message_descriptor,
+            config,
+        ))),
     }
 }
 
 pub fn get_singular_array_builder(
     field_descriptor: &FieldDescriptor,
+    config: &PtarsConfig,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     match field_descriptor.kind() {
         Kind::Double => Ok(Box::new(PrimitiveBuilderWrapper::<Float64Type>::new(
@@ -99,42 +109,45 @@ pub fn get_singular_array_builder(
         ))),
         Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
         Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
-        Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor),
+        Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor, config),
     }
 }
 
 pub fn get_repeated_array_builder(
     field_descriptor: &FieldDescriptor,
+    config: &PtarsConfig,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     match field_descriptor.kind() {
         Kind::Double => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Float64Type>::new(Value::as_f64),
+            RepeatedPrimitiveBuilderWrapper::<Float64Type>::new(Value::as_f64, config),
         )),
         Kind::Float => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Float32Type>::new(Value::as_f32),
+            RepeatedPrimitiveBuilderWrapper::<Float32Type>::new(Value::as_f32, config),
         )),
         Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(Value::as_i32),
+            RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(Value::as_i32, config),
         )),
         Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Int64Type>::new(Value::as_i64),
+            RepeatedPrimitiveBuilderWrapper::<Int64Type>::new(Value::as_i64, config),
         )),
         Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<UInt32Type>::new(Value::as_u32),
+            RepeatedPrimitiveBuilderWrapper::<UInt32Type>::new(Value::as_u32, config),
         )),
         Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64),
+            RepeatedPrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64, config),
         )),
-        Kind::Bool => Ok(Box::new(RepeatedBooleanBuilderWrapper::new())),
+        Kind::Bool => Ok(Box::new(RepeatedBooleanBuilderWrapper::new(config))),
         Kind::Enum(_) => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(
             Value::as_enum_number,
+            config,
         ))),
-        Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new())),
-        Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new())),
+        Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new(config))),
+        Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new(config))),
         Kind::Message(message_descriptor) => {
-            let message_builder = get_message_array_builder(&message_descriptor)?;
+            let message_builder = get_message_array_builder(&message_descriptor, config)?;
             Ok(Box::new(RepeatedMessageBuilderWrapper::new(
                 message_builder,
+                config,
             )))
         }
     }
@@ -142,25 +155,27 @@ pub fn get_repeated_array_builder(
 
 pub fn get_array_builder(
     field_descriptor: &FieldDescriptor,
+    config: &PtarsConfig,
 ) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
     if field_descriptor.is_map() {
         if let Kind::Message(message_descriptor) = field_descriptor.kind() {
-            Ok(Box::new(MapArrayBuilder::new(&message_descriptor)))
+            Ok(Box::new(MapArrayBuilder::new(&message_descriptor, config)))
         } else {
             Err("map field is not a message")
         }
     } else if field_descriptor.is_list() {
-        get_repeated_array_builder(field_descriptor)
+        get_repeated_array_builder(field_descriptor, config)
     } else {
-        get_singular_array_builder(field_descriptor)
+        get_singular_array_builder(field_descriptor, config)
     }
 }
 
 pub fn field_to_array(
     field_descriptor: &FieldDescriptor,
     messages: &[DynamicMessage],
+    config: &PtarsConfig,
 ) -> Result<Arc<dyn Array>, &'static str> {
-    let mut builder = get_array_builder(field_descriptor)?;
+    let mut builder = get_array_builder(field_descriptor, config)?;
     for message in messages {
         if field_descriptor.supports_presence() && !message.has_field(field_descriptor) {
             builder.append_null();
@@ -178,8 +193,9 @@ pub fn is_nullable(field: &FieldDescriptor) -> bool {
 pub fn field_to_tuple(
     field: &FieldDescriptor,
     messages: &[DynamicMessage],
+    config: &PtarsConfig,
 ) -> Result<(Arc<Field>, Arc<dyn Array>), &'static str> {
-    let results = field_to_array(field, messages);
+    let results = field_to_array(field, messages, config);
     match results {
         Ok(array) => Ok((
             Arc::new(Field::new(
@@ -196,10 +212,11 @@ pub fn field_to_tuple(
 pub fn fields_to_arrays(
     messages: &[DynamicMessage],
     message_descriptor: &MessageDescriptor,
+    config: &PtarsConfig,
 ) -> Vec<(Arc<Field>, Arc<dyn Array>)> {
     message_descriptor
         .fields()
-        .map(|x| field_to_tuple(&x, messages).unwrap())
+        .map(|x| field_to_tuple(&x, messages, config).unwrap())
         .collect()
 }
 
@@ -214,20 +231,24 @@ struct MapArrayBuilder {
     key_field_descriptor: FieldDescriptor,
     value_field_descriptor: FieldDescriptor,
     offsets: Vec<i32>,
+    map_value_name: Arc<str>,
+    map_value_nullable: bool,
 }
 
 impl MapArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
         let key_field_descriptor = message_descriptor.get_field_by_name("key").unwrap();
         let value_field_descriptor = message_descriptor.get_field_by_name("value").unwrap();
-        let key_builder = get_singular_array_builder(&key_field_descriptor).unwrap();
-        let value_builder = get_singular_array_builder(&value_field_descriptor).unwrap();
+        let key_builder = get_singular_array_builder(&key_field_descriptor, config).unwrap();
+        let value_builder = get_singular_array_builder(&value_field_descriptor, config).unwrap();
         Self {
             key_builder,
             value_builder,
             key_field_descriptor,
             value_field_descriptor,
             offsets: vec![0],
+            map_value_name: config.map_value_name.clone(),
+            map_value_nullable: config.map_value_nullable,
         }
     }
 }
@@ -287,9 +308,9 @@ impl ProtoArrayBuilder for MapArrayBuilder {
             false, // map keys are not nullable in protobuf
         ));
         let value_field = Arc::new(Field::new(
-            "value",
+            &*self.map_value_name,
             value_array.data_type().clone(),
-            false, // map values are not nullable in protobuf
+            self.map_value_nullable,
         ));
 
         let entry_struct =
@@ -333,11 +354,11 @@ struct MessageArrayBuilder {
 }
 
 impl MessageArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
         let fields: Vec<_> = message_descriptor
             .fields()
             .map(|field_descriptor| {
-                let builder = get_array_builder(&field_descriptor).unwrap();
+                let builder = get_array_builder(&field_descriptor, config).unwrap();
                 (field_descriptor, builder)
             })
             .collect();
@@ -484,18 +505,22 @@ where
     builder: PrimitiveBuilder<T>,
     offsets: Vec<i32>,
     extractor: fn(&Value) -> Option<T::Native>,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
 }
 
 impl<T> RepeatedPrimitiveBuilderWrapper<T>
 where
     T: ArrowPrimitiveType,
 {
-    fn new(extractor: fn(&Value) -> Option<T::Native>) -> Self {
+    fn new(extractor: fn(&Value) -> Option<T::Native>, config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
         Self {
             builder: PrimitiveBuilder::<T>::new(),
             offsets,
             extractor,
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
         }
     }
 }
@@ -529,9 +554,9 @@ where
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
         let list_data_type = DataType::List(Arc::new(Field::new(
-            "item",
+            &*self.list_value_name,
             values.data_type().clone(),
-            false, // list items are not nullable
+            self.list_value_nullable,
         )));
 
         let list_data = ArrayData::builder(list_data_type)
@@ -556,12 +581,19 @@ where
 struct RepeatedMessageBuilderWrapper {
     builder: Box<dyn ProtoArrayBuilder>,
     offsets: Vec<i32>,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
 }
 
 impl RepeatedMessageBuilderWrapper {
-    fn new(builder: Box<dyn ProtoArrayBuilder>) -> Self {
+    fn new(builder: Box<dyn ProtoArrayBuilder>, config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
-        Self { builder, offsets }
+        Self {
+            builder,
+            offsets,
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
+        }
     }
 }
 
@@ -589,9 +621,9 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
         let list_data_type = DataType::List(Arc::new(Field::new(
-            "item",
+            &*self.list_value_name,
             values.data_type().clone(),
-            false,
+            self.list_value_nullable,
         )));
 
         let list_data = ArrayData::builder(list_data_type)
@@ -616,14 +648,18 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
 struct RepeatedBooleanBuilderWrapper {
     builder: BooleanBuilder,
     offsets: Vec<i32>,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
 }
 
 impl RepeatedBooleanBuilderWrapper {
-    fn new() -> Self {
+    fn new(config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
         Self {
             builder: BooleanBuilder::new(),
             offsets,
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
         }
     }
 }
@@ -651,7 +687,11 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
-        let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Boolean, false)));
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            &*self.list_value_name,
+            DataType::Boolean,
+            self.list_value_nullable,
+        )));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
@@ -675,14 +715,18 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
 struct RepeatedBinaryBuilderWrapper {
     builder: BinaryBuilder,
     offsets: Vec<i32>,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
 }
 
 impl RepeatedBinaryBuilderWrapper {
-    fn new() -> Self {
+    fn new(config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
         Self {
             builder: BinaryBuilder::new(),
             offsets,
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
         }
     }
 }
@@ -710,7 +754,11 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
-        let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Binary, false)));
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            &*self.list_value_name,
+            DataType::Binary,
+            self.list_value_nullable,
+        )));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
@@ -734,14 +782,18 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
 struct RepeatedStringBuilderWrapper {
     builder: StringBuilder,
     offsets: Vec<i32>,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
 }
 
 impl RepeatedStringBuilderWrapper {
-    fn new() -> Self {
+    fn new(config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
         Self {
             builder: StringBuilder::new(),
             offsets,
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
         }
     }
 }
@@ -769,7 +821,11 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
         let values = std::mem::take(&mut self.builder).finish();
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
-        let list_data_type = DataType::List(Arc::new(Field::new("item", DataType::Utf8, false)));
+        let list_data_type = DataType::List(Arc::new(Field::new(
+            &*self.list_value_name,
+            DataType::Utf8,
+            self.list_value_nullable,
+        )));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
@@ -832,14 +888,16 @@ struct TimestampArrayBuilder {
     builder: PrimitiveBuilder<TimestampNanosecondType>,
     seconds_descriptor: FieldDescriptor,
     nanos_descriptor: FieldDescriptor,
+    timezone: Option<Arc<str>>,
 }
 
 impl TimestampArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(message_descriptor: &MessageDescriptor, timezone: Option<Arc<str>>) -> Self {
         Self {
             builder: PrimitiveBuilder::<TimestampNanosecondType>::new(),
             seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
             nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
+            timezone,
         }
     }
 }
@@ -870,7 +928,10 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
 
     fn finish(&mut self) -> Arc<dyn Array> {
         let array = std::mem::take(&mut self.builder).finish();
-        Arc::new(array.with_timezone("UTC"))
+        match &self.timezone {
+            Some(tz) => Arc::new(array.with_timezone(&**tz)),
+            None => Arc::new(array),
+        }
     }
 
     fn len(&self) -> usize {
@@ -1286,11 +1347,21 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
     }
 }
 
+/// Convert messages to a RecordBatch using the default configuration.
 pub fn messages_to_record_batch(
     messages: &[DynamicMessage],
     message_descriptor: &MessageDescriptor,
 ) -> RecordBatch {
-    let mut builder = MessageArrayBuilder::new(message_descriptor);
+    messages_to_record_batch_with_config(messages, message_descriptor, &PtarsConfig::default())
+}
+
+/// Convert messages to a RecordBatch using the specified configuration.
+pub fn messages_to_record_batch_with_config(
+    messages: &[DynamicMessage],
+    message_descriptor: &MessageDescriptor,
+    config: &PtarsConfig,
+) -> RecordBatch {
+    let mut builder = MessageArrayBuilder::new(message_descriptor, config);
     messages.iter().for_each(|message| {
         builder.append(message);
     });
@@ -1320,7 +1391,7 @@ pub fn binary_array_to_messages(
     Ok(messages)
 }
 
-/// Convert a binary array to a record batch.
+/// Convert a binary array to a record batch using the default configuration.
 ///
 /// Each element in the binary array is expected to be a serialized protobuf message.
 /// The resulting record batch will have one column per field in the message descriptor.
@@ -1328,7 +1399,19 @@ pub fn binary_array_to_record_batch(
     array: &BinaryArray,
     message_descriptor: &MessageDescriptor,
 ) -> Result<RecordBatch, prost::DecodeError> {
-    let mut builder = MessageArrayBuilder::new(message_descriptor);
+    binary_array_to_record_batch_with_config(array, message_descriptor, &PtarsConfig::default())
+}
+
+/// Convert a binary array to a record batch using the specified configuration.
+///
+/// Each element in the binary array is expected to be a serialized protobuf message.
+/// The resulting record batch will have one column per field in the message descriptor.
+pub fn binary_array_to_record_batch_with_config(
+    array: &BinaryArray,
+    message_descriptor: &MessageDescriptor,
+    config: &PtarsConfig,
+) -> Result<RecordBatch, prost::DecodeError> {
+    let mut builder = MessageArrayBuilder::new(message_descriptor, config);
     for i in 0..array.len() {
         let message = if array.is_null(i) {
             DynamicMessage::new(message_descriptor.clone())

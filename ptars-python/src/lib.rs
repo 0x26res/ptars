@@ -13,6 +13,35 @@ use std::io::{BufReader, Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Configuration for protobuf to Arrow conversions.
+#[pyclass]
+#[derive(Clone)]
+struct PtarsConfig {
+    inner: ptars::PtarsConfig,
+}
+
+#[pymethods]
+impl PtarsConfig {
+    #[new]
+    #[pyo3(signature = (timestamp_tz="UTC", list_value_name="item", map_value_name="value", list_value_nullable=false, map_value_nullable=false))]
+    fn new(
+        timestamp_tz: Option<&str>,
+        list_value_name: &str,
+        map_value_name: &str,
+        list_value_nullable: bool,
+        map_value_nullable: bool,
+    ) -> Self {
+        Self {
+            inner: ptars::PtarsConfig::default()
+                .with_timestamp_tz(timestamp_tz)
+                .with_list_value_name(list_value_name)
+                .with_map_value_name(map_value_name)
+                .with_list_value_nullable(list_value_nullable)
+                .with_map_value_nullable(map_value_nullable),
+        }
+    }
+}
+
 /// Read a varint from a reader. Returns None if EOF is reached at the start.
 fn read_varint<R: Read>(reader: &mut R) -> std::io::Result<Option<u64>> {
     let mut result: u64 = 0;
@@ -87,9 +116,11 @@ struct MessageHandler {
 
 #[pymethods]
 impl MessageHandler {
+    #[pyo3(signature = (values, config=None))]
     fn list_to_record_batch(
         &self,
         values: &Bound<'_, PyList>,
+        config: Option<&PtarsConfig>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
         let mut messages: Vec<DynamicMessage> = Vec::with_capacity(values.len());
@@ -99,11 +130,16 @@ impl MessageHandler {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             messages.push(message);
         }
-        Ok(
-            ptars::messages_to_record_batch(&messages, &self.message_descriptor)
-                .to_pyarrow(py)?
-                .unbind(),
+        let config = config
+            .map(|c| c.inner.clone())
+            .unwrap_or_else(ptars::PtarsConfig::default);
+        Ok(ptars::messages_to_record_batch_with_config(
+            &messages,
+            &self.message_descriptor,
+            &config,
         )
+        .to_pyarrow(py)?
+        .unbind())
     }
 
     fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {
@@ -131,14 +167,26 @@ impl MessageHandler {
     ///
     /// Each element in the binary array is expected to be a serialized protobuf message.
     /// The resulting record batch will have one column per field in the message descriptor.
-    fn array_to_record_batch(&self, array: &Bound<PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (array, config=None))]
+    fn array_to_record_batch(
+        &self,
+        array: &Bound<PyAny>,
+        config: Option<&PtarsConfig>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
         let array_data = arrow::array::ArrayData::from_pyarrow_bound(array).map_err(|e| {
             pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
         })?;
         let arrow_array = BinaryArray::from(array_data);
-        let record_batch =
-            ptars::binary_array_to_record_batch(&arrow_array, &self.message_descriptor)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let config = config
+            .map(|c| c.inner.clone())
+            .unwrap_or_else(ptars::PtarsConfig::default);
+        let record_batch = ptars::binary_array_to_record_batch_with_config(
+            &arrow_array,
+            &self.message_descriptor,
+            &config,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 
@@ -222,5 +270,6 @@ fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_a_table, m)?)?;
     m.add_class::<ProtoCache>()?;
     m.add_class::<MessageHandler>()?;
+    m.add_class::<PtarsConfig>()?;
     PyResult::Ok(())
 }
