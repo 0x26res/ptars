@@ -203,7 +203,16 @@ ptars converts protobuf types to Arrow types as follows:
 |------------------------------|-----------------------------------|--------------------------------------------------|
 | `google.protobuf.Timestamp`  | `timestamp[unit, tz]`             | Unit and timezone configurable via `PtarsConfig` |
 | `google.type.Date`           | `date32`                          |                                                  |
-| `google.type.TimeOfDay`      | `time32[unit]` or `time64[unit]`  | Unit configurable via `PtarsConfig`              |
+| `google.type.TimeOfDay`      | `time32[s]`, `time32[ms]`, `time64[us]`, or `time64[ns]` | Unit configurable via `PtarsConfig` (see below)  |
+
+**TimeOfDay type mapping by unit:**
+
+| `time_unit` | Arrow Type   |
+|-------------|--------------|
+| `"s"`       | `time32[s]`  |
+| `"ms"`      | `time32[ms]` |
+| `"us"`      | `time64[us]` |
+| `"ns"`      | `time64[ns]` |
 
 ### Wrapper Types
 

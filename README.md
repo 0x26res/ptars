@@ -17,6 +17,13 @@
 [![FOSSA Status][fossa-image]][fossa-url]
 [![Repo Size][repo-size-image]][repo-size-url]
 
+[Repository](https://github.com/0x26res/ptars) |
+[Python Documentation](https://ptars.readthedocs.io/) |
+[Python Installation](https://ptars.readthedocs.io/en/latest/getting-started/#installation) |
+[PyPI](https://pypi.org/project/ptars/) |
+[Rust Crate](https://crates.io/crates/ptars) |
+[Rust Documentation](https://docs.rs/ptars)
+
 Protobuf to Arrow, using Rust
 
 ## Example

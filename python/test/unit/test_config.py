@@ -183,6 +183,25 @@ class TestTimeOfDayConfig:
         # PyArrow converts to datetime.time
         assert batch["time_of_day"].to_pylist() == [expected_time]
 
+    @pytest.mark.parametrize(
+        ("time_unit", "expected_type"),
+        [
+            ("s", pa.time32("s")),
+            ("ms", pa.time32("ms")),
+            ("us", pa.time64("us")),
+            ("ns", pa.time64("ns")),
+        ],
+    )
+    def test_time_of_day_arrow_type(self, time_unit, expected_type):
+        """Verify time32 is used for s/ms and time64 for us/ns."""
+        config = PtarsConfig(time_unit=time_unit)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithTimeOfDay(time_of_day=TimeOfDay(hours=12, minutes=30, seconds=45))],
+            WithTimeOfDay.DESCRIPTOR,
+        )
+        assert batch.schema.field("time_of_day").type == expected_type
+
 
 class TestTimestampTruncation:
     """Test that timestamp values are truncated (not rounded) when using coarser units."""
