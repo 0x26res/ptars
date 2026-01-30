@@ -117,7 +117,7 @@ record_batch = handler.array_to_record_batch(binary_array)
 
 !!! warning "Precision Loss with Coarser Time Units"
     When converting timestamps, time of day, or duration values to coarser time units
-    (e.g., `"s"` instead of `"ns"`), sub-unit precision is **truncated** (not rounded).
+    (e.g., `"s"` instead of `"ns"`), sub-unit precision is __truncated__ (not rounded).
     For example:
 
     - A timestamp at `1.999` seconds with `timestamp_unit="s"` becomes `1` second

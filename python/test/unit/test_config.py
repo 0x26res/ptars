@@ -80,7 +80,9 @@ class TestTimestampConfig:
             [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=0))],
             WithTimestamp.DESCRIPTOR,
         )
-        assert batch.schema.field("timestamp").type == pa.timestamp("ns", tz="America/New_York")
+        assert batch.schema.field("timestamp").type == pa.timestamp(
+            "ns", tz="America/New_York"
+        )
 
 
 class TestTimeOfDayConfig:
@@ -90,7 +92,13 @@ class TestTimeOfDayConfig:
         """Default config uses nanoseconds."""
         pool = HandlerPool([DESCRIPTOR])
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=500_000_000
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         assert batch.schema.field("time_of_day").type == pa.time64("ns")
@@ -100,7 +108,13 @@ class TestTimeOfDayConfig:
         config = PtarsConfig(time_unit="ns")
         pool = HandlerPool([DESCRIPTOR], config=config)
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=500_000_000
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         assert batch.schema.field("time_of_day").type == pa.time64("ns")
@@ -110,7 +124,13 @@ class TestTimeOfDayConfig:
         config = PtarsConfig(time_unit="us")
         pool = HandlerPool([DESCRIPTOR], config=config)
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=500_000_000
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         assert batch.schema.field("time_of_day").type == pa.time64("us")
@@ -120,7 +140,13 @@ class TestTimeOfDayConfig:
         config = PtarsConfig(time_unit="ms")
         pool = HandlerPool([DESCRIPTOR], config=config)
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=500_000_000
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         assert batch.schema.field("time_of_day").type == pa.time32("ms")
@@ -130,7 +156,13 @@ class TestTimeOfDayConfig:
         config = PtarsConfig(time_unit="s")
         pool = HandlerPool([DESCRIPTOR], config=config)
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=500_000_000
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         assert batch.schema.field("time_of_day").type == pa.time32("s")
@@ -139,7 +171,9 @@ class TestTimeOfDayConfig:
         """Test that time values are correctly converted."""
         # Test with a simple value: 01:02:03.5
         time_of_day = TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000)
-        expected_time = datetime.time(1, 2, 3, 500_000)  # microsecond precision in Python
+        expected_time = datetime.time(
+            1, 2, 3, 500_000
+        )  # microsecond precision in Python
 
         pool = HandlerPool([DESCRIPTOR])
         batch = pool.messages_to_record_batch(
@@ -163,7 +197,9 @@ class TestTimestampTruncation:
             WithTimestamp.DESCRIPTOR,
         )
         # Should be truncated to 1 second, not rounded to 2
-        assert batch["timestamp"].to_pylist() == [datetime.datetime(1970, 1, 1, 0, 0, 1)]
+        assert batch["timestamp"].to_pylist() == [
+            datetime.datetime(1970, 1, 1, 0, 0, 1)
+        ]
 
     def test_timestamp_truncation_to_milliseconds(self):
         """Timestamp with 999us is truncated, not rounded."""
@@ -201,7 +237,13 @@ class TestTimeOfDayTruncation:
         pool = HandlerPool([DESCRIPTOR], config=config)
         # 01:02:03.999999999
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=999_999_999))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=999_999_999
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         # Should be truncated to 01:02:03, not rounded to 01:02:04
@@ -213,7 +255,13 @@ class TestTimeOfDayTruncation:
         pool = HandlerPool([DESCRIPTOR], config=config)
         # 01:02:03.999999999
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=999_999_999))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=999_999_999
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         # Should be 01:02:03.999, losing the 999,999 nanoseconds
@@ -225,7 +273,13 @@ class TestTimeOfDayTruncation:
         pool = HandlerPool([DESCRIPTOR], config=config)
         # 01:02:03.999999999
         batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=999_999_999))],
+            [
+                WithTimeOfDay(
+                    time_of_day=TimeOfDay(
+                        hours=1, minutes=2, seconds=3, nanos=999_999_999
+                    )
+                )
+            ],
             WithTimeOfDay.DESCRIPTOR,
         )
         # Should be 01:02:03.999999, losing the 999 nanoseconds
@@ -259,7 +313,11 @@ class TestConfigValidation:
     @pytest.mark.parametrize(
         ("kwargs", "error_type", "error_match"),
         [
-            ({"timestamp_unit": "invalid"}, ValueError, "timestamp_unit must be one of"),
+            (
+                {"timestamp_unit": "invalid"},
+                ValueError,
+                "timestamp_unit must be one of",
+            ),
             ({"time_unit": "hours"}, ValueError, "time_unit must be one of"),
             ({"duration_unit": "days"}, ValueError, "duration_unit must be one of"),
             ({"timestamp_tz": 123}, TypeError, "timestamp_tz must be str or None"),
@@ -267,7 +325,11 @@ class TestConfigValidation:
             ({"map_value_name": None}, TypeError, "map_value_name must be str"),
             ({"list_nullable": "true"}, TypeError, "list_nullable must be bool"),
             ({"map_nullable": 1}, TypeError, "map_nullable must be bool"),
-            ({"list_value_nullable": "false"}, TypeError, "list_value_nullable must be bool"),
+            (
+                {"list_value_nullable": "false"},
+                TypeError,
+                "list_value_nullable must be bool",
+            ),
             ({"map_value_nullable": 0}, TypeError, "map_value_nullable must be bool"),
         ],
     )
