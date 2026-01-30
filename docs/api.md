@@ -205,7 +205,7 @@ ptars converts protobuf types to Arrow types as follows:
 | `google.type.Date`           | `date32`                          |                                                  |
 | `google.type.TimeOfDay`      | `time32[s]`, `time32[ms]`, `time64[us]`, or `time64[ns]` | Unit configurable via `PtarsConfig` (see below)  |
 
-**TimeOfDay type mapping by unit:**
+__TimeOfDay type mapping by unit:__
 
 | `time_unit` | Arrow Type   |
 |-------------|--------------|

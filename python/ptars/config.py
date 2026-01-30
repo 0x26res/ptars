@@ -1,12 +1,26 @@
 """Configuration for ptars protobuf to Arrow conversions."""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 TimeUnitLiteral = Literal["s", "ms", "us", "ns"]
 
 
 _VALID_TIME_UNITS = {"s", "ms", "us", "ns"}
+
+
+def _check_type(value: Any, expected_type: type, name: str) -> None:
+    """Raise TypeError if value is not of expected type."""
+    if not isinstance(value, expected_type):
+        raise TypeError(
+            f"{name} must be {expected_type.__name__}, got {type(value).__name__}"
+        )
+
+
+def _check_time_unit(value: str, name: str) -> None:
+    """Raise ValueError if value is not a valid time unit."""
+    if value not in _VALID_TIME_UNITS:
+        raise ValueError(f"{name} must be one of {_VALID_TIME_UNITS}, got {value!r}")
 
 
 @dataclass(frozen=True)
@@ -39,43 +53,14 @@ class PtarsConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
-        if self.timestamp_tz is not None and not isinstance(self.timestamp_tz, str):
-            raise TypeError(
-                f"timestamp_tz must be str or None, got {type(self.timestamp_tz).__name__}"
-            )
-        if self.timestamp_unit not in _VALID_TIME_UNITS:
-            raise ValueError(
-                f"timestamp_unit must be one of {_VALID_TIME_UNITS}, got {self.timestamp_unit!r}"
-            )
-        if self.time_unit not in _VALID_TIME_UNITS:
-            raise ValueError(
-                f"time_unit must be one of {_VALID_TIME_UNITS}, got {self.time_unit!r}"
-            )
-        if self.duration_unit not in _VALID_TIME_UNITS:
-            raise ValueError(
-                f"duration_unit must be one of {_VALID_TIME_UNITS}, got {self.duration_unit!r}"
-            )
-        if not isinstance(self.list_value_name, str):
-            raise TypeError(
-                f"list_value_name must be str, got {type(self.list_value_name).__name__}"
-            )
-        if not isinstance(self.map_value_name, str):
-            raise TypeError(
-                f"map_value_name must be str, got {type(self.map_value_name).__name__}"
-            )
-        if not isinstance(self.list_nullable, bool):
-            raise TypeError(
-                f"list_nullable must be bool, got {type(self.list_nullable).__name__}"
-            )
-        if not isinstance(self.map_nullable, bool):
-            raise TypeError(
-                f"map_nullable must be bool, got {type(self.map_nullable).__name__}"
-            )
-        if not isinstance(self.list_value_nullable, bool):
-            raise TypeError(
-                f"list_value_nullable must be bool, got {type(self.list_value_nullable).__name__}"
-            )
-        if not isinstance(self.map_value_nullable, bool):
-            raise TypeError(
-                f"map_value_nullable must be bool, got {type(self.map_value_nullable).__name__}"
-            )
+        if self.timestamp_tz is not None:
+            _check_type(self.timestamp_tz, str, "timestamp_tz")
+        _check_time_unit(self.timestamp_unit, "timestamp_unit")
+        _check_time_unit(self.time_unit, "time_unit")
+        _check_time_unit(self.duration_unit, "duration_unit")
+        _check_type(self.list_value_name, str, "list_value_name")
+        _check_type(self.map_value_name, str, "map_value_name")
+        _check_type(self.list_nullable, bool, "list_nullable")
+        _check_type(self.map_nullable, bool, "map_nullable")
+        _check_type(self.list_value_nullable, bool, "list_value_nullable")
+        _check_type(self.map_value_nullable, bool, "map_value_nullable")

@@ -204,7 +204,7 @@ class TestTimeOfDayConfig:
 
 
 class TestTimestampTruncation:
-    """Test that timestamp values are truncated (not rounded) when using coarser units."""
+    """Test timestamp truncation with coarser units."""
 
     def test_timestamp_truncation_to_seconds(self):
         """Timestamp with 999ms is truncated to 1 second, not rounded to 2."""
@@ -248,7 +248,7 @@ class TestTimestampTruncation:
 
 
 class TestTimeOfDayTruncation:
-    """Test that time of day values are truncated (not rounded) when using coarser units."""
+    """Test time of day truncation with coarser units."""
 
     def test_time_of_day_truncation_to_seconds(self):
         """Time with 999ms is truncated to whole seconds, not rounded."""
@@ -339,7 +339,7 @@ class TestConfigValidation:
             ),
             ({"time_unit": "hours"}, ValueError, "time_unit must be one of"),
             ({"duration_unit": "days"}, ValueError, "duration_unit must be one of"),
-            ({"timestamp_tz": 123}, TypeError, "timestamp_tz must be str or None"),
+            ({"timestamp_tz": 123}, TypeError, "timestamp_tz must be str"),
             ({"list_value_name": 123}, TypeError, "list_value_name must be str"),
             ({"map_value_name": None}, TypeError, "map_value_name must be str"),
             ({"list_nullable": "true"}, TypeError, "list_nullable must be bool"),
