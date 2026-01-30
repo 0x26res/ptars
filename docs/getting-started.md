@@ -265,4 +265,10 @@ record_batch = pool.messages_to_record_batch(messages, MyMessage.DESCRIPTOR)
 | `list_value_nullable` | `False`   | Whether list elements can be null                       |
 | `map_value_nullable`  | `False`   | Whether map values can be null                          |
 
+!!! warning "Precision Loss"
+    When using coarser time units (e.g., `"s"` or `"ms"` instead of `"ns"`),
+    sub-unit precision is truncated. For example, a timestamp with 500 milliseconds
+    converted to seconds will lose the millisecond component. Choose the appropriate
+    unit based on your precision requirements.
+
 See the [API Reference](api.md#ptarsconfig) for full details.

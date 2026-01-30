@@ -150,6 +150,88 @@ class TestTimeOfDayConfig:
         assert batch["time_of_day"].to_pylist() == [expected_time]
 
 
+class TestTimestampTruncation:
+    """Test that timestamp values are truncated (not rounded) when using coarser units."""
+
+    def test_timestamp_truncation_to_seconds(self):
+        """Timestamp with 999ms is truncated to 1 second, not rounded to 2."""
+        config = PtarsConfig(timestamp_unit="s", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        # 1 second + 999,999,999 nanoseconds = 1.999999999 seconds
+        batch = pool.messages_to_record_batch(
+            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=999_999_999))],
+            WithTimestamp.DESCRIPTOR,
+        )
+        # Should be truncated to 1 second, not rounded to 2
+        assert batch["timestamp"].to_pylist() == [datetime.datetime(1970, 1, 1, 0, 0, 1)]
+
+    def test_timestamp_truncation_to_milliseconds(self):
+        """Timestamp with 999us is truncated, not rounded."""
+        config = PtarsConfig(timestamp_unit="ms", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        # 1 second + 999,999,999 nanoseconds
+        batch = pool.messages_to_record_batch(
+            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=999_999_999))],
+            WithTimestamp.DESCRIPTOR,
+        )
+        # Should be 1999ms (1.999s), losing the 999,999 nanoseconds
+        expected = datetime.datetime(1970, 1, 1, 0, 0, 1, 999_000)
+        assert batch["timestamp"].to_pylist() == [expected]
+
+    def test_timestamp_truncation_to_microseconds(self):
+        """Timestamp with 999ns is truncated, not rounded."""
+        config = PtarsConfig(timestamp_unit="us", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        # 1 second + 999,999,999 nanoseconds
+        batch = pool.messages_to_record_batch(
+            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=999_999_999))],
+            WithTimestamp.DESCRIPTOR,
+        )
+        # Should be 1,999,999us (1.999999s), losing the 999 nanoseconds
+        expected = datetime.datetime(1970, 1, 1, 0, 0, 1, 999_999)
+        assert batch["timestamp"].to_pylist() == [expected]
+
+
+class TestTimeOfDayTruncation:
+    """Test that time of day values are truncated (not rounded) when using coarser units."""
+
+    def test_time_of_day_truncation_to_seconds(self):
+        """Time with 999ms is truncated to whole seconds, not rounded."""
+        config = PtarsConfig(time_unit="s")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        # 01:02:03.999999999
+        batch = pool.messages_to_record_batch(
+            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=999_999_999))],
+            WithTimeOfDay.DESCRIPTOR,
+        )
+        # Should be truncated to 01:02:03, not rounded to 01:02:04
+        assert batch["time_of_day"].to_pylist() == [datetime.time(1, 2, 3)]
+
+    def test_time_of_day_truncation_to_milliseconds(self):
+        """Time with 999us is truncated, not rounded."""
+        config = PtarsConfig(time_unit="ms")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        # 01:02:03.999999999
+        batch = pool.messages_to_record_batch(
+            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=999_999_999))],
+            WithTimeOfDay.DESCRIPTOR,
+        )
+        # Should be 01:02:03.999, losing the 999,999 nanoseconds
+        assert batch["time_of_day"].to_pylist() == [datetime.time(1, 2, 3, 999_000)]
+
+    def test_time_of_day_truncation_to_microseconds(self):
+        """Time with 999ns is truncated, not rounded."""
+        config = PtarsConfig(time_unit="us")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        # 01:02:03.999999999
+        batch = pool.messages_to_record_batch(
+            [WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=999_999_999))],
+            WithTimeOfDay.DESCRIPTOR,
+        )
+        # Should be 01:02:03.999999, losing the 999 nanoseconds
+        assert batch["time_of_day"].to_pylist() == [datetime.time(1, 2, 3, 999_999)]
+
+
 class TestConfigValidation:
     """Test PtarsConfig validation."""
 

@@ -115,6 +115,16 @@ record_batch = handler.array_to_record_batch(binary_array)
 | `list_value_nullable` | `bool`                           | `False`   | Whether list elements can be null.                                       |
 | `map_value_nullable`  | `bool`                           | `False`   | Whether map values can be null.                                          |
 
+!!! warning "Precision Loss with Coarser Time Units"
+    When converting timestamps, time of day, or duration values to coarser time units
+    (e.g., `"s"` instead of `"ns"`), sub-unit precision is **truncated** (not rounded).
+    For example:
+
+    - A timestamp at `1.999` seconds with `timestamp_unit="s"` becomes `1` second
+    - A time of day `01:02:03.500` with `time_unit="s"` becomes `01:02:03`
+
+    Choose the appropriate unit based on your precision requirements.
+
 ### Example
 
 ```python
@@ -158,24 +168,56 @@ record_batch = handler.read_size_delimited_file("messages.bin")
 
 ptars converts protobuf types to Arrow types as follows:
 
+### Scalar Types
+
+| Protobuf Type | Arrow Type |
+|---------------|------------|
+| `double`      | `float64`  |
+| `float`       | `float32`  |
+| `int32`       | `int32`    |
+| `int64`       | `int64`    |
+| `uint32`      | `uint32`   |
+| `uint64`      | `uint64`   |
+| `sint32`      | `int32`    |
+| `sint64`      | `int64`    |
+| `fixed32`     | `uint32`   |
+| `fixed64`     | `uint64`   |
+| `sfixed32`    | `int32`    |
+| `sfixed64`    | `int64`    |
+| `bool`        | `bool`     |
+| `string`      | `utf8`     |
+| `bytes`       | `binary`   |
+| `enum`        | `int32`    |
+
+### Composite Types
+
 | Protobuf Type | Arrow Type  |
-| ------------- | ----------- |
-| `double`      | `float64`   |
-| `float`       | `float32`   |
-| `int32`       | `int32`     |
-| `int64`       | `int64`     |
-| `uint32`      | `uint32`    |
-| `uint64`      | `uint64`    |
-| `sint32`      | `int32`     |
-| `sint64`      | `int64`     |
-| `fixed32`     | `uint32`    |
-| `fixed64`     | `uint64`    |
-| `sfixed32`    | `int32`     |
-| `sfixed64`    | `int64`     |
-| `bool`        | `bool`      |
-| `string`      | `utf8`      |
-| `bytes`       | `binary`    |
-| `enum`        | `int32`     |
+|---------------|-------------|
 | `message`     | `struct`    |
 | `repeated T`  | `list<T>`   |
 | `map<K, V>`   | `map<K, V>` |
+
+### Well-Known Types
+
+| Protobuf Type                | Arrow Type                        | Notes                                            |
+|------------------------------|-----------------------------------|--------------------------------------------------|
+| `google.protobuf.Timestamp`  | `timestamp[unit, tz]`             | Unit and timezone configurable via `PtarsConfig` |
+| `google.type.Date`           | `date32`                          |                                                  |
+| `google.type.TimeOfDay`      | `time32[unit]` or `time64[unit]`  | Unit configurable via `PtarsConfig`              |
+
+### Wrapper Types
+
+Wrapper types are converted to their corresponding Arrow types with nullability.
+These are useful for representing nullable scalars in proto3.
+
+| Protobuf Type                 | Arrow Type           |
+|-------------------------------|----------------------|
+| `google.protobuf.DoubleValue` | `float64` (nullable) |
+| `google.protobuf.FloatValue`  | `float32` (nullable) |
+| `google.protobuf.Int64Value`  | `int64` (nullable)   |
+| `google.protobuf.UInt64Value` | `uint64` (nullable)  |
+| `google.protobuf.Int32Value`  | `int32` (nullable)   |
+| `google.protobuf.UInt32Value` | `uint32` (nullable)  |
+| `google.protobuf.BoolValue`   | `bool` (nullable)    |
+| `google.protobuf.StringValue` | `utf8` (nullable)    |
+| `google.protobuf.BytesValue`  | `binary` (nullable)  |
