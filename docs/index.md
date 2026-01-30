@@ -15,6 +15,7 @@ It's implemented in Rust with Python bindings via PyO3.
 - Convert serialized protobuf messages directly to `pyarrow.RecordBatch`
 - Convert `pyarrow.RecordBatch` back to serialized protobuf messages
 - Support for nested messages, repeated fields, and maps
+- Configurable type mappings (timestamp precision, timezone, nullability)
 - High performance through Rust implementation
 
 ## Installation

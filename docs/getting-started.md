@@ -232,3 +232,37 @@ handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
 # Convert directly from BinaryArray
 record_batch = handler.array_to_record_batch(binary_array)
 ```
+
+## Configuration
+
+Use `PtarsConfig` to customize Arrow type mappings:
+
+```python
+from ptars import HandlerPool, PtarsConfig
+
+# Configure timestamp precision and timezone
+config = PtarsConfig(
+    timestamp_unit="us",  # microseconds instead of nanoseconds
+    timestamp_tz="America/New_York",  # custom timezone
+)
+
+pool = HandlerPool([MyMessage.DESCRIPTOR.file], config=config)
+record_batch = pool.messages_to_record_batch(messages, MyMessage.DESCRIPTOR)
+```
+
+### Available Options
+
+| Option                | Default   | Description                                             |
+|-----------------------|-----------|---------------------------------------------------------|
+| `timestamp_tz`        | `"UTC"`   | Timezone for timestamps. Use `None` for timezone-naive. |
+| `timestamp_unit`      | `"ns"`    | Time unit for timestamps: `"s"`, `"ms"`, `"us"`, `"ns"` |
+| `time_unit`           | `"ns"`    | Time unit for time of day fields                        |
+| `duration_unit`       | `"ns"`    | Time unit for duration fields                           |
+| `list_value_name`     | `"item"`  | Field name for list items in Arrow schema               |
+| `map_value_name`      | `"value"` | Field name for map values in Arrow schema               |
+| `list_nullable`       | `False`   | Whether list fields can be null                         |
+| `map_nullable`        | `False`   | Whether map fields can be null                          |
+| `list_value_nullable` | `False`   | Whether list elements can be null                       |
+| `map_value_nullable`  | `False`   | Whether map values can be null                          |
+
+See the [API Reference](api.md#ptarsconfig) for full details.

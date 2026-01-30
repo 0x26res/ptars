@@ -70,6 +70,21 @@ messages_back: list[SearchRequest] = [
 ]
 ```
 
+## Configuration
+
+Customize Arrow type mappings with `PtarsConfig`:
+
+```python
+from ptars import HandlerPool, PtarsConfig
+
+config = PtarsConfig(
+    timestamp_unit="us",  # microseconds instead of nanoseconds
+    timestamp_tz="America/New_York",
+)
+
+pool = HandlerPool([SearchRequest.DESCRIPTOR.file], config=config)
+```
+
 ## Benchmark against protarrow
 
 [Ptars](https://github.com/0x26res/ptars) is a rust implementation of

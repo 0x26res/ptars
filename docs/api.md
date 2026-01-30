@@ -84,6 +84,52 @@ binary_array = pa.array([msg.SerializeToString() for msg in messages], type=pa.b
 record_batch = handler.array_to_record_batch(binary_array)
 ```
 
+## PtarsConfig
+
+::: ptars.PtarsConfig
+    options:
+      members:
+        - timestamp_tz
+        - timestamp_unit
+        - time_unit
+        - duration_unit
+        - list_value_name
+        - map_value_name
+        - list_nullable
+        - map_nullable
+        - list_value_nullable
+        - map_value_nullable
+
+### Configuration Options
+
+| Option                | Type                             | Default   | Description                                                              |
+|-----------------------|----------------------------------|-----------|--------------------------------------------------------------------------|
+| `timestamp_tz`        | `str \| None`                    | `"UTC"`   | Timezone for `google.protobuf.Timestamp`. Use `None` for timezone-naive. |
+| `timestamp_unit`      | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for timestamps.                                                |
+| `time_unit`           | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for `google.type.TimeOfDay`.                                   |
+| `duration_unit`       | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for `google.protobuf.Duration`.                                |
+| `list_value_name`     | `str`                            | `"item"`  | Field name for list items in Arrow schema.                               |
+| `map_value_name`      | `str`                            | `"value"` | Field name for map values in Arrow schema.                               |
+| `list_nullable`       | `bool`                           | `False`   | Whether list fields can be null.                                         |
+| `map_nullable`        | `bool`                           | `False`   | Whether map fields can be null.                                          |
+| `list_value_nullable` | `bool`                           | `False`   | Whether list elements can be null.                                       |
+| `map_value_nullable`  | `bool`                           | `False`   | Whether map values can be null.                                          |
+
+### Example
+
+```python
+from ptars import HandlerPool, PtarsConfig
+
+# Use microsecond precision for timestamps
+config = PtarsConfig(
+    timestamp_unit="us",
+    timestamp_tz="America/New_York",
+    list_value_name="element",
+)
+
+pool = HandlerPool([MyMessage.DESCRIPTOR.file], config=config)
+```
+
 ---
 
 #### `read_size_delimited_file(path: str) -> pyarrow.RecordBatch`
