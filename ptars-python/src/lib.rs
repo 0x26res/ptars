@@ -1,6 +1,7 @@
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::{BinaryArray, Float32Array, Int32Array};
+use arrow_schema::TimeUnit;
 use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
@@ -13,33 +14,44 @@ use std::io::{BufReader, Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Configuration for protobuf to Arrow conversions.
-#[pyclass]
-#[derive(Clone)]
-struct PtarsConfig {
-    inner: ptars::PtarsConfig,
+/// Convert a Python time unit string to Arrow TimeUnit.
+fn parse_time_unit(s: &str) -> PyResult<TimeUnit> {
+    match s {
+        "s" => Ok(TimeUnit::Second),
+        "ms" => Ok(TimeUnit::Millisecond),
+        "us" => Ok(TimeUnit::Microsecond),
+        "ns" => Ok(TimeUnit::Nanosecond),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid time unit '{}', expected one of: s, ms, us, ns",
+            s
+        ))),
+    }
 }
 
-#[pymethods]
-impl PtarsConfig {
-    #[new]
-    #[pyo3(signature = (timestamp_tz="UTC", list_value_name="item", map_value_name="value", list_value_nullable=false, map_value_nullable=false))]
-    fn new(
-        timestamp_tz: Option<&str>,
-        list_value_name: &str,
-        map_value_name: &str,
-        list_value_nullable: bool,
-        map_value_nullable: bool,
-    ) -> Self {
-        Self {
-            inner: ptars::PtarsConfig::default()
-                .with_timestamp_tz(timestamp_tz)
-                .with_list_value_name(list_value_name)
-                .with_map_value_name(map_value_name)
-                .with_list_value_nullable(list_value_nullable)
-                .with_map_value_nullable(map_value_nullable),
-        }
-    }
+/// Extract a PtarsConfig from a Python object (dataclass).
+fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
+    let timestamp_tz: Option<String> = config.getattr("timestamp_tz")?.extract()?;
+    let timestamp_unit: String = config.getattr("timestamp_unit")?.extract()?;
+    let time_unit: String = config.getattr("time_unit")?.extract()?;
+    let duration_unit: String = config.getattr("duration_unit")?.extract()?;
+    let list_value_name: String = config.getattr("list_value_name")?.extract()?;
+    let map_value_name: String = config.getattr("map_value_name")?.extract()?;
+    let list_nullable: bool = config.getattr("list_nullable")?.extract()?;
+    let map_nullable: bool = config.getattr("map_nullable")?.extract()?;
+    let list_value_nullable: bool = config.getattr("list_value_nullable")?.extract()?;
+    let map_value_nullable: bool = config.getattr("map_value_nullable")?.extract()?;
+
+    Ok(ptars::PtarsConfig::default()
+        .with_timestamp_tz(timestamp_tz.as_deref())
+        .with_timestamp_unit(parse_time_unit(&timestamp_unit)?)
+        .with_time_unit(parse_time_unit(&time_unit)?)
+        .with_duration_unit(parse_time_unit(&duration_unit)?)
+        .with_list_value_name(&list_value_name)
+        .with_map_value_name(&map_value_name)
+        .with_list_nullable(list_nullable)
+        .with_map_nullable(map_nullable)
+        .with_list_value_nullable(list_value_nullable)
+        .with_map_value_nullable(map_value_nullable))
 }
 
 /// Read a varint from a reader. Returns None if EOF is reached at the start.
@@ -238,7 +250,7 @@ impl ProtoRegistry {
     fn create_for_message(
         &mut self,
         message_name: String,
-        config: Option<&PtarsConfig>,
+        config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<MessageHandler> {
         let message_descriptor = self
             .pool
@@ -250,9 +262,14 @@ impl ProtoRegistry {
                 ))
             })?;
 
+        let config = match config {
+            Some(c) => extract_config(c)?,
+            None => ptars::PtarsConfig::default(),
+        };
+
         Ok(MessageHandler {
             message_descriptor,
-            config: config.map(|c| c.inner.clone()).unwrap_or_default(),
+            config,
         })
     }
 }
@@ -271,6 +288,5 @@ fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_a_table, m)?)?;
     m.add_class::<ProtoRegistry>()?;
     m.add_class::<MessageHandler>()?;
-    m.add_class::<PtarsConfig>()?;
     PyResult::Ok(())
 }

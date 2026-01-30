@@ -2,9 +2,9 @@ use arrow::array::ArrayData;
 use arrow::array::MapArray;
 use arrow::buffer::Buffer;
 use arrow_array::builder::{ArrayBuilder, BinaryBuilder, StringBuilder};
-use arrow_array::types::{Date32Type, Time64NanosecondType, TimestampNanosecondType};
+use arrow_array::types::Date32Type;
 use arrow_array::{Array, ListArray, RecordBatch, StructArray};
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType, Field, TimeUnit};
 use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
 use std::sync::Arc;
@@ -36,9 +36,13 @@ pub fn get_message_array_builder(
         "google.protobuf.Timestamp" => Ok(Box::new(TimestampArrayBuilder::new(
             message_descriptor,
             config.timestamp_tz.clone(),
+            config.timestamp_unit,
         ))),
         "google.type.Date" => Ok(Box::new(DateArrayBuilder::new(message_descriptor))),
-        "google.type.TimeOfDay" => Ok(Box::new(TimeOfDayArrayBuilder::new(message_descriptor))),
+        "google.type.TimeOfDay" => Ok(Box::new(TimeOfDayArrayBuilder::new(
+            message_descriptor,
+            config.time_unit,
+        ))),
         // Wrapper types - stored as nullable primitives
         "google.protobuf.DoubleValue" => Ok(Box::new(WrapperBuilderWrapper::<Float64Type>::new(
             message_descriptor,
@@ -885,19 +889,34 @@ impl ProtoArrayBuilder for BooleanBuilderWrapper {
 }
 
 struct TimestampArrayBuilder {
-    builder: PrimitiveBuilder<TimestampNanosecondType>,
+    builder: PrimitiveBuilder<Int64Type>,
     seconds_descriptor: FieldDescriptor,
     nanos_descriptor: FieldDescriptor,
     timezone: Option<Arc<str>>,
+    time_unit: TimeUnit,
 }
 
 impl TimestampArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor, timezone: Option<Arc<str>>) -> Self {
+    fn new(
+        message_descriptor: &MessageDescriptor,
+        timezone: Option<Arc<str>>,
+        time_unit: TimeUnit,
+    ) -> Self {
         Self {
-            builder: PrimitiveBuilder::<TimestampNanosecondType>::new(),
+            builder: PrimitiveBuilder::<Int64Type>::new(),
             seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
             nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
             timezone,
+            time_unit,
+        }
+    }
+
+    fn convert_to_unit(&self, seconds: i64, nanos: i32) -> i64 {
+        match self.time_unit {
+            TimeUnit::Second => seconds,
+            TimeUnit::Millisecond => seconds * 1_000 + i64::from(nanos) / 1_000_000,
+            TimeUnit::Microsecond => seconds * 1_000_000 + i64::from(nanos) / 1_000,
+            TimeUnit::Nanosecond => seconds * 1_000_000_000 + i64::from(nanos),
         }
     }
 }
@@ -911,7 +930,7 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
                 .unwrap();
             let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap();
             self.builder
-                .append_value(seconds * 1_000_000_000 + i64::from(nanos));
+                .append_value(self.convert_to_unit(seconds, nanos));
         } else {
             self.append_null();
         }
@@ -927,11 +946,17 @@ impl ProtoArrayBuilder for TimestampArrayBuilder {
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let array = std::mem::take(&mut self.builder).finish();
-        match &self.timezone {
-            Some(tz) => Arc::new(array.with_timezone(&**tz)),
-            None => Arc::new(array),
-        }
+        let values = std::mem::take(&mut self.builder).finish();
+        let data_type = DataType::Timestamp(self.time_unit, self.timezone.clone());
+
+        let array_data = ArrayData::builder(data_type)
+            .len(values.len())
+            .add_buffer(values.values().inner().clone())
+            .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
+            .build()
+            .unwrap();
+
+        arrow_array::make_array(array_data)
     }
 
     fn len(&self) -> usize {
@@ -1006,21 +1031,33 @@ impl ProtoArrayBuilder for DateArrayBuilder {
 }
 
 struct TimeOfDayArrayBuilder {
-    builder: PrimitiveBuilder<Time64NanosecondType>,
+    builder: PrimitiveBuilder<Int64Type>,
     hours_descriptor: FieldDescriptor,
     minutes_descriptor: FieldDescriptor,
     seconds_descriptor: FieldDescriptor,
     nanos_descriptor: FieldDescriptor,
+    time_unit: TimeUnit,
 }
 
 impl TimeOfDayArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(message_descriptor: &MessageDescriptor, time_unit: TimeUnit) -> Self {
         Self {
-            builder: PrimitiveBuilder::<Time64NanosecondType>::new(),
+            builder: PrimitiveBuilder::<Int64Type>::new(),
             hours_descriptor: message_descriptor.get_field_by_name("hours").unwrap(),
             minutes_descriptor: message_descriptor.get_field_by_name("minutes").unwrap(),
             seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
             nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
+            time_unit,
+        }
+    }
+
+    fn convert_to_unit(&self, hours: i64, minutes: i64, seconds: i64, nanos: i64) -> i64 {
+        let total_seconds = hours * 3600 + minutes * 60 + seconds;
+        match self.time_unit {
+            TimeUnit::Second => total_seconds,
+            TimeUnit::Millisecond => total_seconds * 1_000 + nanos / 1_000_000,
+            TimeUnit::Microsecond => total_seconds * 1_000_000 + nanos / 1_000,
+            TimeUnit::Nanosecond => total_seconds * 1_000_000_000 + nanos,
         }
     }
 }
@@ -1039,11 +1076,8 @@ impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
                 .unwrap() as i64;
             let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap() as i64;
 
-            let total_nanos = hours * 3_600_000_000_000
-                + minutes * 60_000_000_000
-                + seconds * 1_000_000_000
-                + nanos;
-            self.builder.append_value(total_nanos);
+            self.builder
+                .append_value(self.convert_to_unit(hours, minutes, seconds, nanos));
         } else {
             self.append_null();
         }
@@ -1059,7 +1093,47 @@ impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
+        let values = std::mem::take(&mut self.builder).finish();
+
+        // Time32 for Second/Millisecond, Time64 for Microsecond/Nanosecond
+        let data_type = match self.time_unit {
+            TimeUnit::Second => DataType::Time32(TimeUnit::Second),
+            TimeUnit::Millisecond => DataType::Time32(TimeUnit::Millisecond),
+            TimeUnit::Microsecond => DataType::Time64(TimeUnit::Microsecond),
+            TimeUnit::Nanosecond => DataType::Time64(TimeUnit::Nanosecond),
+        };
+
+        // For Time32, we need to cast from i64 to i32
+        if matches!(self.time_unit, TimeUnit::Second | TimeUnit::Millisecond) {
+            let i32_values: Vec<Option<i32>> = (0..values.len())
+                .map(|i| {
+                    if values.is_null(i) {
+                        None
+                    } else {
+                        Some(values.value(i) as i32)
+                    }
+                })
+                .collect();
+            let i32_array = arrow_array::Int32Array::from(i32_values);
+
+            let array_data = ArrayData::builder(data_type)
+                .len(i32_array.len())
+                .add_buffer(i32_array.values().inner().clone())
+                .null_bit_buffer(i32_array.nulls().map(|n| n.buffer().clone()))
+                .build()
+                .unwrap();
+
+            arrow_array::make_array(array_data)
+        } else {
+            let array_data = ArrayData::builder(data_type)
+                .len(values.len())
+                .add_buffer(values.values().inner().clone())
+                .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
+                .build()
+                .unwrap();
+
+            arrow_array::make_array(array_data)
+        }
     }
 
     fn len(&self) -> usize {
