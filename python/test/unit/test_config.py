@@ -1,6 +1,7 @@
 import datetime
 
 import pyarrow as pa
+import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.timeofday_pb2 import TimeOfDay
 
@@ -147,6 +148,51 @@ class TestTimeOfDayConfig:
         )
         # PyArrow converts to datetime.time
         assert batch["time_of_day"].to_pylist() == [expected_time]
+
+
+class TestConfigValidation:
+    """Test PtarsConfig validation."""
+
+    def test_valid_config(self):
+        """Valid config should not raise."""
+        config = PtarsConfig(
+            timestamp_tz="UTC",
+            timestamp_unit="us",
+            time_unit="ms",
+            duration_unit="s",
+            list_value_name="element",
+            map_value_name="val",
+            list_nullable=True,
+            map_nullable=True,
+            list_value_nullable=True,
+            map_value_nullable=True,
+        )
+        assert config.timestamp_unit == "us"
+
+    def test_valid_config_no_timezone(self):
+        """Config with None timezone should not raise."""
+        config = PtarsConfig(timestamp_tz=None)
+        assert config.timestamp_tz is None
+
+    @pytest.mark.parametrize(
+        ("kwargs", "error_type", "error_match"),
+        [
+            ({"timestamp_unit": "invalid"}, ValueError, "timestamp_unit must be one of"),
+            ({"time_unit": "hours"}, ValueError, "time_unit must be one of"),
+            ({"duration_unit": "days"}, ValueError, "duration_unit must be one of"),
+            ({"timestamp_tz": 123}, TypeError, "timestamp_tz must be str or None"),
+            ({"list_value_name": 123}, TypeError, "list_value_name must be str"),
+            ({"map_value_name": None}, TypeError, "map_value_name must be str"),
+            ({"list_nullable": "true"}, TypeError, "list_nullable must be bool"),
+            ({"map_nullable": 1}, TypeError, "map_nullable must be bool"),
+            ({"list_value_nullable": "false"}, TypeError, "list_value_nullable must be bool"),
+            ({"map_value_nullable": 0}, TypeError, "map_value_nullable must be bool"),
+        ],
+    )
+    def test_invalid_config(self, kwargs, error_type, error_match):
+        """Invalid config values should raise appropriate errors."""
+        with pytest.raises(error_type, match=error_match):
+            PtarsConfig(**kwargs)
 
 
 class TestListConfig:
