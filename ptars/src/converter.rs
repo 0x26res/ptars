@@ -514,6 +514,29 @@ mod tests {
         assert_eq!(list_array.value_length(0), 0);
     }
 
+    #[test]
+    fn test_list_value_name_config() {
+        use arrow_schema::DataType;
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
+
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("values", Value::List(vec![Value::I32(1), Value::I32(2)]));
+
+        // Test with custom list_value_name
+        let config = PtarsConfig::default().with_list_value_name("element");
+        let record_batch =
+            messages_to_record_batch_with_config(&[message], &message_descriptor, &config);
+
+        // Verify the schema has the custom value field name
+        let schema = record_batch.schema();
+        let list_field = schema.field_with_name("values").unwrap();
+        if let DataType::List(value_field) = list_field.data_type() {
+            assert_eq!(value_field.name(), "element");
+        } else {
+            panic!("Expected list type");
+        }
+    }
+
     // ==================== Nested Message Tests ====================
 
     #[test]
