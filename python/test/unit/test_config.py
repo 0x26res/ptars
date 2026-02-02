@@ -6,7 +6,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.timeofday_pb2 import TimeOfDay
 
 from ptars import HandlerPool, PtarsConfig
-from ptars_protos.simple_pb2 import DESCRIPTOR, WithTimeOfDay, WithTimestamp
+from ptars_protos.simple_pb2 import DESCRIPTOR, WithMap, WithTimeOfDay, WithTimestamp
 
 
 class TestTimestampConfig:
@@ -316,7 +316,6 @@ class TestConfigValidation:
             time_unit="ms",
             duration_unit="s",
             list_value_name="element",
-            map_value_name="val",
             list_nullable=True,
             map_nullable=True,
             list_value_nullable=True,
@@ -341,7 +340,6 @@ class TestConfigValidation:
             ({"duration_unit": "days"}, ValueError, "duration_unit must be one of"),
             ({"timestamp_tz": 123}, TypeError, "timestamp_tz must be str"),
             ({"list_value_name": 123}, TypeError, "list_value_name must be str"),
-            ({"map_value_name": None}, TypeError, "map_value_name must be str"),
             ({"list_nullable": "true"}, TypeError, "list_nullable must be bool"),
             ({"map_nullable": 1}, TypeError, "map_nullable must be bool"),
             (
@@ -404,3 +402,77 @@ class TestListConfig:
         )
         list_type = batch.schema.field("timestamps").type
         assert list_type.value_field.nullable is True
+
+    def test_list_nullable_default(self):
+        """Default list field is not nullable."""
+        pool = HandlerPool([DESCRIPTOR])
+        batch = pool.messages_to_record_batch(
+            [WithTimestamp(timestamps=[Timestamp(seconds=1)])],
+            WithTimestamp.DESCRIPTOR,
+        )
+        assert batch.schema.field("timestamps").nullable is False
+
+    def test_list_nullable_true(self):
+        """List field can be set to nullable."""
+        config = PtarsConfig(list_nullable=True)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithTimestamp(timestamps=[Timestamp(seconds=1)])],
+            WithTimestamp.DESCRIPTOR,
+        )
+        assert batch.schema.field("timestamps").nullable is True
+
+
+class TestMapConfig:
+    """Test map field configuration."""
+
+    def test_map_value_name_default(self):
+        """Default map value name is 'value'."""
+        pool = HandlerPool([DESCRIPTOR])
+        batch = pool.messages_to_record_batch(
+            [WithMap(string_to_double={"key": 1.0})],
+            WithMap.DESCRIPTOR,
+        )
+        map_type = batch.schema.field("string_to_double").type
+        assert isinstance(map_type, pa.MapType)
+        assert map_type.item_field.name == "value"
+
+    def test_map_value_nullable_default(self):
+        """Default map value is not nullable."""
+        pool = HandlerPool([DESCRIPTOR])
+        batch = pool.messages_to_record_batch(
+            [WithMap(string_to_double={"key": 1.0})],
+            WithMap.DESCRIPTOR,
+        )
+        map_type = batch.schema.field("string_to_double").type
+        assert map_type.item_field.nullable is False
+
+    def test_map_value_nullable_true(self):
+        """Map value can be set to nullable."""
+        config = PtarsConfig(map_value_nullable=True)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithMap(string_to_double={"key": 1.0})],
+            WithMap.DESCRIPTOR,
+        )
+        map_type = batch.schema.field("string_to_double").type
+        assert map_type.item_field.nullable is True
+
+    def test_map_nullable_default(self):
+        """Default map field is not nullable."""
+        pool = HandlerPool([DESCRIPTOR])
+        batch = pool.messages_to_record_batch(
+            [WithMap(string_to_double={"key": 1.0})],
+            WithMap.DESCRIPTOR,
+        )
+        assert batch.schema.field("string_to_double").nullable is False
+
+    def test_map_nullable_true(self):
+        """Map field can be set to nullable."""
+        config = PtarsConfig(map_nullable=True)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithMap(string_to_double={"key": 1.0})],
+            WithMap.DESCRIPTOR,
+        )
+        assert batch.schema.field("string_to_double").nullable is True

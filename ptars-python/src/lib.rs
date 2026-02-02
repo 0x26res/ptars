@@ -35,7 +35,6 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
     let time_unit: String = config.getattr("time_unit")?.extract()?;
     let duration_unit: String = config.getattr("duration_unit")?.extract()?;
     let list_value_name: String = config.getattr("list_value_name")?.extract()?;
-    let map_value_name: String = config.getattr("map_value_name")?.extract()?;
     let list_nullable: bool = config.getattr("list_nullable")?.extract()?;
     let map_nullable: bool = config.getattr("map_nullable")?.extract()?;
     let list_value_nullable: bool = config.getattr("list_value_nullable")?.extract()?;
@@ -47,7 +46,6 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
         .with_time_unit(parse_time_unit(&time_unit)?)
         .with_duration_unit(parse_time_unit(&duration_unit)?)
         .with_list_value_name(&list_value_name)
-        .with_map_value_name(&map_value_name)
         .with_list_nullable(list_nullable)
         .with_map_nullable(map_nullable)
         .with_list_value_nullable(list_value_nullable)

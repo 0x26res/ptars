@@ -4,7 +4,7 @@ mod tests {
     use crate::config::PtarsConfig;
     use crate::proto_to_arrow::{
         field_to_array, get_array_builder, get_singular_array_builder, is_nullable,
-        messages_to_record_batch, CE_OFFSET,
+        messages_to_record_batch, messages_to_record_batch_with_config, CE_OFFSET,
     };
     use arrow::array::Array;
     use chrono::Datelike;
@@ -856,6 +856,88 @@ mod tests {
             .unwrap();
         assert_eq!(map_array.len(), 1);
         assert_eq!(map_array.value_length(0), 2);
+    }
+
+    #[test]
+    fn test_map_value_name_config() {
+        use arrow_schema::DataType;
+        use std::collections::HashMap;
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("MapEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("MessageWithMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("my_map".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.MapEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let pool = create_pool_with_message(file_descriptor);
+        let message_descriptor = pool.get_message_by_name("test.MessageWithMap").unwrap();
+
+        let mut map_value: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map_value.insert(
+            prost_reflect::MapKey::String("key1".to_string()),
+            Value::I32(100),
+        );
+
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("my_map", Value::Map(map_value));
+
+        // Test with custom map_value_name
+        let config = PtarsConfig::default().with_map_value_name("custom_val");
+        let record_batch =
+            messages_to_record_batch_with_config(&[message], &message_descriptor, &config);
+
+        // Verify the schema has the custom value field name
+        let schema = record_batch.schema();
+        let map_field = schema.field_with_name("my_map").unwrap();
+        if let DataType::Map(entries_field, _) = map_field.data_type() {
+            if let DataType::Struct(fields) = entries_field.data_type() {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name(), "key");
+                assert_eq!(fields[1].name(), "custom_val");
+            } else {
+                panic!("Expected struct type for map entries");
+            }
+        } else {
+            panic!("Expected map type");
+        }
     }
 
     // ==================== Round-trip Tests ====================

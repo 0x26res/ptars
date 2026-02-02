@@ -317,15 +317,16 @@ impl ProtoArrayBuilder for MapArrayBuilder {
             self.map_value_nullable,
         ));
 
+        // Build the struct type explicitly to preserve field names
+        let entries_struct_type = DataType::Struct(
+            vec![key_field.as_ref().clone(), value_field.as_ref().clone()].into(),
+        );
+
         let entry_struct =
             StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
 
         let map_data_type = DataType::Map(
-            Arc::new(Field::new(
-                "entries",
-                entry_struct.data_type().clone(),
-                false,
-            )),
+            Arc::new(Field::new("entries", entries_struct_type, false)),
             false,
         );
 
@@ -355,6 +356,8 @@ struct MessageArrayBuilder {
     /// Cached field descriptors and their builders, avoiding repeated iteration
     fields: Vec<(FieldDescriptor, Box<dyn ProtoArrayBuilder>)>,
     is_valid: BooleanBuilder,
+    list_nullable: bool,
+    map_nullable: bool,
 }
 
 impl MessageArrayBuilder {
@@ -370,6 +373,8 @@ impl MessageArrayBuilder {
         Self {
             fields,
             is_valid: BooleanBuilder::new(),
+            list_nullable: config.list_nullable,
+            map_nullable: config.map_nullable,
         }
     }
 
@@ -398,11 +403,14 @@ impl MessageArrayBuilder {
             .iter_mut()
             .map(|(field_descriptor, builder)| {
                 let array = builder.finish();
-                let field = Field::new(
-                    field_descriptor.name(),
-                    array.data_type().clone(),
-                    field_descriptor.supports_presence(),
-                );
+                let nullable = if field_descriptor.is_list() {
+                    self.list_nullable
+                } else if field_descriptor.is_map() {
+                    self.map_nullable
+                } else {
+                    field_descriptor.supports_presence()
+                };
+                let field = Field::new(field_descriptor.name(), array.data_type().clone(), nullable);
                 (field, array)
             })
             .unzip();
