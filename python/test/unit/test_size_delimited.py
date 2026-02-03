@@ -124,3 +124,35 @@ class TestReadSizeDelimitedFile:
         pool = HandlerPool([DESCRIPTOR])
         with pytest.raises(OSError):
             pool.read_size_delimited_file(file_path, SearchRequest.DESCRIPTOR)
+
+    def test_truncated_varint(self, tmp_path: Path):
+        """Truncated varint (continuation bit set but EOF) raises error."""
+        # 0x80 has continuation bit set, but no following byte
+        file_path = tmp_path / "truncated_varint.bin"
+        file_path.write_bytes(bytes([0x80]))
+
+        pool = HandlerPool([DESCRIPTOR])
+        with pytest.raises(OSError, match="unexpected EOF"):
+            pool.read_size_delimited_file(file_path, SearchRequest.DESCRIPTOR)
+
+    def test_varint_too_large(self, tmp_path: Path):
+        """Varint exceeding 64 bits raises error."""
+        # 10 bytes with continuation bits set = > 64 bits
+        file_path = tmp_path / "large_varint.bin"
+        file_path.write_bytes(bytes([0x80] * 10 + [0x01]))
+
+        pool = HandlerPool([DESCRIPTOR])
+        with pytest.raises(OSError, match="varint too large"):
+            pool.read_size_delimited_file(file_path, SearchRequest.DESCRIPTOR)
+
+    def test_message_size_exceeds_limit(self, tmp_path: Path):
+        """Message size exceeding limit raises error."""
+        # Write a varint representing a huge size (100MB > 64MB limit)
+        file_path = tmp_path / "huge_size.bin"
+        stream = io.BytesIO()
+        _write_varint(stream, 100 * 1024 * 1024)  # 100 MB
+        file_path.write_bytes(stream.getvalue())
+
+        pool = HandlerPool([DESCRIPTOR])
+        with pytest.raises(OSError, match="exceeds maximum"):
+            pool.read_size_delimited_file(file_path, SearchRequest.DESCRIPTOR)

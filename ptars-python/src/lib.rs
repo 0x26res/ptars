@@ -49,6 +49,9 @@ fn read_varint<R: Read>(reader: &mut R) -> std::io::Result<Option<u64>> {
     }
 }
 
+/// Maximum allowed message size (64 MB) to prevent DoS via massive allocations.
+const MAX_MESSAGE_SIZE: u64 = 64 * 1024 * 1024;
+
 /// Read size-delimited messages from a reader.
 fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<Vec<u8>>> {
     let mut messages = Vec::new();
@@ -56,7 +59,19 @@ fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<
         match read_varint(reader)? {
             None => break, // EOF
             Some(size) => {
-                let mut buf = vec![0u8; size as usize];
+                // Validate message size to prevent DoS
+                if size > MAX_MESSAGE_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "message size {} exceeds maximum allowed size {}",
+                            size, MAX_MESSAGE_SIZE
+                        ),
+                    ));
+                }
+                // Safe cast: we've validated size <= MAX_MESSAGE_SIZE which fits in usize
+                let size_usize = size as usize;
+                let mut buf = vec![0u8; size_usize];
                 reader.read_exact(&mut buf)?;
                 messages.push(buf);
             }
