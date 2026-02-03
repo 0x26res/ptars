@@ -190,6 +190,28 @@ pool = HandlerPool([Config.DESCRIPTOR.file])
 record_batch = pool.messages_to_record_batch(messages, Config.DESCRIPTOR)
 ```
 
+## Reading Size-Delimited Files
+
+ptars can read protobuf messages stored in size-delimited format, where each
+message is preceded by its size encoded as a varint. This is a common format
+for storing multiple protobuf messages in a single file.
+
+```python
+from ptars import HandlerPool
+from search_pb2 import SearchRequest
+
+pool = HandlerPool([SearchRequest.DESCRIPTOR.file])
+
+# Read size-delimited messages directly to a RecordBatch
+record_batch = pool.read_size_delimited_file("messages.bin", SearchRequest.DESCRIPTOR)
+
+print(record_batch.to_pandas())
+```
+
+This is useful for reading data produced by protobuf libraries that write
+messages in size-delimited format, such as Java's `writeDelimitedTo()` or
+similar functions in other languages.
+
 ## Binary Array Input
 
 For better performance when you already have a `pyarrow.BinaryArray`
