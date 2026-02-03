@@ -43,6 +43,10 @@ pub fn get_message_array_builder(
             message_descriptor,
             config.time_unit,
         ))),
+        "google.protobuf.Duration" => Ok(Box::new(DurationArrayBuilder::new(
+            message_descriptor,
+            config.duration_unit,
+        ))),
         // Wrapper types - stored as nullable primitives
         "google.protobuf.DoubleValue" => Ok(Box::new(WrapperBuilderWrapper::<Float64Type>::new(
             message_descriptor,
@@ -318,9 +322,8 @@ impl ProtoArrayBuilder for MapArrayBuilder {
         ));
 
         // Build the struct type explicitly to preserve field names
-        let entries_struct_type = DataType::Struct(
-            vec![key_field.as_ref().clone(), value_field.as_ref().clone()].into(),
-        );
+        let entries_struct_type =
+            DataType::Struct(vec![key_field.as_ref().clone(), value_field.as_ref().clone()].into());
 
         let entry_struct =
             StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
@@ -410,7 +413,8 @@ impl MessageArrayBuilder {
                 } else {
                     field_descriptor.supports_presence()
                 };
-                let field = Field::new(field_descriptor.name(), array.data_type().clone(), nullable);
+                let field =
+                    Field::new(field_descriptor.name(), array.data_type().clone(), nullable);
                 (field, array)
             })
             .unzip();
@@ -1142,6 +1146,80 @@ impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
 
             arrow_array::make_array(array_data)
         }
+    }
+
+    fn len(&self) -> usize {
+        self.builder.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.builder.is_empty()
+    }
+}
+
+struct DurationArrayBuilder {
+    builder: PrimitiveBuilder<Int64Type>,
+    seconds_descriptor: FieldDescriptor,
+    nanos_descriptor: FieldDescriptor,
+    time_unit: TimeUnit,
+}
+
+impl DurationArrayBuilder {
+    fn new(message_descriptor: &MessageDescriptor, time_unit: TimeUnit) -> Self {
+        Self {
+            builder: PrimitiveBuilder::<Int64Type>::new(),
+            seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
+            nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
+            time_unit,
+        }
+    }
+
+    fn convert_to_unit(&self, seconds: i64, nanos: i32) -> i64 {
+        match self.time_unit {
+            TimeUnit::Second => seconds,
+            TimeUnit::Millisecond => seconds * 1_000 + i64::from(nanos) / 1_000_000,
+            TimeUnit::Microsecond => seconds * 1_000_000 + i64::from(nanos) / 1_000,
+            TimeUnit::Nanosecond => seconds * 1_000_000_000 + i64::from(nanos),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for DurationArrayBuilder {
+    fn append(&mut self, value: &Value) {
+        if let Some(message) = value.as_message() {
+            let seconds = message
+                .get_field(&self.seconds_descriptor)
+                .as_i64()
+                .unwrap();
+            let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap();
+            self.builder
+                .append_value(self.convert_to_unit(seconds, nanos));
+        } else {
+            self.append_null();
+        }
+    }
+
+    fn append_null(&mut self) {
+        self.builder.append_null();
+    }
+
+    fn append_default(&mut self) {
+        // Duration is a message type, default is null
+        self.builder.append_null();
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values = std::mem::take(&mut self.builder).finish();
+        let data_type = DataType::Duration(self.time_unit);
+
+        let array_data = ArrayData::builder(data_type)
+            .len(values.len())
+            .add_buffer(values.values().inner().clone())
+            .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
+            .build()
+            .unwrap();
+
+        arrow_array::make_array(array_data)
     }
 
     fn len(&self) -> usize {

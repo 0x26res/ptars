@@ -3944,4 +3944,265 @@ mod tests {
             );
         }
     }
+
+    // ==================== Duration Field Tests ====================
+
+    fn create_duration_pool() -> DescriptorPool {
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("google/protobuf/duration.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Duration".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int64.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        pool
+    }
+
+    #[test]
+    fn test_duration_field_roundtrip() {
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(3600)); // 1 hour
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(3600)
+        );
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_duration_negative_roundtrip() {
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Test negative duration (-1.5 seconds)
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(-2));
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // Per protobuf spec: sign must match seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(-2)
+        );
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_duration_unit_config() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(1)); // 1 second
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+
+        // Test nanosecond unit (default)
+        let config_ns = PtarsConfig::default();
+        let record_batch_ns =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_ns);
+        let dur_col = record_batch_ns.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Nanosecond)
+        );
+        let dur_array = dur_col
+            .as_any()
+            .downcast_ref::<arrow_array::DurationNanosecondArray>()
+            .unwrap();
+        // 1.5 seconds in nanoseconds = 1_500_000_000
+        assert_eq!(dur_array.value(0), 1_500_000_000i64);
+
+        // Test microsecond unit
+        let config_us = PtarsConfig {
+            duration_unit: TimeUnit::Microsecond,
+            ..Default::default()
+        };
+        let record_batch_us =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_us);
+        let dur_col_us = record_batch_us.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col_us.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Microsecond)
+        );
+        let dur_array_us = dur_col_us
+            .as_any()
+            .downcast_ref::<arrow_array::DurationMicrosecondArray>()
+            .unwrap();
+        // 1.5 seconds in microseconds = 1_500_000
+        assert_eq!(dur_array_us.value(0), 1_500_000i64);
+
+        // Test millisecond unit
+        let config_ms = PtarsConfig {
+            duration_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch_ms =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_ms);
+        let dur_col_ms = record_batch_ms.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col_ms.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Millisecond)
+        );
+        let dur_array_ms = dur_col_ms
+            .as_any()
+            .downcast_ref::<arrow_array::DurationMillisecondArray>()
+            .unwrap();
+        // 1.5 seconds in milliseconds = 1500
+        assert_eq!(dur_array_ms.value(0), 1500i64);
+
+        // Test second unit
+        let config_s = PtarsConfig {
+            duration_unit: TimeUnit::Second,
+            ..Default::default()
+        };
+        let record_batch_s =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_s);
+        let dur_col_s = record_batch_s.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col_s.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Second)
+        );
+        let dur_array_s = dur_col_s
+            .as_any()
+            .downcast_ref::<arrow_array::DurationSecondArray>()
+            .unwrap();
+        // 1.5 seconds truncated to seconds = 1
+        assert_eq!(dur_array_s.value(0), 1i64);
+    }
 }

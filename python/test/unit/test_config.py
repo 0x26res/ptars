@@ -2,11 +2,18 @@ import datetime
 
 import pyarrow as pa
 import pytest
+from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.timeofday_pb2 import TimeOfDay
 
 from ptars import HandlerPool, PtarsConfig
-from ptars_protos.simple_pb2 import DESCRIPTOR, WithMap, WithTimeOfDay, WithTimestamp
+from ptars_protos.simple_pb2 import (
+    DESCRIPTOR,
+    WithDuration,
+    WithMap,
+    WithTimeOfDay,
+    WithTimestamp,
+)
 
 
 class TestTimestampConfig:
@@ -83,6 +90,100 @@ class TestTimestampConfig:
         assert batch.schema.field("timestamp").type == pa.timestamp(
             "ns", tz="America/New_York"
         )
+
+
+class TestDurationConfig:
+    """Test duration time unit configuration."""
+
+    def test_duration_nanoseconds_default(self):
+        """Default config uses nanoseconds."""
+        pool = HandlerPool([DESCRIPTOR])
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch.schema.field("duration").type == pa.duration("ns")
+
+    def test_duration_nanoseconds_explicit(self):
+        """Explicit nanosecond config."""
+        config = PtarsConfig(duration_unit="ns")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch.schema.field("duration").type == pa.duration("ns")
+
+    def test_duration_microseconds(self):
+        """Microsecond duration config."""
+        config = PtarsConfig(duration_unit="us")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch.schema.field("duration").type == pa.duration("us")
+
+    def test_duration_milliseconds(self):
+        """Millisecond duration config."""
+        config = PtarsConfig(duration_unit="ms")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch.schema.field("duration").type == pa.duration("ms")
+
+    def test_duration_seconds(self):
+        """Second duration config."""
+        config = PtarsConfig(duration_unit="s")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch.schema.field("duration").type == pa.duration("s")
+
+    def test_duration_value_conversion_nanoseconds(self):
+        """Test that duration values are correctly converted to nanoseconds."""
+        pool = HandlerPool([DESCRIPTOR])
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
+            WithDuration.DESCRIPTOR,
+        )
+        # 1.5 seconds = 1,500,000,000 nanoseconds
+        assert batch["duration"].to_pylist() == [
+            datetime.timedelta(seconds=1, microseconds=500_000)
+        ]
+
+    def test_duration_value_conversion_seconds(self):
+        """Test that duration values are correctly converted to seconds."""
+        config = PtarsConfig(duration_unit="s")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=3600, nanos=0))],  # 1 hour
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch["duration"].to_pylist() == [datetime.timedelta(hours=1)]
+
+    @pytest.mark.parametrize(
+        ("duration_unit", "expected_type"),
+        [
+            ("s", pa.duration("s")),
+            ("ms", pa.duration("ms")),
+            ("us", pa.duration("us")),
+            ("ns", pa.duration("ns")),
+        ],
+    )
+    def test_duration_arrow_type(self, duration_unit, expected_type):
+        """Verify correct duration type for each unit."""
+        config = PtarsConfig(duration_unit=duration_unit)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(
+            [WithDuration(duration=Duration(seconds=1))],
+            WithDuration.DESCRIPTOR,
+        )
+        assert batch.schema.field("duration").type == expected_type
 
 
 class TestTimeOfDayConfig:

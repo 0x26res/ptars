@@ -1,8 +1,8 @@
 use arrow::array::ArrayData;
 use arrow_array::builder::BinaryBuilder;
 use arrow_array::types::{
-    Date32Type, Float32Type, Float64Type, Int32Type, Int64Type, Time64NanosecondType,
-    TimestampNanosecondType, UInt32Type, UInt64Type,
+    Date32Type, DurationNanosecondType, Float32Type, Float64Type, Int32Type, Int64Type,
+    Time64NanosecondType, TimestampNanosecondType, UInt32Type, UInt64Type,
 };
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, MapArray,
@@ -49,6 +49,34 @@ fn create_timestamp_message(
     nanos_total: i64,
     message_descriptor: &MessageDescriptor,
     fields: &TimestampFields,
+) -> DynamicMessage {
+    let (seconds, nanos) = nanos_to_seconds_and_nanos(nanos_total);
+    let mut msg = DynamicMessage::new(message_descriptor.clone());
+    msg.set_field(&fields.seconds, Value::I64(seconds));
+    msg.set_field(&fields.nanos, Value::I32(nanos));
+    msg
+}
+
+/// Cached field descriptors for google.protobuf.Duration
+struct DurationFields {
+    seconds: FieldDescriptor,
+    nanos: FieldDescriptor,
+}
+
+impl DurationFields {
+    fn new(message_descriptor: &MessageDescriptor) -> Self {
+        Self {
+            seconds: message_descriptor.get_field_by_name("seconds").unwrap(),
+            nanos: message_descriptor.get_field_by_name("nanos").unwrap(),
+        }
+    }
+}
+
+/// Create a google.protobuf.Duration DynamicMessage from total nanoseconds.
+fn create_duration_message(
+    nanos_total: i64,
+    message_descriptor: &MessageDescriptor,
+    fields: &DurationFields,
 ) -> DynamicMessage {
     let (seconds, nanos) = nanos_to_seconds_and_nanos(nanos_total);
     let mut msg = DynamicMessage::new(message_descriptor.clone());
@@ -229,6 +257,10 @@ pub fn extract_repeated_message(
             extract_repeated_timestamp(list_array, messages, field_descriptor, &message_descriptor);
             return;
         }
+        "google.protobuf.Duration" => {
+            extract_repeated_duration(list_array, messages, field_descriptor, &message_descriptor);
+            return;
+        }
         "google.type.Date" => {
             extract_repeated_date(list_array, messages, field_descriptor, &message_descriptor);
             return;
@@ -390,6 +422,41 @@ fn extract_repeated_timestamp(
                 let sub_messages: Vec<Value> = (start..end)
                     .map(|idx| {
                         Value::Message(create_timestamp_message(
+                            values.value(idx),
+                            message_descriptor,
+                            &fields,
+                        ))
+                    })
+                    .collect();
+
+                message.set_field(field_descriptor, Value::List(sub_messages));
+            }
+        }
+    }
+}
+
+fn extract_repeated_duration(
+    list_array: &ListArray,
+    messages: &mut [&mut DynamicMessage],
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+) {
+    let values: &PrimitiveArray<DurationNanosecondType> = list_array
+        .values()
+        .as_any()
+        .downcast_ref::<PrimitiveArray<DurationNanosecondType>>()
+        .unwrap();
+    let fields = DurationFields::new(message_descriptor);
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !list_array.is_null(i) {
+            let start = list_array.value_offsets()[i] as usize;
+            let end = list_array.value_offsets()[i + 1] as usize;
+
+            if start < end {
+                let sub_messages: Vec<Value> = (start..end)
+                    .map(|idx| {
+                        Value::Message(create_duration_message(
                             values.value(idx),
                             message_descriptor,
                             &fields,
@@ -820,6 +887,10 @@ pub fn extract_single_message(
             extract_single_timestamp(array, field_descriptor, &message_descriptor, messages);
             return;
         }
+        "google.protobuf.Duration" => {
+            extract_single_duration(array, field_descriptor, &message_descriptor, messages);
+            return;
+        }
         "google.type.Date" => {
             extract_single_date(array, field_descriptor, &message_descriptor, messages);
             return;
@@ -947,6 +1018,27 @@ fn extract_single_timestamp(
             let ts_msg =
                 create_timestamp_message(timestamp_array.value(i), message_descriptor, &fields);
             message.set_field(field_descriptor, Value::Message(ts_msg));
+        }
+    }
+}
+
+fn extract_single_duration(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    message_descriptor: &MessageDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    let duration_array = array
+        .as_any()
+        .downcast_ref::<PrimitiveArray<DurationNanosecondType>>()
+        .unwrap();
+    let fields = DurationFields::new(message_descriptor);
+
+    for (i, message) in messages.iter_mut().enumerate() {
+        if !duration_array.is_null(i) {
+            let dur_msg =
+                create_duration_message(duration_array.value(i), message_descriptor, &fields);
+            message.set_field(field_descriptor, Value::Message(dur_msg));
         }
     }
 }

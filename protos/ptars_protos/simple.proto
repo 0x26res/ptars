@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 import "google/type/date.proto";
@@ -176,6 +177,11 @@ message WithTimeOfDay {
     map <int32, google.type.TimeOfDay> int_to_time_of_day = 3;
 }
 
+message WithDuration {
+    google.protobuf.Duration duration = 1;
+    repeated google.protobuf.Duration durations = 2;
+    map <int32, google.protobuf.Duration> int_to_duration = 3;
+}
 
 message NestedMap {
   map <int32, WithMap> map_of_map = 1;
