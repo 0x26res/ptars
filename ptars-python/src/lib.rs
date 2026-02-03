@@ -8,8 +8,77 @@ use pyo3::prelude::{pyfunction, pymodule, PyModule, PyResult, Python};
 use pyo3::types::{PyAnyMethods, PyList, PyListMethods, PyModuleMethods};
 use pyo3::Py;
 use pyo3::{pyclass, pymethods, wrap_pyfunction, Bound, PyAny};
-use std::io::Cursor;
+use std::fs::File;
+use std::io::{BufReader, Cursor, Read};
+use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Read a varint from a reader. Returns None if EOF is reached at the start.
+fn read_varint<R: Read>(reader: &mut R) -> std::io::Result<Option<u64>> {
+    let mut result: u64 = 0;
+    let mut shift = 0;
+    let mut buf = [0u8; 1];
+
+    loop {
+        match reader.read_exact(&mut buf) {
+            Ok(()) => {
+                let byte = buf[0];
+                result |= ((byte & 0x7F) as u64) << shift;
+                if (byte & 0x80) == 0 {
+                    return Ok(Some(result));
+                }
+                shift += 7;
+                if shift >= 64 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "varint too large",
+                    ));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                if shift == 0 {
+                    return Ok(None); // EOF at start of varint
+                }
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "unexpected EOF while reading varint",
+                ));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Maximum allowed message size (64 MB) to prevent DoS via massive allocations.
+const MAX_MESSAGE_SIZE: u64 = 64 * 1024 * 1024;
+
+/// Read size-delimited messages from a reader.
+fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<Vec<u8>>> {
+    let mut messages = Vec::new();
+    loop {
+        match read_varint(reader)? {
+            None => break, // EOF
+            Some(size) => {
+                // Validate message size to prevent DoS
+                if size > MAX_MESSAGE_SIZE {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "message size {} exceeds maximum allowed size {}",
+                            size, MAX_MESSAGE_SIZE
+                        ),
+                    ));
+                }
+                // Safe cast: we've validated size <= MAX_MESSAGE_SIZE which fits in usize
+                let size_usize = size as usize;
+                let mut buf = vec![0u8; size_usize];
+                reader.read_exact(&mut buf)?;
+                messages.push(buf);
+            }
+        }
+    }
+    Ok(messages)
+}
 
 #[pyclass]
 struct MessageHandler {
@@ -71,6 +140,32 @@ impl MessageHandler {
             ptars::binary_array_to_record_batch(&arrow_array, &self.message_descriptor)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
+    }
+
+    /// Read size-delimited protobuf messages from a file and convert to a record batch.
+    ///
+    /// Each message in the file should be preceded by its size encoded as a varint.
+    fn read_size_delimited_file(&self, path: PathBuf, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let file = File::open(&path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to open file: {}", e))
+        })?;
+        let mut reader = BufReader::new(file);
+        let message_bytes = read_size_delimited_messages(&mut reader).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to read file: {}", e))
+        })?;
+
+        let mut messages: Vec<DynamicMessage> = Vec::with_capacity(message_bytes.len());
+        for bytes in &message_bytes {
+            let message = DynamicMessage::decode(self.message_descriptor.clone(), bytes.as_slice())
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+            messages.push(message);
+        }
+
+        Ok(
+            ptars::messages_to_record_batch(&messages, &self.message_descriptor)
+                .to_pyarrow(py)?
+                .unbind(),
+        )
     }
 }
 

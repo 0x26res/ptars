@@ -1,5 +1,6 @@
 """Internal implementation of ptars Python bindings."""
 
+import os
 import warnings
 
 import google._upb._message
@@ -156,3 +157,29 @@ class HandlerPool:
         handler = self.get_for_message(descriptor)
         array = handler.record_batch_to_array(record_batch)
         return [descriptor._concrete_class.FromString(s.as_py()) for s in array]  # type: ignore[unresolved-attribute]
+
+    def read_size_delimited_file(
+        self, path: str | os.PathLike, descriptor: Descriptor
+    ) -> pa.RecordBatch:
+        """Read size-delimited protobuf messages from a file to a RecordBatch.
+
+        Each message in the file should be preceded by its size encoded as a varint.
+        This method uses a fast Rust implementation for reading and parsing.
+
+        Args:
+            path: Path to the file containing size-delimited messages.
+            descriptor: The protobuf Descriptor for the message type.
+
+        Returns:
+            A pyarrow.RecordBatch with one column per protobuf field.
+
+        Example:
+            ```python
+            pool = HandlerPool([MyMessage.DESCRIPTOR.file])
+            record_batch = pool.read_size_delimited_file(
+                "messages.bin", MyMessage.DESCRIPTOR
+            )
+            ```
+        """
+        handler = self.get_for_message(descriptor)
+        return handler.read_size_delimited_file(str(path))

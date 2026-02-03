@@ -9,6 +9,7 @@
         - get_for_message
         - messages_to_record_batch
         - record_batch_to_messages
+        - read_size_delimited_file
 
 ## MessageHandler
 
@@ -81,6 +82,30 @@ import pyarrow as pa
 handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
 binary_array = pa.array([msg.SerializeToString() for msg in messages], type=pa.binary())
 record_batch = handler.array_to_record_batch(binary_array)
+```
+
+---
+
+#### `read_size_delimited_file(path: str) -> pyarrow.RecordBatch`
+
+Read size-delimited protobuf messages from a file and convert to a RecordBatch.
+
+Size-delimited format means each message is preceded by its size encoded as a varint.
+This is a common format for storing multiple protobuf messages in a single file.
+
+__Parameters:__
+
+- `path`: Path to the file containing size-delimited protobuf messages.
+
+__Returns:__
+
+- A `pyarrow.RecordBatch` with one column per field in the protobuf message.
+
+__Example:__
+
+```python
+handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+record_batch = handler.read_size_delimited_file("messages.bin")
 ```
 
 ## Type Mappings
