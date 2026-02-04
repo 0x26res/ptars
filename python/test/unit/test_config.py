@@ -547,8 +547,12 @@ class TestListConfig:
 class TestMapConfig:
     """Test map field configuration."""
 
-    def test_map_value_name_default(self):
-        """Default map value name is 'value'."""
+    def test_map_value_name_is_always_value(self):
+        """Map value name is always 'value' (not configurable in Python).
+
+        Note: The Rust API supports customizing this via `map_value_name`,
+        but this cannot be passed through PyArrow's C data interface.
+        """
         pool = HandlerPool([DESCRIPTOR])
         batch = pool.messages_to_record_batch(
             [WithMap(string_to_double={"key": 1.0})],
@@ -600,7 +604,7 @@ class TestMapConfig:
 
 
 class TestLargeValueOverflow:
-    """Test that large timestamp/duration values that would overflow if converted to nanoseconds are handled correctly."""
+    """Test that large timestamp/duration values that would overflow."""
 
     def test_timestamp_large_value_second_unit_roundtrip(self):
         """Large timestamp (year 2500) should roundtrip with second unit."""

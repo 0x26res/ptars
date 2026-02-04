@@ -94,7 +94,6 @@ record_batch = handler.array_to_record_batch(binary_array)
         - time_unit
         - duration_unit
         - list_value_name
-        - map_value_name
         - list_nullable
         - map_nullable
         - list_value_nullable
@@ -109,11 +108,15 @@ record_batch = handler.array_to_record_batch(binary_array)
 | `time_unit`           | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for `google.type.TimeOfDay`.                                   |
 | `duration_unit`       | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for `google.protobuf.Duration`.                                |
 | `list_value_name`     | `str`                            | `"item"`  | Field name for list items in Arrow schema.                               |
-| `map_value_name`      | `str`                            | `"value"` | Field name for map values in Arrow schema.                               |
 | `list_nullable`       | `bool`                           | `False`   | Whether list fields can be null.                                         |
 | `map_nullable`        | `bool`                           | `False`   | Whether map fields can be null.                                          |
 | `list_value_nullable` | `bool`                           | `False`   | Whether list elements can be null.                                       |
 | `map_value_nullable`  | `bool`                           | `False`   | Whether map values can be null.                                          |
+
+!!! note "Map Value Field Name"
+    The Rust API supports `map_value_name` for customizing the field name of map values
+    in the Arrow schema. This option is not available in Python because Arrow's MapType
+    uses a fixed "value" field name when constructed via PyArrow's C data interface.
 
 !!! warning "Precision Loss with Coarser Time Units"
     When converting timestamps, time of day, or duration values to coarser time units

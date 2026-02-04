@@ -37,6 +37,13 @@ class PtarsConfig:
         map_nullable: Whether map fields can be null.
         list_value_nullable: Whether list elements can be null.
         map_value_nullable: Whether map values can be null.
+
+    Note:
+        The Rust API also supports `map_value_name` for customizing the field name
+        of map values in the Arrow schema. This option is not exposed in Python
+        because Arrow's MapType uses a fixed "value" field name when constructed
+        via PyArrow's C data interface. The default "value" name is always used
+        for map values in Python.
     """
 
     timestamp_tz: str | None = "UTC"

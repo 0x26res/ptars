@@ -4491,10 +4491,7 @@ mod tests {
             ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
             Some(large_seconds)
         );
-        assert_eq!(
-            ts_msg.get_field_by_name("nanos").unwrap().as_i32(),
-            Some(0)
-        );
+        assert_eq!(ts_msg.get_field_by_name("nanos").unwrap().as_i32(), Some(0));
     }
 
     #[test]
