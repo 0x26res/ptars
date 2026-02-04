@@ -4906,4 +4906,436 @@ mod tests {
             Some(large_seconds_2)
         );
     }
+
+    // ==================== Map Value Time Unit Tests ====================
+    // Tests for map values with non-default time units
+
+    #[test]
+    fn test_map_with_timestamp_second_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("TimestampEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.protobuf.Timestamp".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithTimestampMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("timestamps".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.TimestampEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestampMap").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Create timestamps - use large values to verify no overflow
+        let large_seconds: i64 = 16_725_225_600; // ~year 2500
+
+        let mut ts1 = DynamicMessage::new(timestamp_descriptor.clone());
+        ts1.set_field_by_name("seconds", Value::I64(large_seconds));
+        ts1.set_field_by_name("nanos", Value::I32(0));
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(
+            MapKey::String("key1".to_string()),
+            Value::Message(ts1),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("timestamps", Value::Map(map_value));
+
+        let messages = vec![msg];
+
+        // Use second unit
+        let config = PtarsConfig {
+            timestamp_unit: TimeUnit::Second,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let timestamps_field = decoded.get_field_by_name("timestamps").unwrap();
+        let timestamps_map = timestamps_field.as_map().unwrap();
+        assert_eq!(timestamps_map.len(), 1);
+
+        let ts_value = timestamps_map
+            .get(&MapKey::String("key1".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            ts_value.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+    }
+
+    #[test]
+    fn test_map_with_duration_roundtrip() {
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("DurationEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.protobuf.Duration".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithDurationMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("durations".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.DurationEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDurationMap").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur1 = DynamicMessage::new(duration_descriptor.clone());
+        dur1.set_field_by_name("seconds", Value::I64(3600)); // 1 hour
+        dur1.set_field_by_name("nanos", Value::I32(500_000_000));
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(
+            MapKey::String("duration1".to_string()),
+            Value::Message(dur1),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("durations", Value::Map(map_value));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let durations_field = decoded.get_field_by_name("durations").unwrap();
+        let durations_map = durations_field.as_map().unwrap();
+        assert_eq!(durations_map.len(), 1);
+
+        let dur_value = durations_map
+            .get(&MapKey::String("duration1".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            dur_value.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(3600)
+        );
+        assert_eq!(
+            dur_value.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_map_with_duration_second_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("DurationEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.protobuf.Duration".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithDurationMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("durations".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.DurationEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDurationMap").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Large duration that would overflow if converted to nanoseconds
+        let large_seconds: i64 = 15_768_000_000; // ~500 years
+
+        let mut dur1 = DynamicMessage::new(duration_descriptor.clone());
+        dur1.set_field_by_name("seconds", Value::I64(large_seconds));
+        dur1.set_field_by_name("nanos", Value::I32(0));
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(
+            MapKey::String("large_duration".to_string()),
+            Value::Message(dur1),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("durations", Value::Map(map_value));
+
+        let messages = vec![msg];
+
+        // Use second unit to avoid overflow
+        let config = PtarsConfig {
+            duration_unit: TimeUnit::Second,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let durations_field = decoded.get_field_by_name("durations").unwrap();
+        let durations_map = durations_field.as_map().unwrap();
+        assert_eq!(durations_map.len(), 1);
+
+        let dur_value = durations_map
+            .get(&MapKey::String("large_duration".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            dur_value.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+    }
+
+    #[test]
+    fn test_map_with_time_of_day_millisecond_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_time_of_day_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/timeofday.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("TimeEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.type.TimeOfDay".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithTimeOfDayMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("times".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.TimeEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimeOfDayMap").unwrap();
+        let time_of_day_descriptor = pool.get_message_by_name("google.type.TimeOfDay").unwrap();
+
+        let mut tod1 = DynamicMessage::new(time_of_day_descriptor.clone());
+        tod1.set_field_by_name("hours", Value::I32(12));
+        tod1.set_field_by_name("minutes", Value::I32(30));
+        tod1.set_field_by_name("seconds", Value::I32(45));
+        tod1.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(MapKey::String("noon".to_string()), Value::Message(tod1));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("times", Value::Map(map_value));
+
+        let messages = vec![msg];
+
+        // Use millisecond unit (Time32)
+        let config = PtarsConfig {
+            time_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let times_field = decoded.get_field_by_name("times").unwrap();
+        let times_map = times_field.as_map().unwrap();
+        assert_eq!(times_map.len(), 1);
+
+        let tod_value = times_map
+            .get(&MapKey::String("noon".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            tod_value.get_field_by_name("hours").unwrap().as_i32(),
+            Some(12)
+        );
+        assert_eq!(
+            tod_value.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(30)
+        );
+        assert_eq!(
+            tod_value.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(45)
+        );
+        // Nanos preserved at millisecond precision
+        assert_eq!(
+            tod_value.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
 }

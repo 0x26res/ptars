@@ -741,3 +741,90 @@ class TestLargeValueOverflow:
         assert len(messages_back[0].durations) == 2
         assert messages_back[0].durations[0].seconds == large_seconds_1
         assert messages_back[0].durations[1].seconds == large_seconds_2
+
+
+class TestMapValueTimeUnits:
+    """Test map values with non-default time units."""
+
+    def test_map_timestamp_second_unit_roundtrip(self):
+        """Map timestamp values should roundtrip with second unit."""
+        config = PtarsConfig(timestamp_unit="s", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Large timestamp that would overflow if converted to nanoseconds
+        large_seconds = 16_725_225_600  # ~year 2500
+
+        messages = [
+            WithTimestamp(
+                int_to_timestamp={1: Timestamp(seconds=large_seconds, nanos=0)}
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert len(messages_back[0].int_to_timestamp) == 1
+        assert messages_back[0].int_to_timestamp[1].seconds == large_seconds
+
+    def test_map_duration_roundtrip(self):
+        """Map duration values should roundtrip with default (nanosecond) unit."""
+        pool = HandlerPool([DESCRIPTOR])
+
+        messages = [
+            WithDuration(
+                int_to_duration={
+                    1: Duration(seconds=3600, nanos=500_000_000),  # 1 hour + 0.5s
+                    2: Duration(seconds=7200, nanos=0),  # 2 hours
+                }
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert len(messages_back[0].int_to_duration) == 2
+        assert messages_back[0].int_to_duration[1].seconds == 3600
+        assert messages_back[0].int_to_duration[1].nanos == 500_000_000
+        assert messages_back[0].int_to_duration[2].seconds == 7200
+
+    def test_map_duration_second_unit_roundtrip(self):
+        """Map duration values should roundtrip with second unit."""
+        config = PtarsConfig(duration_unit="s")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Large duration that would overflow if converted to nanoseconds
+        large_seconds = 15_768_000_000  # ~500 years
+
+        messages = [
+            WithDuration(int_to_duration={1: Duration(seconds=large_seconds, nanos=0)})
+        ]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert len(messages_back[0].int_to_duration) == 1
+        assert messages_back[0].int_to_duration[1].seconds == large_seconds
+
+    def test_map_time_of_day_millisecond_unit_roundtrip(self):
+        """Map time of day values should roundtrip with millisecond unit."""
+        config = PtarsConfig(time_unit="ms")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        messages = [
+            WithTimeOfDay(
+                int_to_time_of_day={
+                    1: TimeOfDay(hours=12, minutes=30, seconds=45, nanos=500_000_000)
+                }
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert len(messages_back[0].int_to_time_of_day) == 1
+        tod = messages_back[0].int_to_time_of_day[1]
+        assert tod.hours == 12
+        assert tod.minutes == 30
+        assert tod.seconds == 45
+        # Nanos preserved at millisecond precision
+        assert tod.nanos == 500_000_000

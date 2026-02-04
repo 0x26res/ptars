@@ -1116,13 +1116,27 @@ impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
         };
 
         // For Time32, we need to cast from i64 to i32
+        // Time of day values should always fit in i32:
+        // - Seconds: max 86400 (24*60*60)
+        // - Milliseconds: max 86400000 (24*60*60*1000)
+        // Both fit well within i32::MAX (2147483647)
         if matches!(self.time_unit, TimeUnit::Second | TimeUnit::Millisecond) {
             let i32_values: Vec<Option<i32>> = (0..values.len())
                 .map(|i| {
                     if values.is_null(i) {
                         None
                     } else {
-                        Some(values.value(i) as i32)
+                        let val = values.value(i);
+                        // Use try_from to safely convert, clamping out-of-range values
+                        // Valid time-of-day values will always fit, but malformed proto
+                        // inputs might not
+                        Some(i32::try_from(val).unwrap_or_else(|_| {
+                            if val > 0 {
+                                i32::MAX
+                            } else {
+                                i32::MIN
+                            }
+                        }))
                     }
                 })
                 .collect();

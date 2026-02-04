@@ -1655,23 +1655,64 @@ fn extract_map_message_value(
 ) -> Option<Value> {
     let full_name = message_descriptor.full_name();
 
-    // Handle google.protobuf.Timestamp
-    // Note: Map values use nanosecond timestamps by default (no config support for maps yet)
+    // Handle google.protobuf.Timestamp - detect time unit from array's DataType
     if full_name == "google.protobuf.Timestamp" {
-        let arr = array
-            .as_any()
-            .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()?;
-        if arr.is_null(idx) {
-            return None;
-        }
         let fields = TimestampFields::new(message_descriptor);
-        let (seconds, nanos) = nanos_to_seconds_and_nanos(arr.value(idx));
-        return Some(Value::Message(create_timestamp_message(
-            seconds,
-            nanos,
-            message_descriptor,
-            &fields,
-        )));
+
+        // Helper macro to extract timestamp with proper time unit handling
+        macro_rules! extract_ts {
+            ($array_type:ty, $time_unit:expr) => {{
+                let arr = array.as_any().downcast_ref::<PrimitiveArray<$array_type>>()?;
+                if arr.is_null(idx) {
+                    return None;
+                }
+                let (seconds, nanos) = time_unit_to_seconds_and_nanos(arr.value(idx), $time_unit);
+                return Some(Value::Message(create_timestamp_message(
+                    seconds,
+                    nanos,
+                    message_descriptor,
+                    &fields,
+                )));
+            }};
+        }
+
+        match array.data_type() {
+            DataType::Timestamp(TimeUnit::Second, _) => extract_ts!(TimestampSecondType, TimeUnit::Second),
+            DataType::Timestamp(TimeUnit::Millisecond, _) => extract_ts!(TimestampMillisecondType, TimeUnit::Millisecond),
+            DataType::Timestamp(TimeUnit::Microsecond, _) => extract_ts!(TimestampMicrosecondType, TimeUnit::Microsecond),
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => extract_ts!(TimestampNanosecondType, TimeUnit::Nanosecond),
+            _ => return None,
+        }
+    }
+
+    // Handle google.protobuf.Duration - detect time unit from array's DataType
+    if full_name == "google.protobuf.Duration" {
+        let fields = DurationFields::new(message_descriptor);
+
+        // Helper macro to extract duration with proper time unit handling
+        macro_rules! extract_dur {
+            ($array_type:ty, $time_unit:expr) => {{
+                let arr = array.as_any().downcast_ref::<PrimitiveArray<$array_type>>()?;
+                if arr.is_null(idx) {
+                    return None;
+                }
+                let (seconds, nanos) = time_unit_to_seconds_and_nanos(arr.value(idx), $time_unit);
+                return Some(Value::Message(create_duration_message(
+                    seconds,
+                    nanos,
+                    message_descriptor,
+                    &fields,
+                )));
+            }};
+        }
+
+        match array.data_type() {
+            DataType::Duration(TimeUnit::Second) => extract_dur!(DurationSecondType, TimeUnit::Second),
+            DataType::Duration(TimeUnit::Millisecond) => extract_dur!(DurationMillisecondType, TimeUnit::Millisecond),
+            DataType::Duration(TimeUnit::Microsecond) => extract_dur!(DurationMicrosecondType, TimeUnit::Microsecond),
+            DataType::Duration(TimeUnit::Nanosecond) => extract_dur!(DurationNanosecondType, TimeUnit::Nanosecond),
+            _ => return None,
+        }
     }
 
     // Handle google.type.Date
@@ -1690,20 +1731,60 @@ fn extract_map_message_value(
         )));
     }
 
-    // Handle google.type.TimeOfDay
+    // Handle google.type.TimeOfDay - detect time unit from array's DataType
     if full_name == "google.type.TimeOfDay" {
-        let arr = array
-            .as_any()
-            .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()?;
-        if arr.is_null(idx) {
-            return None;
-        }
         let fields = TimeOfDayFields::new(message_descriptor);
-        return Some(Value::Message(create_time_of_day_message(
-            arr.value(idx),
-            message_descriptor,
-            &fields,
-        )));
+
+        match array.data_type() {
+            DataType::Time32(TimeUnit::Second) => {
+                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time32SecondType>>()?;
+                if arr.is_null(idx) {
+                    return None;
+                }
+                let nanos = time32_unit_to_nanos(arr.value(idx), TimeUnit::Second);
+                return Some(Value::Message(create_time_of_day_message(
+                    nanos,
+                    message_descriptor,
+                    &fields,
+                )));
+            }
+            DataType::Time32(TimeUnit::Millisecond) => {
+                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time32MillisecondType>>()?;
+                if arr.is_null(idx) {
+                    return None;
+                }
+                let nanos = time32_unit_to_nanos(arr.value(idx), TimeUnit::Millisecond);
+                return Some(Value::Message(create_time_of_day_message(
+                    nanos,
+                    message_descriptor,
+                    &fields,
+                )));
+            }
+            DataType::Time64(TimeUnit::Microsecond) => {
+                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time64MicrosecondType>>()?;
+                if arr.is_null(idx) {
+                    return None;
+                }
+                let nanos = time64_unit_to_nanos(arr.value(idx), TimeUnit::Microsecond);
+                return Some(Value::Message(create_time_of_day_message(
+                    nanos,
+                    message_descriptor,
+                    &fields,
+                )));
+            }
+            DataType::Time64(TimeUnit::Nanosecond) => {
+                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time64NanosecondType>>()?;
+                if arr.is_null(idx) {
+                    return None;
+                }
+                return Some(Value::Message(create_time_of_day_message(
+                    arr.value(idx),
+                    message_descriptor,
+                    &fields,
+                )));
+            }
+            _ => return None,
+        }
     }
 
     // Handle wrapper types
