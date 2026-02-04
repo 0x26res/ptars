@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 import "google/type/date.proto";
@@ -161,6 +162,7 @@ message WithOptionalMessage {
 message WithTimestamp {
     google.protobuf.Timestamp timestamp = 1;
     repeated google.protobuf.Timestamp timestamps = 2;
+    map <int32, google.protobuf.Timestamp> int_to_timestamp = 3;
 }
 
 message WithDate {
@@ -172,6 +174,13 @@ message WithDate {
 message WithTimeOfDay {
     google.type.TimeOfDay time_of_day = 1;
     repeated google.type.TimeOfDay time_of_days = 2;
+    map <int32, google.type.TimeOfDay> int_to_time_of_day = 3;
+}
+
+message WithDuration {
+    google.protobuf.Duration duration = 1;
+    repeated google.protobuf.Duration durations = 2;
+    map <int32, google.protobuf.Duration> int_to_duration = 3;
 }
 
 message NestedMap {

@@ -1,6 +1,7 @@
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::{BinaryArray, Float32Array, Int32Array};
+use arrow_schema::TimeUnit;
 use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
@@ -12,6 +13,44 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Convert a Python time unit string to Arrow TimeUnit.
+fn parse_time_unit(s: &str) -> PyResult<TimeUnit> {
+    match s {
+        "s" => Ok(TimeUnit::Second),
+        "ms" => Ok(TimeUnit::Millisecond),
+        "us" => Ok(TimeUnit::Microsecond),
+        "ns" => Ok(TimeUnit::Nanosecond),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid time unit '{}', expected one of: s, ms, us, ns",
+            s
+        ))),
+    }
+}
+
+/// Extract a PtarsConfig from a Python object (dataclass).
+fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
+    let timestamp_tz: Option<String> = config.getattr("timestamp_tz")?.extract()?;
+    let timestamp_unit: String = config.getattr("timestamp_unit")?.extract()?;
+    let time_unit: String = config.getattr("time_unit")?.extract()?;
+    let duration_unit: String = config.getattr("duration_unit")?.extract()?;
+    let list_value_name: String = config.getattr("list_value_name")?.extract()?;
+    let list_nullable: bool = config.getattr("list_nullable")?.extract()?;
+    let map_nullable: bool = config.getattr("map_nullable")?.extract()?;
+    let list_value_nullable: bool = config.getattr("list_value_nullable")?.extract()?;
+    let map_value_nullable: bool = config.getattr("map_value_nullable")?.extract()?;
+
+    Ok(ptars::PtarsConfig::default()
+        .with_timestamp_tz(timestamp_tz.as_deref())
+        .with_timestamp_unit(parse_time_unit(&timestamp_unit)?)
+        .with_time_unit(parse_time_unit(&time_unit)?)
+        .with_duration_unit(parse_time_unit(&duration_unit)?)
+        .with_list_value_name(&list_value_name)
+        .with_list_nullable(list_nullable)
+        .with_map_nullable(map_nullable)
+        .with_list_value_nullable(list_value_nullable)
+        .with_map_value_nullable(map_value_nullable))
+}
 
 /// Read a varint from a reader. Returns None if EOF is reached at the start.
 fn read_varint<R: Read>(reader: &mut R) -> std::io::Result<Option<u64>> {
@@ -83,6 +122,7 @@ fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<
 #[pyclass]
 struct MessageHandler {
     message_descriptor: MessageDescriptor,
+    config: ptars::PtarsConfig,
 }
 
 #[pymethods]
@@ -99,11 +139,13 @@ impl MessageHandler {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             messages.push(message);
         }
-        Ok(
-            ptars::messages_to_record_batch(&messages, &self.message_descriptor)
-                .to_pyarrow(py)?
-                .unbind(),
+        Ok(ptars::messages_to_record_batch_with_config(
+            &messages,
+            &self.message_descriptor,
+            &self.config,
         )
+        .to_pyarrow(py)?
+        .unbind())
     }
 
     fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {
@@ -136,9 +178,12 @@ impl MessageHandler {
             pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
         })?;
         let arrow_array = BinaryArray::from(array_data);
-        let record_batch =
-            ptars::binary_array_to_record_batch(&arrow_array, &self.message_descriptor)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let record_batch = ptars::binary_array_to_record_batch_with_config(
+            &arrow_array,
+            &self.message_descriptor,
+            &self.config,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 
@@ -161,22 +206,25 @@ impl MessageHandler {
             messages.push(message);
         }
 
-        Ok(
-            ptars::messages_to_record_batch(&messages, &self.message_descriptor)
-                .to_pyarrow(py)?
-                .unbind(),
+        Ok(ptars::messages_to_record_batch_with_config(
+            &messages,
+            &self.message_descriptor,
+            &self.config,
         )
+        .to_pyarrow(py)?
+        .unbind())
     }
 }
 
+/// Registry of protobuf descriptors used to create message handlers.
 #[pyclass]
 #[derive(Clone)]
-struct ProtoCache {
+struct ProtoRegistry {
     pool: Arc<DescriptorPool>,
 }
 
 #[pymethods]
-impl ProtoCache {
+impl ProtoRegistry {
     #[new]
     fn new(file_descriptors_bytes: Vec<Vec<u8>>) -> Self {
         let mut pool = DescriptorPool::new();
@@ -186,7 +234,7 @@ impl ProtoCache {
             pool.add_file_descriptor_proto(proto).unwrap();
         }
 
-        ProtoCache {
+        ProtoRegistry {
             pool: Arc::new(pool),
         }
     }
@@ -198,13 +246,31 @@ impl ProtoCache {
             .collect()
     }
 
-    fn create_for_message(&mut self, message_name: String) -> PyResult<MessageHandler> {
+    #[pyo3(signature = (message_name, config=None))]
+    fn create_for_message(
+        &mut self,
+        message_name: String,
+        config: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<MessageHandler> {
         let message_descriptor = self
             .pool
             .get_message_by_name(message_name.as_str())
-            .unwrap();
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Message '{}' not found in descriptor pool",
+                    message_name
+                ))
+            })?;
 
-        Ok(MessageHandler { message_descriptor })
+        let config = match config {
+            Some(c) => extract_config(c)?,
+            None => ptars::PtarsConfig::default(),
+        };
+
+        Ok(MessageHandler {
+            message_descriptor,
+            config,
+        })
     }
 }
 
@@ -220,7 +286,7 @@ fn get_a_table(py: Python<'_>) -> PyResult<Py<PyAny>> {
 #[pymodule]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_a_table, m)?)?;
-    m.add_class::<ProtoCache>()?;
+    m.add_class::<ProtoRegistry>()?;
     m.add_class::<MessageHandler>()?;
     PyResult::Ok(())
 }

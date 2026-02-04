@@ -9,7 +9,7 @@ from ptars_protos.bench_pb2 import DESCRIPTOR, ExampleMessage
 
 def test_with_descriptor():
     pool = HandlerPool([DESCRIPTOR])
-    assert pool._proto_cache.get_names() != []
+    assert pool._proto_registry.get_names() != []
     handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
     assert isinstance(handler, MessageHandler)
     same_handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)

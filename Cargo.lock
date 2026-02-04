@@ -744,6 +744,7 @@ version = "0.0.9"
 dependencies = [
  "arrow",
  "arrow-array",
+ "arrow-schema",
  "prost",
  "prost-reflect",
  "ptars",

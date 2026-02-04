@@ -1,14 +1,20 @@
 """Internal implementation of ptars Python bindings."""
 
+from __future__ import annotations
+
 import os
 import warnings
+from typing import TYPE_CHECKING
 
 import google._upb._message
 import pyarrow as pa
 from google.protobuf.descriptor import Descriptor, FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
-from ptars._lib import MessageHandler, ProtoCache  # type: ignore[unresolved-import]
+from ptars._lib import MessageHandler, ProtoRegistry  # type: ignore[unresolved-import]
+
+if TYPE_CHECKING:
+    from ptars import PtarsConfig
 
 
 def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:
@@ -44,19 +50,28 @@ class HandlerPool:
     Args:
         file_descriptors: A list of protobuf FileDescriptor objects.
             All dependencies will be automatically resolved.
+        config: Optional configuration for Arrow type mappings.
+            Applies to all handlers created from this pool.
 
     Example:
         ```python
-        from ptars import HandlerPool
-        from your_proto_pb2 import YourMessage
+        from ptars import HandlerPool, PtarsConfig
 
         pool = HandlerPool([YourMessage.DESCRIPTOR.file])
         handler = pool.get_for_message(YourMessage.DESCRIPTOR)
         record_batch = handler.list_to_record_batch(payloads)
+
+        # With custom config
+        config = PtarsConfig(list_value_name="element")
+        pool = HandlerPool([YourMessage.DESCRIPTOR.file], config=config)
         ```
     """
 
-    def __init__(self, file_descriptors: list[FileDescriptor]):
+    def __init__(
+        self,
+        file_descriptors: list[FileDescriptor],
+        config: PtarsConfig | None = None,
+    ):
         all_descriptors = []
         for file_descriptor in file_descriptors:
             if not isinstance(file_descriptor, FileDescriptor):
@@ -70,8 +85,9 @@ class HandlerPool:
 
         payloads = [_file_descriptor_to_bytes(d) for d in all_descriptors]
 
-        self._proto_cache = ProtoCache(payloads)
-        self._pool = {}
+        self._proto_registry = ProtoRegistry(payloads)
+        self._config = config
+        self._pool: dict[str, MessageHandler] = {}
 
     def get_for_message(
         self, descriptor: Descriptor | google._upb._message.Descriptor
@@ -101,7 +117,9 @@ class HandlerPool:
         try:
             return self._pool[descriptor.full_name]
         except KeyError:
-            result = self._proto_cache.create_for_message(descriptor.full_name)
+            result = self._proto_registry.create_for_message(
+                descriptor.full_name, self._config
+            )
             self._pool[descriptor.full_name] = result
             return result
 

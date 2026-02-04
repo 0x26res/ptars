@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate::arrow_to_proto::record_batch_to_array;
+    use crate::config::PtarsConfig;
     use crate::proto_to_arrow::{
         field_to_array, get_array_builder, get_singular_array_builder, is_nullable,
-        messages_to_record_batch, CE_OFFSET,
+        messages_to_record_batch, messages_to_record_batch_with_config, CE_OFFSET,
     };
     use arrow::array::Array;
     use chrono::Datelike;
@@ -168,7 +169,7 @@ mod tests {
         message2.set_field_by_name("value", Value::I64(i64::MIN));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let int64_array = array
             .as_any()
@@ -191,7 +192,7 @@ mod tests {
         message2.set_field_by_name("value", Value::U32(0));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let uint32_array = array
             .as_any()
@@ -211,7 +212,7 @@ mod tests {
         message1.set_field_by_name("value", Value::U64(u64::MAX));
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let uint64_array = array
             .as_any()
@@ -232,7 +233,7 @@ mod tests {
         message2.set_field_by_name("value", Value::F32(-2.71));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let float_array = array
             .as_any()
@@ -252,7 +253,7 @@ mod tests {
         message1.set_field_by_name("value", Value::F64(std::f64::consts::PI));
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let double_array = array
             .as_any()
@@ -273,7 +274,7 @@ mod tests {
         message2.set_field_by_name("value", Value::Bool(false));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let bool_array = array
             .as_any()
@@ -298,7 +299,7 @@ mod tests {
         message2.set_field_by_name("value", Value::Bytes(prost::bytes::Bytes::from(vec![])));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let binary_array = array
             .as_any()
@@ -351,7 +352,7 @@ mod tests {
         message2.set_field_by_name("values", Value::List(vec![Value::I32(4), Value::I32(5)]));
 
         let messages = vec![message1, message2];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -383,7 +384,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -416,7 +417,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -448,7 +449,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -477,7 +478,7 @@ mod tests {
         );
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -503,7 +504,7 @@ mod tests {
         message1.set_field_by_name("values", Value::List(vec![]));
 
         let messages = vec![message1];
-        let array = field_to_array(&field, &messages).unwrap();
+        let array = field_to_array(&field, &messages, &PtarsConfig::default()).unwrap();
 
         let list_array = array
             .as_any()
@@ -511,6 +512,29 @@ mod tests {
             .unwrap();
         assert_eq!(list_array.len(), 1);
         assert_eq!(list_array.value_length(0), 0);
+    }
+
+    #[test]
+    fn test_list_value_name_config() {
+        use arrow_schema::DataType;
+        let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
+
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("values", Value::List(vec![Value::I32(1), Value::I32(2)]));
+
+        // Test with custom list_value_name
+        let config = PtarsConfig::default().with_list_value_name("element");
+        let record_batch =
+            messages_to_record_batch_with_config(&[message], &message_descriptor, &config);
+
+        // Verify the schema has the custom value field name
+        let schema = record_batch.schema();
+        let list_field = schema.field_with_name("values").unwrap();
+        if let DataType::List(value_field) = list_field.data_type() {
+            assert_eq!(value_field.name(), "element");
+        } else {
+            panic!("Expected list type");
+        }
     }
 
     // ==================== Nested Message Tests ====================
@@ -624,7 +648,7 @@ mod tests {
         let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int32);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         assert!(builder.is_empty());
         assert_eq!(builder.len(), 0);
 
@@ -641,7 +665,7 @@ mod tests {
         let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Int32);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         builder.append(&Value::I32(1));
         builder.append_null();
         builder.append(&Value::I32(3));
@@ -659,7 +683,7 @@ mod tests {
             create_primitive_message_descriptor("value", Type::String);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         builder.append(&Value::String("hello".to_string()));
         builder.append_null();
         builder.append(&Value::String("world".to_string()));
@@ -676,7 +700,7 @@ mod tests {
         let (_pool, message_descriptor) = create_primitive_message_descriptor("value", Type::Bool);
         let field = message_descriptor.get_field_by_name("value").unwrap();
 
-        let mut builder = get_singular_array_builder(&field).unwrap();
+        let mut builder = get_singular_array_builder(&field, &PtarsConfig::default()).unwrap();
         builder.append(&Value::Bool(true));
         builder.append_null();
         builder.append(&Value::Bool(false));
@@ -693,7 +717,7 @@ mod tests {
         let (_pool, message_descriptor) = create_repeated_message_descriptor("values", Type::Int32);
         let field = message_descriptor.get_field_by_name("values").unwrap();
 
-        let mut builder = get_array_builder(&field).unwrap();
+        let mut builder = get_array_builder(&field, &PtarsConfig::default()).unwrap();
         assert!(builder.is_empty());
         assert_eq!(builder.len(), 0);
 
@@ -855,6 +879,88 @@ mod tests {
             .unwrap();
         assert_eq!(map_array.len(), 1);
         assert_eq!(map_array.value_length(0), 2);
+    }
+
+    #[test]
+    fn test_map_value_name_config() {
+        use arrow_schema::DataType;
+        use std::collections::HashMap;
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("MapEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("MessageWithMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("my_map".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.MapEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let pool = create_pool_with_message(file_descriptor);
+        let message_descriptor = pool.get_message_by_name("test.MessageWithMap").unwrap();
+
+        let mut map_value: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map_value.insert(
+            prost_reflect::MapKey::String("key1".to_string()),
+            Value::I32(100),
+        );
+
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("my_map", Value::Map(map_value));
+
+        // Test with custom map_value_name
+        let config = PtarsConfig::default().with_map_value_name("custom_val");
+        let record_batch =
+            messages_to_record_batch_with_config(&[message], &message_descriptor, &config);
+
+        // Verify the schema has the custom value field name
+        let schema = record_batch.schema();
+        let map_field = schema.field_with_name("my_map").unwrap();
+        if let DataType::Map(entries_field, _) = map_field.data_type() {
+            if let DataType::Struct(fields) = entries_field.data_type() {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name(), "key");
+                assert_eq!(fields[1].name(), "custom_val");
+            } else {
+                panic!("Expected struct type for map entries");
+            }
+        } else {
+            panic!("Expected map type");
+        }
     }
 
     // ==================== Round-trip Tests ====================
@@ -3837,5 +3943,1707 @@ mod tests {
                     .unwrap()
             );
         }
+    }
+
+    // ==================== Duration Field Tests ====================
+
+    fn create_duration_pool() -> DescriptorPool {
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("google/protobuf/duration.proto".to_string()),
+            package: Some("google.protobuf".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Duration".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("seconds".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int64.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("nanos".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Int32.into()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        pool
+    }
+
+    #[test]
+    fn test_duration_field_roundtrip() {
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(3600)); // 1 hour
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(3600)
+        );
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_duration_negative_roundtrip() {
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Test negative duration (-1.5 seconds)
+        // Per protobuf spec, seconds and nanos must have the same sign (or one is zero)
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(-1));
+        dur.set_field_by_name("nanos", Value::I32(-500_000_000));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(-1)
+        );
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(-500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_duration_unit_config() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(1)); // 1 second
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+
+        // Test nanosecond unit (default)
+        let config_ns = PtarsConfig::default();
+        let record_batch_ns =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_ns);
+        let dur_col = record_batch_ns.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Nanosecond)
+        );
+        let dur_array = dur_col
+            .as_any()
+            .downcast_ref::<arrow_array::DurationNanosecondArray>()
+            .unwrap();
+        // 1.5 seconds in nanoseconds = 1_500_000_000
+        assert_eq!(dur_array.value(0), 1_500_000_000i64);
+
+        // Test microsecond unit
+        let config_us = PtarsConfig {
+            duration_unit: TimeUnit::Microsecond,
+            ..Default::default()
+        };
+        let record_batch_us =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_us);
+        let dur_col_us = record_batch_us.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col_us.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Microsecond)
+        );
+        let dur_array_us = dur_col_us
+            .as_any()
+            .downcast_ref::<arrow_array::DurationMicrosecondArray>()
+            .unwrap();
+        // 1.5 seconds in microseconds = 1_500_000
+        assert_eq!(dur_array_us.value(0), 1_500_000i64);
+
+        // Test millisecond unit
+        let config_ms = PtarsConfig {
+            duration_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch_ms =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_ms);
+        let dur_col_ms = record_batch_ms.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col_ms.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Millisecond)
+        );
+        let dur_array_ms = dur_col_ms
+            .as_any()
+            .downcast_ref::<arrow_array::DurationMillisecondArray>()
+            .unwrap();
+        // 1.5 seconds in milliseconds = 1500
+        assert_eq!(dur_array_ms.value(0), 1500i64);
+
+        // Test second unit
+        let config_s = PtarsConfig {
+            duration_unit: TimeUnit::Second,
+            ..Default::default()
+        };
+        let record_batch_s =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_s);
+        let dur_col_s = record_batch_s.column_by_name("dur").unwrap();
+        assert_eq!(
+            dur_col_s.data_type(),
+            &arrow_schema::DataType::Duration(TimeUnit::Second)
+        );
+        let dur_array_s = dur_col_s
+            .as_any()
+            .downcast_ref::<arrow_array::DurationSecondArray>()
+            .unwrap();
+        // 1.5 seconds truncated to seconds = 1
+        assert_eq!(dur_array_s.value(0), 1i64);
+    }
+
+    #[test]
+    fn test_duration_microsecond_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(3600)); // 1 hour
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+
+        // Test microsecond unit roundtrip
+        let config_us = PtarsConfig {
+            duration_unit: TimeUnit::Microsecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_us);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        // Should preserve seconds, but nanos will be truncated to microsecond precision
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(3600)
+        );
+        // 500_000_000 nanos -> 500_000 us -> 500_000_000 nanos (preserved at us precision)
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_timestamp_microsecond_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(1700000000));
+        ts.set_field_by_name("nanos", Value::I32(123_456_000)); // microsecond precision
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+
+        // Test microsecond unit roundtrip
+        let config_us = PtarsConfig {
+            timestamp_unit: TimeUnit::Microsecond,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_us);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_value = decoded.get_field_by_name("ts").unwrap();
+        let ts_msg = ts_value.as_message().unwrap();
+        assert_eq!(
+            ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(1700000000)
+        );
+        assert_eq!(
+            ts_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(123_456_000)
+        );
+    }
+
+    #[test]
+    fn test_time_of_day_millisecond_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_time_of_day_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/timeofday.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimeOfDay".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("tod".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.type.TimeOfDay".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimeOfDay").unwrap();
+        let time_of_day_descriptor = pool.get_message_by_name("google.type.TimeOfDay").unwrap();
+
+        let mut tod = DynamicMessage::new(time_of_day_descriptor.clone());
+        tod.set_field_by_name("hours", Value::I32(12));
+        tod.set_field_by_name("minutes", Value::I32(30));
+        tod.set_field_by_name("seconds", Value::I32(45));
+        tod.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("tod", Value::Message(tod));
+
+        let messages = vec![msg];
+
+        // Test millisecond unit roundtrip (uses Time32)
+        let config_ms = PtarsConfig {
+            time_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_ms);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let tod_value = decoded.get_field_by_name("tod").unwrap();
+        let tod_msg = tod_value.as_message().unwrap();
+        assert_eq!(
+            tod_msg.get_field_by_name("hours").unwrap().as_i32(),
+            Some(12)
+        );
+        assert_eq!(
+            tod_msg.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(30)
+        );
+        assert_eq!(
+            tod_msg.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(45)
+        );
+        // Nanos preserved at millisecond precision
+        assert_eq!(
+            tod_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    // ==================== Overflow Prevention Tests ====================
+    // These tests verify that large timestamp/duration values that would overflow
+    // if converted to nanoseconds are handled correctly.
+
+    #[test]
+    fn test_timestamp_large_value_second_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Year 2500 timestamp: approximately 16.7 billion seconds from epoch
+        // This would overflow i64 if multiplied by 1e9 to convert to nanoseconds
+        // (16_725_225_600 * 1e9 > i64::MAX which is ~9.2e18)
+        let large_seconds: i64 = 16_725_225_600; // ~year 2500
+
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(large_seconds));
+        ts.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+
+        // Use second unit to store the large value without overflow
+        let config = PtarsConfig {
+            timestamp_unit: TimeUnit::Second,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Verify the Arrow array has the correct value
+        let ts_col = record_batch.column_by_name("ts").unwrap();
+        let ts_array = ts_col
+            .as_any()
+            .downcast_ref::<arrow_array::TimestampSecondArray>()
+            .unwrap();
+        assert_eq!(ts_array.value(0), large_seconds);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_value = decoded.get_field_by_name("ts").unwrap();
+        let ts_msg = ts_value.as_message().unwrap();
+        assert_eq!(
+            ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+        assert_eq!(ts_msg.get_field_by_name("nanos").unwrap().as_i32(), Some(0));
+    }
+
+    #[test]
+    fn test_timestamp_large_value_millisecond_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Large timestamp that fits in milliseconds but would overflow if converted to nanos
+        // ~292 years from epoch in milliseconds = 9.2e12 ms, which is safe
+        // But 9.2e12 ms * 1e6 = 9.2e18 which would overflow
+        let large_seconds: i64 = 9_000_000_000; // ~year 2255
+        let nanos: i32 = 123_000_000; // 123 milliseconds
+
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(large_seconds));
+        ts.set_field_by_name("nanos", Value::I32(nanos));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+
+        // Use millisecond unit
+        let config = PtarsConfig {
+            timestamp_unit: TimeUnit::Millisecond,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Verify the Arrow array has the correct value
+        let ts_col = record_batch.column_by_name("ts").unwrap();
+        let ts_array = ts_col
+            .as_any()
+            .downcast_ref::<arrow_array::TimestampMillisecondArray>()
+            .unwrap();
+        // 9_000_000_000 seconds + 123ms = 9_000_000_000_123 milliseconds
+        assert_eq!(ts_array.value(0), 9_000_000_000_123i64);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_value = decoded.get_field_by_name("ts").unwrap();
+        let ts_msg = ts_value.as_message().unwrap();
+        assert_eq!(
+            ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+        assert_eq!(
+            ts_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(nanos)
+        );
+    }
+
+    #[test]
+    fn test_duration_large_value_second_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Large duration: 500 years in seconds
+        // This would overflow i64 if multiplied by 1e9
+        let large_seconds: i64 = 15_768_000_000; // ~500 years
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(large_seconds));
+        dur.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+
+        // Use second unit to store the large value without overflow
+        let config = PtarsConfig {
+            duration_unit: TimeUnit::Second,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Verify the Arrow array has the correct value
+        let dur_col = record_batch.column_by_name("dur").unwrap();
+        let dur_array = dur_col
+            .as_any()
+            .downcast_ref::<arrow_array::DurationSecondArray>()
+            .unwrap();
+        assert_eq!(dur_array.value(0), large_seconds);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_duration_large_value_millisecond_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Large duration that fits in milliseconds
+        let large_seconds: i64 = 8_000_000_000; // ~253 years
+        let nanos: i32 = 456_000_000; // 456 milliseconds
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(large_seconds));
+        dur.set_field_by_name("nanos", Value::I32(nanos));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+
+        // Use millisecond unit
+        let config = PtarsConfig {
+            duration_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Verify the Arrow array has the correct value
+        let dur_col = record_batch.column_by_name("dur").unwrap();
+        let dur_array = dur_col
+            .as_any()
+            .downcast_ref::<arrow_array::DurationMillisecondArray>()
+            .unwrap();
+        // 8_000_000_000 seconds + 456ms = 8_000_000_000_456 milliseconds
+        assert_eq!(dur_array.value(0), 8_000_000_000_456i64);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(nanos)
+        );
+    }
+
+    #[test]
+    fn test_repeated_timestamp_large_value_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamps".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("timestamps".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamps").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Create timestamps with large values
+        let large_seconds_1: i64 = 16_725_225_600; // ~year 2500
+        let large_seconds_2: i64 = 20_000_000_000; // ~year 2604
+
+        let mut ts1 = DynamicMessage::new(timestamp_descriptor.clone());
+        ts1.set_field_by_name("seconds", Value::I64(large_seconds_1));
+        ts1.set_field_by_name("nanos", Value::I32(100_000_000));
+
+        let mut ts2 = DynamicMessage::new(timestamp_descriptor.clone());
+        ts2.set_field_by_name("seconds", Value::I64(large_seconds_2));
+        ts2.set_field_by_name("nanos", Value::I32(200_000_000));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "timestamps",
+            Value::List(vec![Value::Message(ts1), Value::Message(ts2)]),
+        );
+
+        let messages = vec![msg];
+
+        // Use second unit
+        let config = PtarsConfig {
+            timestamp_unit: TimeUnit::Second,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let timestamps = decoded.get_field_by_name("timestamps").unwrap();
+        let ts_list = timestamps.as_list().unwrap();
+        assert_eq!(ts_list.len(), 2);
+
+        let ts1_decoded = ts_list[0].as_message().unwrap();
+        assert_eq!(
+            ts1_decoded.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds_1)
+        );
+        // Nanos truncated to second precision
+        assert_eq!(
+            ts1_decoded.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(0)
+        );
+
+        let ts2_decoded = ts_list[1].as_message().unwrap();
+        assert_eq!(
+            ts2_decoded.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds_2)
+        );
+        assert_eq!(
+            ts2_decoded.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_repeated_duration_large_value_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDurations".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("durations".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDurations").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Create durations with large values
+        let large_seconds_1: i64 = 15_768_000_000; // ~500 years
+        let large_seconds_2: i64 = 31_536_000_000; // ~1000 years
+
+        let mut dur1 = DynamicMessage::new(duration_descriptor.clone());
+        dur1.set_field_by_name("seconds", Value::I64(large_seconds_1));
+        dur1.set_field_by_name("nanos", Value::I32(0));
+
+        let mut dur2 = DynamicMessage::new(duration_descriptor.clone());
+        dur2.set_field_by_name("seconds", Value::I64(large_seconds_2));
+        dur2.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "durations",
+            Value::List(vec![Value::Message(dur1), Value::Message(dur2)]),
+        );
+
+        let messages = vec![msg];
+
+        // Use second unit
+        let config = PtarsConfig {
+            duration_unit: TimeUnit::Second,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let durations = decoded.get_field_by_name("durations").unwrap();
+        let dur_list = durations.as_list().unwrap();
+        assert_eq!(dur_list.len(), 2);
+
+        let dur1_decoded = dur_list[0].as_message().unwrap();
+        assert_eq!(
+            dur1_decoded.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds_1)
+        );
+
+        let dur2_decoded = dur_list[1].as_message().unwrap();
+        assert_eq!(
+            dur2_decoded.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds_2)
+        );
+    }
+
+    // ==================== Map Value Time Unit Tests ====================
+    // Tests for map values with non-default time units
+
+    #[test]
+    fn test_map_with_timestamp_second_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("TimestampEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.protobuf.Timestamp".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithTimestampMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("timestamps".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.TimestampEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestampMap").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Create timestamps - use large values to verify no overflow
+        let large_seconds: i64 = 16_725_225_600; // ~year 2500
+
+        let mut ts1 = DynamicMessage::new(timestamp_descriptor.clone());
+        ts1.set_field_by_name("seconds", Value::I64(large_seconds));
+        ts1.set_field_by_name("nanos", Value::I32(0));
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(MapKey::String("key1".to_string()), Value::Message(ts1));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("timestamps", Value::Map(map_value));
+
+        let messages = vec![msg];
+
+        // Use second unit
+        let config = PtarsConfig {
+            timestamp_unit: TimeUnit::Second,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let timestamps_field = decoded.get_field_by_name("timestamps").unwrap();
+        let timestamps_map = timestamps_field.as_map().unwrap();
+        assert_eq!(timestamps_map.len(), 1);
+
+        let ts_value = timestamps_map
+            .get(&MapKey::String("key1".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            ts_value.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+    }
+
+    #[test]
+    fn test_map_with_duration_roundtrip() {
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("DurationEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.protobuf.Duration".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithDurationMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("durations".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.DurationEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDurationMap").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur1 = DynamicMessage::new(duration_descriptor.clone());
+        dur1.set_field_by_name("seconds", Value::I64(3600)); // 1 hour
+        dur1.set_field_by_name("nanos", Value::I32(500_000_000));
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(
+            MapKey::String("duration1".to_string()),
+            Value::Message(dur1),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("durations", Value::Map(map_value));
+
+        let messages = vec![msg];
+        let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let durations_field = decoded.get_field_by_name("durations").unwrap();
+        let durations_map = durations_field.as_map().unwrap();
+        assert_eq!(durations_map.len(), 1);
+
+        let dur_value = durations_map
+            .get(&MapKey::String("duration1".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            dur_value.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(3600)
+        );
+        assert_eq!(
+            dur_value.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_map_with_duration_second_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("DurationEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.protobuf.Duration".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithDurationMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("durations".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.DurationEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDurationMap").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // Large duration that would overflow if converted to nanoseconds
+        let large_seconds: i64 = 15_768_000_000; // ~500 years
+
+        let mut dur1 = DynamicMessage::new(duration_descriptor.clone());
+        dur1.set_field_by_name("seconds", Value::I64(large_seconds));
+        dur1.set_field_by_name("nanos", Value::I32(0));
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(
+            MapKey::String("large_duration".to_string()),
+            Value::Message(dur1),
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("durations", Value::Map(map_value));
+
+        let messages = vec![msg];
+
+        // Use second unit to avoid overflow
+        let config = PtarsConfig {
+            duration_unit: TimeUnit::Second,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let durations_field = decoded.get_field_by_name("durations").unwrap();
+        let durations_map = durations_field.as_map().unwrap();
+        assert_eq!(durations_map.len(), 1);
+
+        let dur_value = durations_map
+            .get(&MapKey::String("large_duration".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            dur_value.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(large_seconds)
+        );
+    }
+
+    #[test]
+    fn test_map_with_time_of_day_millisecond_unit_roundtrip() {
+        use arrow_schema::TimeUnit;
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = create_time_of_day_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/timeofday.proto".to_string()],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("TimeEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Message.into()),
+                            type_name: Some(".google.type.TimeOfDay".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithTimeOfDayMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("times".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.TimeEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimeOfDayMap").unwrap();
+        let time_of_day_descriptor = pool.get_message_by_name("google.type.TimeOfDay").unwrap();
+
+        let mut tod1 = DynamicMessage::new(time_of_day_descriptor.clone());
+        tod1.set_field_by_name("hours", Value::I32(12));
+        tod1.set_field_by_name("minutes", Value::I32(30));
+        tod1.set_field_by_name("seconds", Value::I32(45));
+        tod1.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(MapKey::String("noon".to_string()), Value::Message(tod1));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("times", Value::Map(map_value));
+
+        let messages = vec![msg];
+
+        // Use millisecond unit (Time32)
+        let config = PtarsConfig {
+            time_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+
+        // Roundtrip back to protobuf
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let times_field = decoded.get_field_by_name("times").unwrap();
+        let times_map = times_field.as_map().unwrap();
+        assert_eq!(times_map.len(), 1);
+
+        let tod_value = times_map
+            .get(&MapKey::String("noon".to_string()))
+            .unwrap()
+            .as_message()
+            .unwrap();
+        assert_eq!(
+            tod_value.get_field_by_name("hours").unwrap().as_i32(),
+            Some(12)
+        );
+        assert_eq!(
+            tod_value.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(30)
+        );
+        assert_eq!(
+            tod_value.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(45)
+        );
+        // Nanos preserved at millisecond precision
+        assert_eq!(
+            tod_value.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Timestamp overflow")]
+    fn test_timestamp_overflow_to_nanoseconds_panics() {
+        // Year 2500 timestamp that overflows when converted to nanoseconds
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Year 2500 timestamp (~16.7 billion seconds) which overflows i64 as nanoseconds
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(16_725_225_600)); // ~year 2500
+        ts.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+        // This should panic because the timestamp cannot be represented in nanoseconds
+        let config = PtarsConfig {
+            timestamp_unit: arrow_schema::TimeUnit::Nanosecond,
+            ..Default::default()
+        };
+        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+    }
+
+    #[test]
+    #[should_panic(expected = "Duration overflow")]
+    fn test_duration_overflow_to_nanoseconds_panics() {
+        // 500-year duration that overflows when converted to nanoseconds
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // 500-year duration (~15.8 billion seconds) which overflows i64 as nanoseconds
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(15_778_800_000)); // ~500 years
+        dur.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+        // This should panic because the duration cannot be represented in nanoseconds
+        let config = PtarsConfig {
+            duration_unit: arrow_schema::TimeUnit::Nanosecond,
+            ..Default::default()
+        };
+        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+    }
+
+    #[test]
+    fn test_list_nullable_config_in_field_to_tuple() {
+        use crate::proto_to_arrow::field_to_tuple;
+
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("TestMessage".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("values".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Int32.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("values", Value::List(vec![Value::I32(1), Value::I32(2)]));
+        let messages = vec![msg];
+
+        // Test with list_nullable = false (default)
+        let config_not_nullable = PtarsConfig {
+            list_nullable: false,
+            ..Default::default()
+        };
+        let field_descriptor = message_descriptor.get_field_by_name("values").unwrap();
+        let (field, _) =
+            field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
+        assert!(!field.is_nullable());
+
+        // Test with list_nullable = true
+        let config_nullable = PtarsConfig {
+            list_nullable: true,
+            ..Default::default()
+        };
+        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_nullable).unwrap();
+        assert!(field.is_nullable());
+    }
+
+    #[test]
+    fn test_map_nullable_config_in_field_to_tuple() {
+        use crate::proto_to_arrow::field_to_tuple;
+        use prost_reflect::MapKey;
+
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("TestMessage".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("mapping".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".test.TestMessage.MappingEntry".to_string()),
+                    ..Default::default()
+                }],
+                nested_type: vec![DescriptorProto {
+                    name: Some("MappingEntry".to_string()),
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        let mut map = std::collections::HashMap::new();
+        map.insert(MapKey::String("key1".to_string()), Value::I32(100));
+        msg.set_field_by_name("mapping", Value::Map(map));
+        let messages = vec![msg];
+
+        // Test with map_nullable = false (default)
+        let config_not_nullable = PtarsConfig {
+            map_nullable: false,
+            ..Default::default()
+        };
+        let field_descriptor = message_descriptor.get_field_by_name("mapping").unwrap();
+        let (field, _) =
+            field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
+        assert!(!field.is_nullable());
+
+        // Test with map_nullable = true
+        let config_nullable = PtarsConfig {
+            map_nullable: true,
+            ..Default::default()
+        };
+        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_nullable).unwrap();
+        assert!(field.is_nullable());
+    }
+
+    #[test]
+    fn test_map_custom_value_name_roundtrip() {
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("MapEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("MessageWithMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("my_map".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.MapEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.MessageWithMap").unwrap();
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(MapKey::String("key1".to_string()), Value::I32(100));
+        map_value.insert(MapKey::String("key2".to_string()), Value::I32(200));
+
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("my_map", Value::Map(map_value));
+
+        // Test roundtrip with custom map_value_name
+        let config = PtarsConfig::default().with_map_value_name("custom_val");
+        let record_batch =
+            messages_to_record_batch_with_config(&[message], &message_descriptor, &config);
+
+        // Convert back to proto - this should work with the fallback to column index
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        // Verify the map was correctly roundtripped
+        let map_field = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_field.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get(&MapKey::String("key1".to_string()))
+                .unwrap()
+                .as_i32(),
+            Some(100)
+        );
+        assert_eq!(
+            map.get(&MapKey::String("key2".to_string()))
+                .unwrap()
+                .as_i32(),
+            Some(200)
+        );
     }
 }

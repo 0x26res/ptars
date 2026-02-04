@@ -14,6 +14,7 @@ Example:
     ```
 """
 
+from ptars.config import PtarsConfig
 from ptars.internal import HandlerPool
 
-__all__ = ["HandlerPool"]
+__all__ = ["HandlerPool", "PtarsConfig"]

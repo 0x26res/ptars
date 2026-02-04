@@ -1,0 +1,13 @@
+# Markdownlint configuration
+MD013:
+  # Disable line length check for tables and code blocks
+  tables: false
+  code_blocks: false
+  # Allow longer lines in general (for links, etc.)
+  line_length: 120
+
+# Disable code block style requirement (allow both fenced and indented)
+MD046: false
+
+# Disable table column alignment style check
+MD060: false
