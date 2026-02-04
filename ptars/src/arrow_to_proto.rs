@@ -1,13 +1,16 @@
 use arrow::array::ArrayData;
 use arrow_array::builder::BinaryBuilder;
 use arrow_array::types::{
-    Date32Type, DurationNanosecondType, Float32Type, Float64Type, Int32Type, Int64Type,
-    Time64NanosecondType, TimestampNanosecondType, UInt32Type, UInt64Type,
+    Date32Type, DurationMicrosecondType, DurationMillisecondType, DurationNanosecondType,
+    DurationSecondType, Float32Type, Float64Type, Int32Type, Int64Type, Time32MillisecondType,
+    Time32SecondType, Time64MicrosecondType, Time64NanosecondType, TimestampMicrosecondType,
+    TimestampMillisecondType, TimestampNanosecondType, TimestampSecondType, UInt32Type, UInt64Type,
 };
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, MapArray,
     PrimitiveArray, RecordBatch, StringArray, StructArray,
 };
+use arrow_schema::{DataType, TimeUnit};
 use chrono::{Datelike, NaiveDate};
 use prost::Message;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MapKey, MessageDescriptor, Value};
@@ -27,6 +30,25 @@ fn nanos_to_seconds_and_nanos(nanos_total: i64) -> (i64, i32) {
         nanos += 1_000_000_000;
     }
     (seconds, nanos)
+}
+
+/// Convert a value from the given time unit to nanoseconds.
+fn time_unit_to_nanos(value: i64, unit: TimeUnit) -> i64 {
+    match unit {
+        TimeUnit::Second => value * 1_000_000_000,
+        TimeUnit::Millisecond => value * 1_000_000,
+        TimeUnit::Microsecond => value * 1_000,
+        TimeUnit::Nanosecond => value,
+    }
+}
+
+/// Convert a 32-bit time value from the given time unit to nanoseconds.
+fn time32_unit_to_nanos(value: i32, unit: TimeUnit) -> i64 {
+    match unit {
+        TimeUnit::Second => i64::from(value) * 1_000_000_000,
+        TimeUnit::Millisecond => i64::from(value) * 1_000_000,
+        _ => panic!("Time32 only supports Second and Millisecond units"),
+    }
 }
 
 /// Cached field descriptors for google.protobuf.Timestamp
@@ -406,32 +428,55 @@ fn extract_repeated_timestamp(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values: &PrimitiveArray<TimestampNanosecondType> = list_array
-        .values()
-        .as_any()
-        .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
-        .unwrap();
     let fields = TimestampFields::new(message_descriptor);
+    let values_array = list_array.values();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+    // Determine the time unit from the values array's data type
+    let time_unit = match values_array.data_type() {
+        DataType::Timestamp(unit, _) => *unit,
+        _ => panic!(
+            "Expected Timestamp array, got {:?}",
+            values_array.data_type()
+        ),
+    };
 
-            if start < end {
-                let sub_messages: Vec<Value> = (start..end)
-                    .map(|idx| {
-                        Value::Message(create_timestamp_message(
-                            values.value(idx),
-                            message_descriptor,
-                            &fields,
-                        ))
-                    })
-                    .collect();
+    // Helper macro to avoid code duplication
+    macro_rules! extract_timestamps {
+        ($array_type:ty) => {{
+            let values = values_array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<$array_type>>()
+                .expect(concat!("Failed to downcast to ", stringify!($array_type)));
 
-                message.set_field(field_descriptor, Value::List(sub_messages));
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let start = list_array.value_offsets()[i] as usize;
+                    let end = list_array.value_offsets()[i + 1] as usize;
+
+                    if start < end {
+                        let sub_messages: Vec<Value> = (start..end)
+                            .map(|idx| {
+                                let nanos = time_unit_to_nanos(values.value(idx), time_unit);
+                                Value::Message(create_timestamp_message(
+                                    nanos,
+                                    message_descriptor,
+                                    &fields,
+                                ))
+                            })
+                            .collect();
+
+                        message.set_field(field_descriptor, Value::List(sub_messages));
+                    }
+                }
             }
-        }
+        }};
+    }
+
+    match time_unit {
+        TimeUnit::Second => extract_timestamps!(TimestampSecondType),
+        TimeUnit::Millisecond => extract_timestamps!(TimestampMillisecondType),
+        TimeUnit::Microsecond => extract_timestamps!(TimestampMicrosecondType),
+        TimeUnit::Nanosecond => extract_timestamps!(TimestampNanosecondType),
     }
 }
 
@@ -441,32 +486,55 @@ fn extract_repeated_duration(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values: &PrimitiveArray<DurationNanosecondType> = list_array
-        .values()
-        .as_any()
-        .downcast_ref::<PrimitiveArray<DurationNanosecondType>>()
-        .unwrap();
     let fields = DurationFields::new(message_descriptor);
+    let values_array = list_array.values();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+    // Determine the time unit from the values array's data type
+    let time_unit = match values_array.data_type() {
+        DataType::Duration(unit) => *unit,
+        _ => panic!(
+            "Expected Duration array, got {:?}",
+            values_array.data_type()
+        ),
+    };
 
-            if start < end {
-                let sub_messages: Vec<Value> = (start..end)
-                    .map(|idx| {
-                        Value::Message(create_duration_message(
-                            values.value(idx),
-                            message_descriptor,
-                            &fields,
-                        ))
-                    })
-                    .collect();
+    // Helper macro to avoid code duplication
+    macro_rules! extract_durations {
+        ($array_type:ty) => {{
+            let values = values_array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<$array_type>>()
+                .expect(concat!("Failed to downcast to ", stringify!($array_type)));
 
-                message.set_field(field_descriptor, Value::List(sub_messages));
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let start = list_array.value_offsets()[i] as usize;
+                    let end = list_array.value_offsets()[i + 1] as usize;
+
+                    if start < end {
+                        let sub_messages: Vec<Value> = (start..end)
+                            .map(|idx| {
+                                let nanos = time_unit_to_nanos(values.value(idx), time_unit);
+                                Value::Message(create_duration_message(
+                                    nanos,
+                                    message_descriptor,
+                                    &fields,
+                                ))
+                            })
+                            .collect();
+
+                        message.set_field(field_descriptor, Value::List(sub_messages));
+                    }
+                }
             }
-        }
+        }};
+    }
+
+    match time_unit {
+        TimeUnit::Second => extract_durations!(DurationSecondType),
+        TimeUnit::Millisecond => extract_durations!(DurationMillisecondType),
+        TimeUnit::Microsecond => extract_durations!(DurationMicrosecondType),
+        TimeUnit::Nanosecond => extract_durations!(DurationNanosecondType),
     }
 }
 
@@ -511,32 +579,90 @@ fn extract_repeated_time_of_day(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values: &PrimitiveArray<Time64NanosecondType> = list_array
-        .values()
-        .as_any()
-        .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
-        .unwrap();
     let fields = TimeOfDayFields::new(message_descriptor);
+    let values_array = list_array.values();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+    // Helper macro for Time64 types
+    macro_rules! extract_time64 {
+        ($array_type:ty, $time_unit:expr) => {{
+            let values = values_array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<$array_type>>()
+                .expect(concat!("Failed to downcast to ", stringify!($array_type)));
 
-            if start < end {
-                let sub_messages: Vec<Value> = (start..end)
-                    .map(|idx| {
-                        Value::Message(create_time_of_day_message(
-                            values.value(idx),
-                            message_descriptor,
-                            &fields,
-                        ))
-                    })
-                    .collect();
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let start = list_array.value_offsets()[i] as usize;
+                    let end = list_array.value_offsets()[i + 1] as usize;
 
-                message.set_field(field_descriptor, Value::List(sub_messages));
+                    if start < end {
+                        let sub_messages: Vec<Value> = (start..end)
+                            .map(|idx| {
+                                let nanos = time_unit_to_nanos(values.value(idx), $time_unit);
+                                Value::Message(create_time_of_day_message(
+                                    nanos,
+                                    message_descriptor,
+                                    &fields,
+                                ))
+                            })
+                            .collect();
+
+                        message.set_field(field_descriptor, Value::List(sub_messages));
+                    }
+                }
             }
+        }};
+    }
+
+    // Helper macro for Time32 types
+    macro_rules! extract_time32 {
+        ($array_type:ty, $time_unit:expr) => {{
+            let values = values_array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<$array_type>>()
+                .expect(concat!("Failed to downcast to ", stringify!($array_type)));
+
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let start = list_array.value_offsets()[i] as usize;
+                    let end = list_array.value_offsets()[i + 1] as usize;
+
+                    if start < end {
+                        let sub_messages: Vec<Value> = (start..end)
+                            .map(|idx| {
+                                let nanos = time32_unit_to_nanos(values.value(idx), $time_unit);
+                                Value::Message(create_time_of_day_message(
+                                    nanos,
+                                    message_descriptor,
+                                    &fields,
+                                ))
+                            })
+                            .collect();
+
+                        message.set_field(field_descriptor, Value::List(sub_messages));
+                    }
+                }
+            }
+        }};
+    }
+
+    match values_array.data_type() {
+        DataType::Time32(TimeUnit::Second) => {
+            extract_time32!(Time32SecondType, TimeUnit::Second)
         }
+        DataType::Time32(TimeUnit::Millisecond) => {
+            extract_time32!(Time32MillisecondType, TimeUnit::Millisecond)
+        }
+        DataType::Time64(TimeUnit::Microsecond) => {
+            extract_time64!(Time64MicrosecondType, TimeUnit::Microsecond)
+        }
+        DataType::Time64(TimeUnit::Nanosecond) => {
+            extract_time64!(Time64NanosecondType, TimeUnit::Nanosecond)
+        }
+        _ => panic!(
+            "Expected Time32 or Time64 array, got {:?}",
+            values_array.data_type()
+        ),
     }
 }
 
@@ -1007,17 +1133,70 @@ fn extract_single_timestamp(
     message_descriptor: &MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let timestamp_array = array
-        .as_any()
-        .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
-        .unwrap();
     let fields = TimestampFields::new(message_descriptor);
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !timestamp_array.is_null(i) {
-            let ts_msg =
-                create_timestamp_message(timestamp_array.value(i), message_descriptor, &fields);
-            message.set_field(field_descriptor, Value::Message(ts_msg));
+    // Determine the time unit from the array's data type
+    let time_unit = match array.data_type() {
+        DataType::Timestamp(unit, _) => *unit,
+        _ => panic!("Expected Timestamp array, got {:?}", array.data_type()),
+    };
+
+    // Extract values based on the time unit
+    match time_unit {
+        TimeUnit::Second => {
+            let timestamp_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampSecondType>>()
+                .expect("Failed to downcast to TimestampSecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !timestamp_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(timestamp_array.value(i), time_unit);
+                    let ts_msg = create_timestamp_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(ts_msg));
+                }
+            }
+        }
+        TimeUnit::Millisecond => {
+            let timestamp_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampMillisecondType>>()
+                .expect("Failed to downcast to TimestampMillisecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !timestamp_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(timestamp_array.value(i), time_unit);
+                    let ts_msg = create_timestamp_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(ts_msg));
+                }
+            }
+        }
+        TimeUnit::Microsecond => {
+            let timestamp_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampMicrosecondType>>()
+                .expect("Failed to downcast to TimestampMicrosecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !timestamp_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(timestamp_array.value(i), time_unit);
+                    let ts_msg = create_timestamp_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(ts_msg));
+                }
+            }
+        }
+        TimeUnit::Nanosecond => {
+            let timestamp_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<TimestampNanosecondType>>()
+                .expect("Failed to downcast to TimestampNanosecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !timestamp_array.is_null(i) {
+                    let ts_msg = create_timestamp_message(
+                        timestamp_array.value(i),
+                        message_descriptor,
+                        &fields,
+                    );
+                    message.set_field(field_descriptor, Value::Message(ts_msg));
+                }
+            }
         }
     }
 }
@@ -1028,17 +1207,70 @@ fn extract_single_duration(
     message_descriptor: &MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let duration_array = array
-        .as_any()
-        .downcast_ref::<PrimitiveArray<DurationNanosecondType>>()
-        .unwrap();
     let fields = DurationFields::new(message_descriptor);
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !duration_array.is_null(i) {
-            let dur_msg =
-                create_duration_message(duration_array.value(i), message_descriptor, &fields);
-            message.set_field(field_descriptor, Value::Message(dur_msg));
+    // Determine the time unit from the array's data type
+    let time_unit = match array.data_type() {
+        DataType::Duration(unit) => *unit,
+        _ => panic!("Expected Duration array, got {:?}", array.data_type()),
+    };
+
+    // Extract values based on the time unit
+    match time_unit {
+        TimeUnit::Second => {
+            let duration_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<DurationSecondType>>()
+                .expect("Failed to downcast to DurationSecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !duration_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(duration_array.value(i), time_unit);
+                    let dur_msg = create_duration_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(dur_msg));
+                }
+            }
+        }
+        TimeUnit::Millisecond => {
+            let duration_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<DurationMillisecondType>>()
+                .expect("Failed to downcast to DurationMillisecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !duration_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(duration_array.value(i), time_unit);
+                    let dur_msg = create_duration_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(dur_msg));
+                }
+            }
+        }
+        TimeUnit::Microsecond => {
+            let duration_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<DurationMicrosecondType>>()
+                .expect("Failed to downcast to DurationMicrosecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !duration_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(duration_array.value(i), time_unit);
+                    let dur_msg = create_duration_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(dur_msg));
+                }
+            }
+        }
+        TimeUnit::Nanosecond => {
+            let duration_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<DurationNanosecondType>>()
+                .expect("Failed to downcast to DurationNanosecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !duration_array.is_null(i) {
+                    let dur_msg = create_duration_message(
+                        duration_array.value(i),
+                        message_descriptor,
+                        &fields,
+                    );
+                    message.set_field(field_descriptor, Value::Message(dur_msg));
+                }
+            }
         }
     }
 }
@@ -1069,18 +1301,69 @@ fn extract_single_time_of_day(
     message_descriptor: &MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let time_array = array
-        .as_any()
-        .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
-        .unwrap();
     let fields = TimeOfDayFields::new(message_descriptor);
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !time_array.is_null(i) {
-            let time_msg =
-                create_time_of_day_message(time_array.value(i), message_descriptor, &fields);
-            message.set_field(field_descriptor, Value::Message(time_msg));
+    // Handle Time32 (Second, Millisecond) and Time64 (Microsecond, Nanosecond)
+    match array.data_type() {
+        DataType::Time32(TimeUnit::Second) => {
+            let time_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Time32SecondType>>()
+                .expect("Failed to downcast to Time32SecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !time_array.is_null(i) {
+                    let nanos = time32_unit_to_nanos(time_array.value(i), TimeUnit::Second);
+                    let time_msg = create_time_of_day_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(time_msg));
+                }
+            }
         }
+        DataType::Time32(TimeUnit::Millisecond) => {
+            let time_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Time32MillisecondType>>()
+                .expect("Failed to downcast to Time32MillisecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !time_array.is_null(i) {
+                    let nanos = time32_unit_to_nanos(time_array.value(i), TimeUnit::Millisecond);
+                    let time_msg = create_time_of_day_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(time_msg));
+                }
+            }
+        }
+        DataType::Time64(TimeUnit::Microsecond) => {
+            let time_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Time64MicrosecondType>>()
+                .expect("Failed to downcast to Time64MicrosecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !time_array.is_null(i) {
+                    let nanos = time_unit_to_nanos(time_array.value(i), TimeUnit::Microsecond);
+                    let time_msg = create_time_of_day_message(nanos, message_descriptor, &fields);
+                    message.set_field(field_descriptor, Value::Message(time_msg));
+                }
+            }
+        }
+        DataType::Time64(TimeUnit::Nanosecond) => {
+            let time_array = array
+                .as_any()
+                .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()
+                .expect("Failed to downcast to Time64NanosecondType");
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !time_array.is_null(i) {
+                    let time_msg = create_time_of_day_message(
+                        time_array.value(i),
+                        message_descriptor,
+                        &fields,
+                    );
+                    message.set_field(field_descriptor, Value::Message(time_msg));
+                }
+            }
+        }
+        _ => panic!(
+            "Expected Time32 or Time64 array, got {:?}",
+            array.data_type()
+        ),
     }
 }
 

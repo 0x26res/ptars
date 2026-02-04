@@ -1,4 +1,5 @@
 import datetime
+import zoneinfo
 
 import pyarrow as pa
 import pytest
@@ -22,74 +23,88 @@ class TestTimestampConfig:
     def test_timestamp_nanoseconds_default(self):
         """Default config uses nanoseconds."""
         pool = HandlerPool([DESCRIPTOR])
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp("ns", tz="UTC")
+        # Roundtrip should preserve full precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_timestamp_nanoseconds_explicit(self):
         """Explicit nanosecond config."""
         config = PtarsConfig(timestamp_unit="ns")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp("ns", tz="UTC")
+        # Roundtrip should preserve full precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_timestamp_microseconds(self):
         """Microsecond timestamp config."""
         config = PtarsConfig(timestamp_unit="us")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp("us", tz="UTC")
+        assert batch["timestamp"].to_pylist() == [
+            datetime.datetime(
+                1970, 1, 1, 0, 0, 1, 500000, tzinfo=zoneinfo.ZoneInfo(key="UTC")
+            )
+        ]
+        # Roundtrip preserves microsecond precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_timestamp_milliseconds(self):
         """Millisecond timestamp config."""
         config = PtarsConfig(timestamp_unit="ms")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        # Use a value that has exact millisecond precision
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp("ms", tz="UTC")
+        # Roundtrip preserves millisecond precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_timestamp_seconds(self):
         """Second timestamp config."""
         config = PtarsConfig(timestamp_unit="s")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=500_000_000))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        # Use a value with only second precision for exact roundtrip
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=0))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp("s", tz="UTC")
+        # Roundtrip preserves second precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_timestamp_no_timezone(self):
         """Timestamp without timezone."""
         config = PtarsConfig(timestamp_tz=None, timestamp_unit="ns")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=0))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=0))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp("ns")
         assert batch.schema.field("timestamp").type.tz is None
+        # Roundtrip should preserve the value
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_timestamp_custom_timezone(self):
         """Timestamp with custom timezone."""
         config = PtarsConfig(timestamp_tz="America/New_York")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=0))],
-            WithTimestamp.DESCRIPTOR,
-        )
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=1, nanos=0))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
         assert batch.schema.field("timestamp").type == pa.timestamp(
             "ns", tz="America/New_York"
         )
+        # Roundtrip should preserve the value
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back == messages
 
 
 class TestDurationConfig:
@@ -98,73 +113,82 @@ class TestDurationConfig:
     def test_duration_nanoseconds_default(self):
         """Default config uses nanoseconds."""
         pool = HandlerPool([DESCRIPTOR])
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
-            WithDuration.DESCRIPTOR,
-        )
+        messages = [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         assert batch.schema.field("duration").type == pa.duration("ns")
+        # Roundtrip should preserve full precision
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_duration_nanoseconds_explicit(self):
         """Explicit nanosecond config."""
         config = PtarsConfig(duration_unit="ns")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
-            WithDuration.DESCRIPTOR,
-        )
+        messages = [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         assert batch.schema.field("duration").type == pa.duration("ns")
+        # Roundtrip should preserve full precision
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_duration_microseconds(self):
         """Microsecond duration config."""
         config = PtarsConfig(duration_unit="us")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
-            WithDuration.DESCRIPTOR,
-        )
+        messages = [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         assert batch.schema.field("duration").type == pa.duration("us")
+        # Roundtrip preserves microsecond precision
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_duration_milliseconds(self):
         """Millisecond duration config."""
         config = PtarsConfig(duration_unit="ms")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
-            WithDuration.DESCRIPTOR,
-        )
+        # Use a value with exact millisecond precision
+        messages = [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         assert batch.schema.field("duration").type == pa.duration("ms")
+        # Roundtrip preserves millisecond precision
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_duration_seconds(self):
         """Second duration config."""
         config = PtarsConfig(duration_unit="s")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
-            WithDuration.DESCRIPTOR,
-        )
+        # Use a value with only second precision for exact roundtrip
+        messages = [WithDuration(duration=Duration(seconds=1, nanos=0))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         assert batch.schema.field("duration").type == pa.duration("s")
+        # Roundtrip preserves second precision
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_duration_value_conversion_nanoseconds(self):
         """Test that duration values are correctly converted to nanoseconds."""
         pool = HandlerPool([DESCRIPTOR])
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))],
-            WithDuration.DESCRIPTOR,
-        )
+        messages = [WithDuration(duration=Duration(seconds=1, nanos=500_000_000))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         # 1.5 seconds = 1,500,000,000 nanoseconds
         assert batch["duration"].to_pylist() == [
             datetime.timedelta(seconds=1, microseconds=500_000)
         ]
+        # Roundtrip
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_duration_value_conversion_seconds(self):
         """Test that duration values are correctly converted to seconds."""
         config = PtarsConfig(duration_unit="s")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [WithDuration(duration=Duration(seconds=3600, nanos=0))],  # 1 hour
-            WithDuration.DESCRIPTOR,
-        )
+        messages = [WithDuration(duration=Duration(seconds=3600, nanos=0))]  # 1 hour
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
         assert batch["duration"].to_pylist() == [datetime.timedelta(hours=1)]
+        # Roundtrip
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back == messages
 
     @pytest.mark.parametrize(
         ("duration_unit", "expected_type"),
@@ -192,81 +216,76 @@ class TestTimeOfDayConfig:
     def test_time_of_day_nanoseconds_default(self):
         """Default config uses nanoseconds."""
         pool = HandlerPool([DESCRIPTOR])
-        batch = pool.messages_to_record_batch(
-            [
-                WithTimeOfDay(
-                    time_of_day=TimeOfDay(
-                        hours=1, minutes=2, seconds=3, nanos=500_000_000
-                    )
-                )
-            ],
-            WithTimeOfDay.DESCRIPTOR,
-        )
+        messages = [
+            WithTimeOfDay(
+                time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000)
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
         assert batch.schema.field("time_of_day").type == pa.time64("ns")
+        # Roundtrip should preserve full precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_time_of_day_nanoseconds_explicit(self):
         """Explicit nanosecond config."""
         config = PtarsConfig(time_unit="ns")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [
-                WithTimeOfDay(
-                    time_of_day=TimeOfDay(
-                        hours=1, minutes=2, seconds=3, nanos=500_000_000
-                    )
-                )
-            ],
-            WithTimeOfDay.DESCRIPTOR,
-        )
+        messages = [
+            WithTimeOfDay(
+                time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000)
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
         assert batch.schema.field("time_of_day").type == pa.time64("ns")
+        # Roundtrip should preserve full precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_time_of_day_microseconds(self):
         """Microsecond time config."""
         config = PtarsConfig(time_unit="us")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [
-                WithTimeOfDay(
-                    time_of_day=TimeOfDay(
-                        hours=1, minutes=2, seconds=3, nanos=500_000_000
-                    )
-                )
-            ],
-            WithTimeOfDay.DESCRIPTOR,
-        )
+        messages = [
+            WithTimeOfDay(
+                time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000)
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
         assert batch.schema.field("time_of_day").type == pa.time64("us")
+        # Roundtrip preserves microsecond precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_time_of_day_milliseconds(self):
         """Millisecond time config."""
         config = PtarsConfig(time_unit="ms")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [
-                WithTimeOfDay(
-                    time_of_day=TimeOfDay(
-                        hours=1, minutes=2, seconds=3, nanos=500_000_000
-                    )
-                )
-            ],
-            WithTimeOfDay.DESCRIPTOR,
-        )
+        # Use a value with exact millisecond precision
+        messages = [
+            WithTimeOfDay(
+                time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=500_000_000)
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
         assert batch.schema.field("time_of_day").type == pa.time32("ms")
+        # Roundtrip preserves millisecond precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_time_of_day_seconds(self):
         """Second time config."""
         config = PtarsConfig(time_unit="s")
         pool = HandlerPool([DESCRIPTOR], config=config)
-        batch = pool.messages_to_record_batch(
-            [
-                WithTimeOfDay(
-                    time_of_day=TimeOfDay(
-                        hours=1, minutes=2, seconds=3, nanos=500_000_000
-                    )
-                )
-            ],
-            WithTimeOfDay.DESCRIPTOR,
-        )
+        # Use a value with only second precision for exact roundtrip
+        messages = [
+            WithTimeOfDay(time_of_day=TimeOfDay(hours=1, minutes=2, seconds=3, nanos=0))
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
         assert batch.schema.field("time_of_day").type == pa.time32("s")
+        # Roundtrip preserves second precision
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert messages_back == messages
 
     def test_time_of_day_value_conversion(self):
         """Test that time values are correctly converted."""
@@ -277,12 +296,13 @@ class TestTimeOfDayConfig:
         )  # microsecond precision in Python
 
         pool = HandlerPool([DESCRIPTOR])
-        batch = pool.messages_to_record_batch(
-            [WithTimeOfDay(time_of_day=time_of_day)],
-            WithTimeOfDay.DESCRIPTOR,
-        )
+        messages = [WithTimeOfDay(time_of_day=time_of_day)]
+        batch = pool.messages_to_record_batch(messages, WithTimeOfDay.DESCRIPTOR)
         # PyArrow converts to datetime.time
         assert batch["time_of_day"].to_pylist() == [expected_time]
+        # Roundtrip
+        messages_back = pool.record_batch_to_messages(batch, WithTimeOfDay.DESCRIPTOR)
+        assert messages_back == messages
 
     @pytest.mark.parametrize(
         ("time_unit", "expected_type"),

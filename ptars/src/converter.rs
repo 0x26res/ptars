@@ -4205,4 +4205,211 @@ mod tests {
         // 1.5 seconds truncated to seconds = 1
         assert_eq!(dur_array_s.value(0), 1i64);
     }
+
+    #[test]
+    fn test_duration_microsecond_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(3600)); // 1 hour
+        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+
+        // Test microsecond unit roundtrip
+        let config_us = PtarsConfig {
+            duration_unit: TimeUnit::Microsecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_us);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let dur_value = decoded.get_field_by_name("dur").unwrap();
+        let dur_msg = dur_value.as_message().unwrap();
+        // Should preserve seconds, but nanos will be truncated to microsecond precision
+        assert_eq!(
+            dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(3600)
+        );
+        // 500_000_000 nanos -> 500_000 us -> 500_000_000 nanos (preserved at us precision)
+        assert_eq!(
+            dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
+
+    #[test]
+    fn test_timestamp_microsecond_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(1700000000));
+        ts.set_field_by_name("nanos", Value::I32(123_456_000)); // microsecond precision
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+
+        // Test microsecond unit roundtrip
+        let config_us = PtarsConfig {
+            timestamp_unit: TimeUnit::Microsecond,
+            timestamp_tz: None,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_us);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let ts_value = decoded.get_field_by_name("ts").unwrap();
+        let ts_msg = ts_value.as_message().unwrap();
+        assert_eq!(
+            ts_msg.get_field_by_name("seconds").unwrap().as_i64(),
+            Some(1700000000)
+        );
+        assert_eq!(
+            ts_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(123_456_000)
+        );
+    }
+
+    #[test]
+    fn test_time_of_day_millisecond_roundtrip() {
+        use arrow_schema::TimeUnit;
+
+        let mut pool = create_time_of_day_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/type/timeofday.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimeOfDay".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("tod".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.type.TimeOfDay".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimeOfDay").unwrap();
+        let time_of_day_descriptor = pool.get_message_by_name("google.type.TimeOfDay").unwrap();
+
+        let mut tod = DynamicMessage::new(time_of_day_descriptor.clone());
+        tod.set_field_by_name("hours", Value::I32(12));
+        tod.set_field_by_name("minutes", Value::I32(30));
+        tod.set_field_by_name("seconds", Value::I32(45));
+        tod.set_field_by_name("nanos", Value::I32(500_000_000)); // 0.5 seconds
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("tod", Value::Message(tod));
+
+        let messages = vec![msg];
+
+        // Test millisecond unit roundtrip (uses Time32)
+        let config_ms = PtarsConfig {
+            time_unit: TimeUnit::Millisecond,
+            ..Default::default()
+        };
+        let record_batch =
+            messages_to_record_batch_with_config(&messages, &message_descriptor, &config_ms);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let tod_value = decoded.get_field_by_name("tod").unwrap();
+        let tod_msg = tod_value.as_message().unwrap();
+        assert_eq!(
+            tod_msg.get_field_by_name("hours").unwrap().as_i32(),
+            Some(12)
+        );
+        assert_eq!(
+            tod_msg.get_field_by_name("minutes").unwrap().as_i32(),
+            Some(30)
+        );
+        assert_eq!(
+            tod_msg.get_field_by_name("seconds").unwrap().as_i32(),
+            Some(45)
+        );
+        // Nanos preserved at millisecond precision
+        assert_eq!(
+            tod_msg.get_field_by_name("nanos").unwrap().as_i32(),
+            Some(500_000_000)
+        );
+    }
 }
