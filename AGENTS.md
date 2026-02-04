@@ -15,11 +15,11 @@ dependencies.
 
 ## Running Linters
 
-This project uses `pre-commit` to run a suite of linters.
+This project uses `prek` to run a suite of linters.
 To run the linters on all files, use the following command:
 
 ```bash
-pre-commit run --all-files
+prek run --all-files
 ```
 
 To run the Rust linter (`clippy`) specifically, use the following command:

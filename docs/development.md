@@ -69,7 +69,7 @@ make dist
 
 ## Linting
 
-Run all linters (Rust formatter, clippy, pre-commit):
+Run all linters (Rust formatter, clippy, prek):
 
 ```bash
 make lint
@@ -107,7 +107,7 @@ make benchmark
 2. Update the cargo lock file: `cargo generate-lockfile`
 3. Update the version in `pyproject.toml`
 4. Update the uv lock file: `uv lock --upgrade`
-5. Run pre-commit: `pre-commit autoupdate && pre-commit run --all-files`
+5. Run prek: `prek autoupdate && prek run --all-files`
 6. Tag and push (prepend `v` to the version, e.g., `v0.0.8`)
 
 The CI script for releases is auto-generated:

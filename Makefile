@@ -41,7 +41,7 @@ protoc: env
 lint:
 	cargo fmt && \
 		cargo clippy -- -D warnings && \
-		pre-commit run --all-files
+		prek run --all-files
 
 .PHONY: coverage-env
 coverage-env:
@@ -59,7 +59,7 @@ coverage: develop coverage-env
 update:
 	cargo generate-lockfile && \
 		uv lock --upgrade && \
-		pre-commit autoupdate && pre-commit run --all-files && \
+		prek autoupdate && prek run --all-files && \
 		uv pip compile docs/requirements.txt.in > docs/requirements.txt
 
 .PHONY: benchmark
