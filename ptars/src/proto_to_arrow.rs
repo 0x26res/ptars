@@ -198,6 +198,17 @@ pub fn is_nullable(field: &FieldDescriptor) -> bool {
     field.supports_presence()
 }
 
+/// Determine nullability for a field, taking config into account for lists and maps.
+fn is_nullable_with_config(field: &FieldDescriptor, config: &PtarsConfig) -> bool {
+    if field.is_list() {
+        config.list_nullable
+    } else if field.is_map() {
+        config.map_nullable
+    } else {
+        field.supports_presence()
+    }
+}
+
 pub fn field_to_tuple(
     field: &FieldDescriptor,
     messages: &[DynamicMessage],
@@ -209,7 +220,7 @@ pub fn field_to_tuple(
             Arc::new(Field::new(
                 field.name(),
                 array.data_type().clone(),
-                is_nullable(field),
+                is_nullable_with_config(field, config),
             )),
             array,
         )),
@@ -924,11 +935,38 @@ impl TimestampArrayBuilder {
     }
 
     fn convert_to_unit(&self, seconds: i64, nanos: i32) -> i64 {
-        match self.time_unit {
-            TimeUnit::Second => seconds,
-            TimeUnit::Millisecond => seconds * 1_000 + i64::from(nanos) / 1_000_000,
-            TimeUnit::Microsecond => seconds * 1_000_000 + i64::from(nanos) / 1_000,
-            TimeUnit::Nanosecond => seconds * 1_000_000_000 + i64::from(nanos),
+        convert_seconds_nanos_to_unit(seconds, nanos, self.time_unit, "Timestamp")
+    }
+}
+
+/// Convert seconds and nanos to a value in the specified time unit with overflow checking.
+/// Panics if the conversion would overflow i64.
+fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit, type_name: &str) -> i64 {
+    match unit {
+        TimeUnit::Second => seconds,
+        TimeUnit::Millisecond => {
+            let scaled = seconds
+                .checked_mul(1_000)
+                .unwrap_or_else(|| panic!("{type_name} overflow: {seconds} seconds cannot be represented in milliseconds"));
+            scaled
+                .checked_add(i64::from(nanos) / 1_000_000)
+                .unwrap_or_else(|| panic!("{type_name} overflow: value cannot be represented in milliseconds"))
+        }
+        TimeUnit::Microsecond => {
+            let scaled = seconds
+                .checked_mul(1_000_000)
+                .unwrap_or_else(|| panic!("{type_name} overflow: {seconds} seconds cannot be represented in microseconds"));
+            scaled
+                .checked_add(i64::from(nanos) / 1_000)
+                .unwrap_or_else(|| panic!("{type_name} overflow: value cannot be represented in microseconds"))
+        }
+        TimeUnit::Nanosecond => {
+            let scaled = seconds
+                .checked_mul(1_000_000_000)
+                .unwrap_or_else(|| panic!("{type_name} overflow: {seconds} seconds cannot be represented in nanoseconds"));
+            scaled
+                .checked_add(i64::from(nanos))
+                .unwrap_or_else(|| panic!("{type_name} overflow: value cannot be represented in nanoseconds"))
         }
     }
 }
@@ -1064,13 +1102,11 @@ impl TimeOfDayArrayBuilder {
     }
 
     fn convert_to_unit(&self, hours: i64, minutes: i64, seconds: i64, nanos: i64) -> i64 {
+        // TimeOfDay is bounded (max 23:59:59.999999999), so total_seconds <= 86399
+        // which fits easily in i64 for all time units. Still use checked arithmetic
+        // for consistency and to catch any malformed input.
         let total_seconds = hours * 3600 + minutes * 60 + seconds;
-        match self.time_unit {
-            TimeUnit::Second => total_seconds,
-            TimeUnit::Millisecond => total_seconds * 1_000 + nanos / 1_000_000,
-            TimeUnit::Microsecond => total_seconds * 1_000_000 + nanos / 1_000,
-            TimeUnit::Nanosecond => total_seconds * 1_000_000_000 + nanos,
-        }
+        convert_seconds_nanos_to_unit(total_seconds, nanos as i32, self.time_unit, "TimeOfDay")
     }
 }
 
@@ -1187,12 +1223,7 @@ impl DurationArrayBuilder {
     }
 
     fn convert_to_unit(&self, seconds: i64, nanos: i32) -> i64 {
-        match self.time_unit {
-            TimeUnit::Second => seconds,
-            TimeUnit::Millisecond => seconds * 1_000 + i64::from(nanos) / 1_000_000,
-            TimeUnit::Microsecond => seconds * 1_000_000 + i64::from(nanos) / 1_000,
-            TimeUnit::Nanosecond => seconds * 1_000_000_000 + i64::from(nanos),
-        }
+        convert_seconds_nanos_to_unit(seconds, nanos, self.time_unit, "Duration")
     }
 }
 

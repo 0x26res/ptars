@@ -5336,4 +5336,224 @@ mod tests {
             Some(500_000_000)
         );
     }
+
+    #[test]
+    #[should_panic(expected = "Timestamp overflow")]
+    fn test_timestamp_overflow_to_nanoseconds_panics() {
+        // Year 2500 timestamp that overflows when converted to nanoseconds
+        let mut pool = create_timestamp_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/timestamp.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithTimestamp".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("ts".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Timestamp".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithTimestamp").unwrap();
+        let timestamp_descriptor = pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .unwrap();
+
+        // Year 2500 timestamp (~16.7 billion seconds) which overflows i64 as nanoseconds
+        let mut ts = DynamicMessage::new(timestamp_descriptor.clone());
+        ts.set_field_by_name("seconds", Value::I64(16_725_225_600)); // ~year 2500
+        ts.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("ts", Value::Message(ts));
+
+        let messages = vec![msg];
+        // This should panic because the timestamp cannot be represented in nanoseconds
+        let config = PtarsConfig {
+            timestamp_unit: arrow_schema::TimeUnit::Nanosecond,
+            ..Default::default()
+        };
+        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+    }
+
+    #[test]
+    #[should_panic(expected = "Duration overflow")]
+    fn test_duration_overflow_to_nanoseconds_panics() {
+        // 500-year duration that overflows when converted to nanoseconds
+        let mut pool = create_duration_pool();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            dependency: vec!["google/protobuf/duration.proto".to_string()],
+            message_type: vec![DescriptorProto {
+                name: Some("WithDuration".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("dur".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".google.protobuf.Duration".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.WithDuration").unwrap();
+        let duration_descriptor = pool
+            .get_message_by_name("google.protobuf.Duration")
+            .unwrap();
+
+        // 500-year duration (~15.8 billion seconds) which overflows i64 as nanoseconds
+        let mut dur = DynamicMessage::new(duration_descriptor.clone());
+        dur.set_field_by_name("seconds", Value::I64(15_778_800_000)); // ~500 years
+        dur.set_field_by_name("nanos", Value::I32(0));
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("dur", Value::Message(dur));
+
+        let messages = vec![msg];
+        // This should panic because the duration cannot be represented in nanoseconds
+        let config = PtarsConfig {
+            duration_unit: arrow_schema::TimeUnit::Nanosecond,
+            ..Default::default()
+        };
+        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+    }
+
+    #[test]
+    fn test_list_nullable_config_in_field_to_tuple() {
+        use crate::proto_to_arrow::field_to_tuple;
+
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("TestMessage".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("values".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Int32.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("values", Value::List(vec![Value::I32(1), Value::I32(2)]));
+        let messages = vec![msg];
+
+        // Test with list_nullable = false (default)
+        let config_not_nullable = PtarsConfig {
+            list_nullable: false,
+            ..Default::default()
+        };
+        let field_descriptor = message_descriptor.get_field_by_name("values").unwrap();
+        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
+        assert!(!field.is_nullable());
+
+        // Test with list_nullable = true
+        let config_nullable = PtarsConfig {
+            list_nullable: true,
+            ..Default::default()
+        };
+        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_nullable).unwrap();
+        assert!(field.is_nullable());
+    }
+
+    #[test]
+    fn test_map_nullable_config_in_field_to_tuple() {
+        use crate::proto_to_arrow::field_to_tuple;
+        use prost_reflect::MapKey;
+
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("TestMessage".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("mapping".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.TestMessage.MappingEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    nested_type: vec![DescriptorProto {
+                        name: Some("MappingEntry".to_string()),
+                        options: Some(prost_reflect::prost_types::MessageOptions {
+                            map_entry: Some(true),
+                            ..Default::default()
+                        }),
+                        field: vec![
+                            FieldDescriptorProto {
+                                name: Some("key".to_string()),
+                                number: Some(1),
+                                label: Some(Label::Optional.into()),
+                                r#type: Some(Type::String.into()),
+                                ..Default::default()
+                            },
+                            FieldDescriptorProto {
+                                name: Some("value".to_string()),
+                                number: Some(2),
+                                label: Some(Label::Optional.into()),
+                                r#type: Some(Type::Int32.into()),
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.TestMessage").unwrap();
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        let mut map = std::collections::HashMap::new();
+        map.insert(MapKey::String("key1".to_string()), Value::I32(100));
+        msg.set_field_by_name("mapping", Value::Map(map));
+        let messages = vec![msg];
+
+        // Test with map_nullable = false (default)
+        let config_not_nullable = PtarsConfig {
+            map_nullable: false,
+            ..Default::default()
+        };
+        let field_descriptor = message_descriptor.get_field_by_name("mapping").unwrap();
+        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
+        assert!(!field.is_nullable());
+
+        // Test with map_nullable = true
+        let config_nullable = PtarsConfig {
+            map_nullable: true,
+            ..Default::default()
+        };
+        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_nullable).unwrap();
+        assert!(field.is_nullable());
+    }
 }

@@ -515,7 +515,9 @@ fn extract_repeated_timestamp(
                     let end = list_array.value_offsets()[i + 1] as usize;
 
                     if start < end {
+                        // Filter out null child values - protobuf repeated fields cannot contain nulls
                         let sub_messages: Vec<Value> = (start..end)
+                            .filter(|&idx| !values.is_null(idx))
                             .map(|idx| {
                                 let (seconds, nanos) =
                                     time_unit_to_seconds_and_nanos(values.value(idx), time_unit);
@@ -528,7 +530,9 @@ fn extract_repeated_timestamp(
                             })
                             .collect();
 
-                        message.set_field(field_descriptor, Value::List(sub_messages));
+                        if !sub_messages.is_empty() {
+                            message.set_field(field_descriptor, Value::List(sub_messages));
+                        }
                     }
                 }
             }
@@ -575,10 +579,14 @@ fn extract_repeated_duration(
                     let end = list_array.value_offsets()[i + 1] as usize;
 
                     if start < end {
+                        // Filter out null child values - protobuf repeated fields cannot contain nulls
                         let sub_messages: Vec<Value> = (start..end)
+                            .filter(|&idx| !values.is_null(idx))
                             .map(|idx| {
-                                let (seconds, nanos) =
-                                    time_unit_to_duration_seconds_and_nanos(values.value(idx), time_unit);
+                                let (seconds, nanos) = time_unit_to_duration_seconds_and_nanos(
+                                    values.value(idx),
+                                    time_unit,
+                                );
                                 Value::Message(create_duration_message(
                                     seconds,
                                     nanos,
@@ -588,7 +596,9 @@ fn extract_repeated_duration(
                             })
                             .collect();
 
-                        message.set_field(field_descriptor, Value::List(sub_messages));
+                        if !sub_messages.is_empty() {
+                            message.set_field(field_descriptor, Value::List(sub_messages));
+                        }
                     }
                 }
             }
@@ -661,7 +671,9 @@ fn extract_repeated_time_of_day(
                     let end = list_array.value_offsets()[i + 1] as usize;
 
                     if start < end {
+                        // Filter out null child values - protobuf repeated fields cannot contain nulls
                         let sub_messages: Vec<Value> = (start..end)
+                            .filter(|&idx| !values.is_null(idx))
                             .map(|idx| {
                                 let nanos = time64_unit_to_nanos(values.value(idx), $time_unit);
                                 Value::Message(create_time_of_day_message(
@@ -672,7 +684,9 @@ fn extract_repeated_time_of_day(
                             })
                             .collect();
 
-                        message.set_field(field_descriptor, Value::List(sub_messages));
+                        if !sub_messages.is_empty() {
+                            message.set_field(field_descriptor, Value::List(sub_messages));
+                        }
                     }
                 }
             }
@@ -693,7 +707,9 @@ fn extract_repeated_time_of_day(
                     let end = list_array.value_offsets()[i + 1] as usize;
 
                     if start < end {
+                        // Filter out null child values - protobuf repeated fields cannot contain nulls
                         let sub_messages: Vec<Value> = (start..end)
+                            .filter(|&idx| !values.is_null(idx))
                             .map(|idx| {
                                 let nanos = time32_unit_to_nanos(values.value(idx), $time_unit);
                                 Value::Message(create_time_of_day_message(
@@ -704,7 +720,9 @@ fn extract_repeated_time_of_day(
                             })
                             .collect();
 
-                        message.set_field(field_descriptor, Value::List(sub_messages));
+                        if !sub_messages.is_empty() {
+                            message.set_field(field_descriptor, Value::List(sub_messages));
+                        }
                     }
                 }
             }
@@ -1740,7 +1758,8 @@ fn extract_map_message_value(
                 if arr.is_null(idx) {
                     return None;
                 }
-                let (seconds, nanos) = time_unit_to_duration_seconds_and_nanos(arr.value(idx), $time_unit);
+                let (seconds, nanos) =
+                    time_unit_to_duration_seconds_and_nanos(arr.value(idx), $time_unit);
                 return Some(Value::Message(create_duration_message(
                     seconds,
                     nanos,
