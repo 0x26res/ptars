@@ -4065,9 +4065,10 @@ mod tests {
             .unwrap();
 
         // Test negative duration (-1.5 seconds)
+        // Per protobuf spec, seconds and nanos must have the same sign (or one is zero)
         let mut dur = DynamicMessage::new(duration_descriptor.clone());
-        dur.set_field_by_name("seconds", Value::I64(-2));
-        dur.set_field_by_name("nanos", Value::I32(500_000_000)); // Per protobuf spec: sign must match seconds
+        dur.set_field_by_name("seconds", Value::I64(-1));
+        dur.set_field_by_name("nanos", Value::I32(-500_000_000));
 
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("dur", Value::Message(dur));
@@ -4084,11 +4085,11 @@ mod tests {
         let dur_msg = dur_value.as_message().unwrap();
         assert_eq!(
             dur_msg.get_field_by_name("seconds").unwrap().as_i64(),
-            Some(-2)
+            Some(-1)
         );
         assert_eq!(
             dur_msg.get_field_by_name("nanos").unwrap().as_i32(),
-            Some(500_000_000)
+            Some(-500_000_000)
         );
     }
 

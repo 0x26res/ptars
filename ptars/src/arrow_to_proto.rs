@@ -19,12 +19,13 @@ use std::collections::HashMap;
 // Days from CE epoch to Unix epoch (1970-01-01)
 const CE_OFFSET: i32 = 719163;
 
-/// Convert total nanoseconds to (seconds, nanos) tuple.
+/// Convert total nanoseconds to (seconds, nanos) tuple for Timestamp.
 /// Handles negative values correctly by ensuring nanos is always in [0, 999999999].
+/// This is correct for google.protobuf.Timestamp where nanos must be non-negative.
 fn nanos_to_seconds_and_nanos(nanos_total: i64) -> (i64, i32) {
     let mut seconds = nanos_total / 1_000_000_000;
     let mut nanos = (nanos_total % 1_000_000_000) as i32;
-    // Ensure nanos is non-negative (protobuf requirement)
+    // Ensure nanos is non-negative (protobuf Timestamp requirement)
     if nanos < 0 {
         seconds -= 1;
         nanos += 1_000_000_000;
@@ -32,7 +33,17 @@ fn nanos_to_seconds_and_nanos(nanos_total: i64) -> (i64, i32) {
     (seconds, nanos)
 }
 
-/// Convert a value from the given time unit directly to (seconds, nanos) tuple.
+/// Convert total nanoseconds to (seconds, nanos) tuple for Duration.
+/// For google.protobuf.Duration, seconds and nanos must have the same sign (or one is zero).
+/// This differs from Timestamp where nanos is always non-negative.
+fn nanos_to_duration_seconds_and_nanos(nanos_total: i64) -> (i64, i32) {
+    let seconds = nanos_total / 1_000_000_000;
+    let nanos = (nanos_total % 1_000_000_000) as i32;
+    // For Duration, nanos sign must match seconds sign (Rust's % preserves sign)
+    (seconds, nanos)
+}
+
+/// Convert a value from the given time unit directly to (seconds, nanos) tuple for Timestamp.
 /// This avoids overflow that would occur when converting large values to nanoseconds.
 /// Handles negative values correctly by ensuring nanos is always in [0, 999999999].
 fn time_unit_to_seconds_and_nanos(value: i64, unit: TimeUnit) -> (i64, i32) {
@@ -57,6 +68,27 @@ fn time_unit_to_seconds_and_nanos(value: i64, unit: TimeUnit) -> (i64, i32) {
             (seconds, nanos)
         }
         TimeUnit::Nanosecond => nanos_to_seconds_and_nanos(value),
+    }
+}
+
+/// Convert a value from the given time unit directly to (seconds, nanos) tuple for Duration.
+/// For google.protobuf.Duration, seconds and nanos must have the same sign (or one is zero).
+/// This differs from time_unit_to_seconds_and_nanos which normalizes for Timestamp.
+fn time_unit_to_duration_seconds_and_nanos(value: i64, unit: TimeUnit) -> (i64, i32) {
+    match unit {
+        TimeUnit::Second => (value, 0),
+        TimeUnit::Millisecond => {
+            let seconds = value / 1_000;
+            let nanos = ((value % 1_000) * 1_000_000) as i32;
+            // Rust's % preserves sign, so nanos will have same sign as value
+            (seconds, nanos)
+        }
+        TimeUnit::Microsecond => {
+            let seconds = value / 1_000_000;
+            let nanos = ((value % 1_000_000) * 1_000) as i32;
+            (seconds, nanos)
+        }
+        TimeUnit::Nanosecond => nanos_to_duration_seconds_and_nanos(value),
     }
 }
 
@@ -546,7 +578,7 @@ fn extract_repeated_duration(
                         let sub_messages: Vec<Value> = (start..end)
                             .map(|idx| {
                                 let (seconds, nanos) =
-                                    time_unit_to_seconds_and_nanos(values.value(idx), time_unit);
+                                    time_unit_to_duration_seconds_and_nanos(values.value(idx), time_unit);
                                 Value::Message(create_duration_message(
                                     seconds,
                                     nanos,
@@ -1225,7 +1257,7 @@ fn extract_single_duration(
             for (i, message) in messages.iter_mut().enumerate() {
                 if !duration_array.is_null(i) {
                     let (seconds, nanos) =
-                        time_unit_to_seconds_and_nanos(duration_array.value(i), time_unit);
+                        time_unit_to_duration_seconds_and_nanos(duration_array.value(i), time_unit);
                     let dur_msg =
                         create_duration_message(seconds, nanos, message_descriptor, &fields);
                     message.set_field(field_descriptor, Value::Message(dur_msg));
@@ -1708,7 +1740,7 @@ fn extract_map_message_value(
                 if arr.is_null(idx) {
                     return None;
                 }
-                let (seconds, nanos) = time_unit_to_seconds_and_nanos(arr.value(idx), $time_unit);
+                let (seconds, nanos) = time_unit_to_duration_seconds_and_nanos(arr.value(idx), $time_unit);
                 return Some(Value::Message(create_duration_message(
                     seconds,
                     nanos,
