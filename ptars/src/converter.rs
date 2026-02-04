@@ -5468,7 +5468,8 @@ mod tests {
             ..Default::default()
         };
         let field_descriptor = message_descriptor.get_field_by_name("values").unwrap();
-        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
+        let (field, _) =
+            field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
         assert!(!field.is_nullable());
 
         // Test with list_nullable = true
@@ -5490,44 +5491,42 @@ mod tests {
             name: Some("test.proto".to_string()),
             package: Some("test".to_string()),
             syntax: Some("proto3".to_string()),
-            message_type: vec![
-                DescriptorProto {
-                    name: Some("TestMessage".to_string()),
-                    field: vec![FieldDescriptorProto {
-                        name: Some("mapping".to_string()),
-                        number: Some(1),
-                        label: Some(Label::Repeated.into()),
-                        r#type: Some(Type::Message.into()),
-                        type_name: Some(".test.TestMessage.MappingEntry".to_string()),
-                        ..Default::default()
-                    }],
-                    nested_type: vec![DescriptorProto {
-                        name: Some("MappingEntry".to_string()),
-                        options: Some(prost_reflect::prost_types::MessageOptions {
-                            map_entry: Some(true),
-                            ..Default::default()
-                        }),
-                        field: vec![
-                            FieldDescriptorProto {
-                                name: Some("key".to_string()),
-                                number: Some(1),
-                                label: Some(Label::Optional.into()),
-                                r#type: Some(Type::String.into()),
-                                ..Default::default()
-                            },
-                            FieldDescriptorProto {
-                                name: Some("value".to_string()),
-                                number: Some(2),
-                                label: Some(Label::Optional.into()),
-                                r#type: Some(Type::Int32.into()),
-                                ..Default::default()
-                            },
-                        ],
-                        ..Default::default()
-                    }],
+            message_type: vec![DescriptorProto {
+                name: Some("TestMessage".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("mapping".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Repeated.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(".test.TestMessage.MappingEntry".to_string()),
                     ..Default::default()
-                },
-            ],
+                }],
+                nested_type: vec![DescriptorProto {
+                    name: Some("MappingEntry".to_string()),
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
             ..Default::default()
         })
         .unwrap();
@@ -5545,7 +5544,8 @@ mod tests {
             ..Default::default()
         };
         let field_descriptor = message_descriptor.get_field_by_name("mapping").unwrap();
-        let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
+        let (field, _) =
+            field_to_tuple(&field_descriptor, &messages, &config_not_nullable).unwrap();
         assert!(!field.is_nullable());
 
         // Test with map_nullable = true

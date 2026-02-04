@@ -945,28 +945,38 @@ fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit, type_
     match unit {
         TimeUnit::Second => seconds,
         TimeUnit::Millisecond => {
-            let scaled = seconds
-                .checked_mul(1_000)
-                .unwrap_or_else(|| panic!("{type_name} overflow: {seconds} seconds cannot be represented in milliseconds"));
+            let scaled = seconds.checked_mul(1_000).unwrap_or_else(|| {
+                panic!(
+                    "{type_name} overflow: {seconds} seconds cannot be represented in milliseconds"
+                )
+            });
             scaled
                 .checked_add(i64::from(nanos) / 1_000_000)
-                .unwrap_or_else(|| panic!("{type_name} overflow: value cannot be represented in milliseconds"))
+                .unwrap_or_else(|| {
+                    panic!("{type_name} overflow: value cannot be represented in milliseconds")
+                })
         }
         TimeUnit::Microsecond => {
-            let scaled = seconds
-                .checked_mul(1_000_000)
-                .unwrap_or_else(|| panic!("{type_name} overflow: {seconds} seconds cannot be represented in microseconds"));
+            let scaled = seconds.checked_mul(1_000_000).unwrap_or_else(|| {
+                panic!(
+                    "{type_name} overflow: {seconds} seconds cannot be represented in microseconds"
+                )
+            });
             scaled
                 .checked_add(i64::from(nanos) / 1_000)
-                .unwrap_or_else(|| panic!("{type_name} overflow: value cannot be represented in microseconds"))
+                .unwrap_or_else(|| {
+                    panic!("{type_name} overflow: value cannot be represented in microseconds")
+                })
         }
         TimeUnit::Nanosecond => {
-            let scaled = seconds
-                .checked_mul(1_000_000_000)
-                .unwrap_or_else(|| panic!("{type_name} overflow: {seconds} seconds cannot be represented in nanoseconds"));
-            scaled
-                .checked_add(i64::from(nanos))
-                .unwrap_or_else(|| panic!("{type_name} overflow: value cannot be represented in nanoseconds"))
+            let scaled = seconds.checked_mul(1_000_000_000).unwrap_or_else(|| {
+                panic!(
+                    "{type_name} overflow: {seconds} seconds cannot be represented in nanoseconds"
+                )
+            });
+            scaled.checked_add(i64::from(nanos)).unwrap_or_else(|| {
+                panic!("{type_name} overflow: value cannot be represented in nanoseconds")
+            })
         }
     }
 }
