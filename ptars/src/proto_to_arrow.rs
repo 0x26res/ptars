@@ -1130,12 +1130,10 @@ impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
                         // Use try_from to safely convert, clamping out-of-range values
                         // Valid time-of-day values will always fit, but malformed proto
                         // inputs might not
-                        Some(i32::try_from(val).unwrap_or_else(|_| {
-                            if val > 0 {
-                                i32::MAX
-                            } else {
-                                i32::MIN
-                            }
+                        Some(i32::try_from(val).unwrap_or(if val > 0 {
+                            i32::MAX
+                        } else {
+                            i32::MIN
                         }))
                     }
                 })

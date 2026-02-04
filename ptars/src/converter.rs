@@ -4978,10 +4978,7 @@ mod tests {
         ts1.set_field_by_name("nanos", Value::I32(0));
 
         let mut map_value: HashMap<MapKey, Value> = HashMap::new();
-        map_value.insert(
-            MapKey::String("key1".to_string()),
-            Value::Message(ts1),
-        );
+        map_value.insert(MapKey::String("key1".to_string()), Value::Message(ts1));
 
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("timestamps", Value::Map(map_value));

@@ -1662,7 +1662,9 @@ fn extract_map_message_value(
         // Helper macro to extract timestamp with proper time unit handling
         macro_rules! extract_ts {
             ($array_type:ty, $time_unit:expr) => {{
-                let arr = array.as_any().downcast_ref::<PrimitiveArray<$array_type>>()?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<$array_type>>()?;
                 if arr.is_null(idx) {
                     return None;
                 }
@@ -1677,10 +1679,18 @@ fn extract_map_message_value(
         }
 
         match array.data_type() {
-            DataType::Timestamp(TimeUnit::Second, _) => extract_ts!(TimestampSecondType, TimeUnit::Second),
-            DataType::Timestamp(TimeUnit::Millisecond, _) => extract_ts!(TimestampMillisecondType, TimeUnit::Millisecond),
-            DataType::Timestamp(TimeUnit::Microsecond, _) => extract_ts!(TimestampMicrosecondType, TimeUnit::Microsecond),
-            DataType::Timestamp(TimeUnit::Nanosecond, _) => extract_ts!(TimestampNanosecondType, TimeUnit::Nanosecond),
+            DataType::Timestamp(TimeUnit::Second, _) => {
+                extract_ts!(TimestampSecondType, TimeUnit::Second)
+            }
+            DataType::Timestamp(TimeUnit::Millisecond, _) => {
+                extract_ts!(TimestampMillisecondType, TimeUnit::Millisecond)
+            }
+            DataType::Timestamp(TimeUnit::Microsecond, _) => {
+                extract_ts!(TimestampMicrosecondType, TimeUnit::Microsecond)
+            }
+            DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+                extract_ts!(TimestampNanosecondType, TimeUnit::Nanosecond)
+            }
             _ => return None,
         }
     }
@@ -1692,7 +1702,9 @@ fn extract_map_message_value(
         // Helper macro to extract duration with proper time unit handling
         macro_rules! extract_dur {
             ($array_type:ty, $time_unit:expr) => {{
-                let arr = array.as_any().downcast_ref::<PrimitiveArray<$array_type>>()?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<$array_type>>()?;
                 if arr.is_null(idx) {
                     return None;
                 }
@@ -1707,10 +1719,18 @@ fn extract_map_message_value(
         }
 
         match array.data_type() {
-            DataType::Duration(TimeUnit::Second) => extract_dur!(DurationSecondType, TimeUnit::Second),
-            DataType::Duration(TimeUnit::Millisecond) => extract_dur!(DurationMillisecondType, TimeUnit::Millisecond),
-            DataType::Duration(TimeUnit::Microsecond) => extract_dur!(DurationMicrosecondType, TimeUnit::Microsecond),
-            DataType::Duration(TimeUnit::Nanosecond) => extract_dur!(DurationNanosecondType, TimeUnit::Nanosecond),
+            DataType::Duration(TimeUnit::Second) => {
+                extract_dur!(DurationSecondType, TimeUnit::Second)
+            }
+            DataType::Duration(TimeUnit::Millisecond) => {
+                extract_dur!(DurationMillisecondType, TimeUnit::Millisecond)
+            }
+            DataType::Duration(TimeUnit::Microsecond) => {
+                extract_dur!(DurationMicrosecondType, TimeUnit::Microsecond)
+            }
+            DataType::Duration(TimeUnit::Nanosecond) => {
+                extract_dur!(DurationNanosecondType, TimeUnit::Nanosecond)
+            }
             _ => return None,
         }
     }
@@ -1737,7 +1757,9 @@ fn extract_map_message_value(
 
         match array.data_type() {
             DataType::Time32(TimeUnit::Second) => {
-                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time32SecondType>>()?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Time32SecondType>>()?;
                 if arr.is_null(idx) {
                     return None;
                 }
@@ -1749,7 +1771,9 @@ fn extract_map_message_value(
                 )));
             }
             DataType::Time32(TimeUnit::Millisecond) => {
-                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time32MillisecondType>>()?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Time32MillisecondType>>()?;
                 if arr.is_null(idx) {
                     return None;
                 }
@@ -1761,7 +1785,9 @@ fn extract_map_message_value(
                 )));
             }
             DataType::Time64(TimeUnit::Microsecond) => {
-                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time64MicrosecondType>>()?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Time64MicrosecondType>>()?;
                 if arr.is_null(idx) {
                     return None;
                 }
@@ -1773,7 +1799,9 @@ fn extract_map_message_value(
                 )));
             }
             DataType::Time64(TimeUnit::Nanosecond) => {
-                let arr = array.as_any().downcast_ref::<PrimitiveArray<Time64NanosecondType>>()?;
+                let arr = array
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<Time64NanosecondType>>()?;
                 if arr.is_null(idx) {
                     return None;
                 }
