@@ -207,9 +207,13 @@ impl MessageHandler {
         }
 
         Ok(
-            ptars::messages_to_record_batch(&messages, &self.message_descriptor)
-                .to_pyarrow(py)?
-                .unbind(),
+            ptars::messages_to_record_batch_with_config(
+                &messages,
+                &self.message_descriptor,
+                &self.config,
+            )
+            .to_pyarrow(py)?
+            .unbind(),
         )
     }
 }

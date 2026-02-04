@@ -1507,7 +1507,10 @@ fn extract_single_map(
 
     let entries = map_array.entries();
     let key_array = entries.column_by_name("key")?;
-    let value_array = entries.column_by_name("value")?;
+    // Try "value" first (default), fall back to second struct field for custom map_value_name
+    let value_array = entries
+        .column_by_name("value")
+        .or_else(|| entries.columns().get(1))?;
 
     let mut map: HashMap<MapKey, Value> = HashMap::new();
     for i in start..end {

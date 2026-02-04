@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
+from google.protobuf.timestamp_pb2 import Timestamp
 
-from ptars import HandlerPool
-from ptars_protos.simple_pb2 import DESCRIPTOR, SearchRequest
+from ptars import HandlerPool, PtarsConfig
+from ptars_protos.simple_pb2 import DESCRIPTOR, SearchRequest, WithTimestamp
 
 
 def _write_varint(stream: io.BytesIO, value: int) -> None:
@@ -156,3 +157,41 @@ class TestReadSizeDelimitedFile:
         pool = HandlerPool([DESCRIPTOR])
         with pytest.raises(OSError, match="exceeds maximum"):
             pool.read_size_delimited_file(file_path, SearchRequest.DESCRIPTOR)
+
+    def test_config_is_respected(self, tmp_path: Path):
+        """Verify that read_size_delimited_file uses the handler's config."""
+        # Create a timestamp message
+        msg = WithTimestamp(
+            timestamp=Timestamp(seconds=1704067200, nanos=0)  # 2024-01-01 00:00:00 UTC
+        )
+        data = _create_size_delimited_bytes([msg.SerializeToString()])
+
+        file_path = tmp_path / "timestamps.bin"
+        file_path.write_bytes(data)
+
+        # Test with default config (nanoseconds, UTC timezone)
+        pool_default = HandlerPool([DESCRIPTOR])
+        batch_default = pool_default.read_size_delimited_file(
+            file_path, WithTimestamp.DESCRIPTOR
+        )
+        ts_type_default = batch_default.schema.field("timestamp").type
+        assert ts_type_default == pa.timestamp("ns", tz="UTC")
+
+        # Test with custom config (seconds, America/New_York timezone)
+        config = PtarsConfig(timestamp_unit="s", timestamp_tz="America/New_York")
+        pool_custom = HandlerPool([DESCRIPTOR], config=config)
+        batch_custom = pool_custom.read_size_delimited_file(
+            file_path, WithTimestamp.DESCRIPTOR
+        )
+        ts_type_custom = batch_custom.schema.field("timestamp").type
+        assert ts_type_custom == pa.timestamp("s", tz="America/New_York")
+
+        # Verify the value is the same (just in different units)
+        # Default (ns): 1704067200 * 1e9 = 1704067200000000000
+        # Custom (s): 1704067200
+        assert batch_default["timestamp"][0].as_py().timestamp() == pytest.approx(
+            1704067200, abs=1
+        )
+        assert batch_custom["timestamp"][0].as_py().timestamp() == pytest.approx(
+            1704067200, abs=1
+        )

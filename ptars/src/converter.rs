@@ -5556,4 +5556,94 @@ mod tests {
         let (field, _) = field_to_tuple(&field_descriptor, &messages, &config_nullable).unwrap();
         assert!(field.is_nullable());
     }
+
+    #[test]
+    fn test_map_custom_value_name_roundtrip() {
+        use prost_reflect::MapKey;
+        use std::collections::HashMap;
+
+        let mut pool = DescriptorPool::new();
+        pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("MapEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("MessageWithMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("my_map".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.MapEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        let message_descriptor = pool.get_message_by_name("test.MessageWithMap").unwrap();
+
+        let mut map_value: HashMap<MapKey, Value> = HashMap::new();
+        map_value.insert(MapKey::String("key1".to_string()), Value::I32(100));
+        map_value.insert(MapKey::String("key2".to_string()), Value::I32(200));
+
+        let mut message = DynamicMessage::new(message_descriptor.clone());
+        message.set_field_by_name("my_map", Value::Map(map_value));
+
+        // Test roundtrip with custom map_value_name
+        let config = PtarsConfig::default().with_map_value_name("custom_val");
+        let record_batch =
+            messages_to_record_batch_with_config(&[message], &message_descriptor, &config);
+
+        // Convert back to proto - this should work with the fallback to column index
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        // Verify the map was correctly roundtripped
+        let map_field = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_field.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get(&MapKey::String("key1".to_string()))
+                .unwrap()
+                .as_i32(),
+            Some(100)
+        );
+        assert_eq!(
+            map.get(&MapKey::String("key2".to_string()))
+                .unwrap()
+                .as_i32(),
+            Some(200)
+        );
+    }
 }
