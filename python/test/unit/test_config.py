@@ -597,3 +597,143 @@ class TestMapConfig:
             WithMap.DESCRIPTOR,
         )
         assert batch.schema.field("string_to_double").nullable is True
+
+
+class TestLargeValueOverflow:
+    """Test that large timestamp/duration values that would overflow if converted to nanoseconds are handled correctly."""
+
+    def test_timestamp_large_value_second_unit_roundtrip(self):
+        """Large timestamp (year 2500) should roundtrip with second unit."""
+        config = PtarsConfig(timestamp_unit="s", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Year 2500 timestamp: ~16.7 billion seconds from epoch
+        # This would overflow i64 if multiplied by 1e9 to convert to nanoseconds
+        large_seconds = 16_725_225_600
+
+        messages = [WithTimestamp(timestamp=Timestamp(seconds=large_seconds, nanos=0))]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
+
+        # Verify the Arrow type
+        assert batch.schema.field("timestamp").type == pa.timestamp("s")
+
+        # Verify the value is correct
+        ts_array = batch.column("timestamp")
+        assert ts_array[0].as_py().timestamp() == large_seconds
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back[0].timestamp.seconds == large_seconds
+        assert messages_back[0].timestamp.nanos == 0
+
+    def test_timestamp_large_value_millisecond_unit_roundtrip(self):
+        """Large timestamp should roundtrip with millisecond unit."""
+        config = PtarsConfig(timestamp_unit="ms", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Large timestamp that fits in milliseconds
+        large_seconds = 9_000_000_000  # ~year 2255
+        nanos = 123_000_000  # 123 milliseconds
+
+        messages = [
+            WithTimestamp(timestamp=Timestamp(seconds=large_seconds, nanos=nanos))
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
+
+        # Verify the Arrow type
+        assert batch.schema.field("timestamp").type == pa.timestamp("ms")
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert messages_back[0].timestamp.seconds == large_seconds
+        assert messages_back[0].timestamp.nanos == nanos
+
+    def test_duration_large_value_second_unit_roundtrip(self):
+        """Large duration (500 years) should roundtrip with second unit."""
+        config = PtarsConfig(duration_unit="s")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Large duration: 500 years in seconds
+        # This would overflow i64 if multiplied by 1e9
+        large_seconds = 15_768_000_000
+
+        messages = [WithDuration(duration=Duration(seconds=large_seconds, nanos=0))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
+
+        # Verify the Arrow type
+        assert batch.schema.field("duration").type == pa.duration("s")
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back[0].duration.seconds == large_seconds
+        assert messages_back[0].duration.nanos == 0
+
+    def test_duration_large_value_millisecond_unit_roundtrip(self):
+        """Large duration should roundtrip with millisecond unit."""
+        config = PtarsConfig(duration_unit="ms")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Large duration that fits in milliseconds
+        large_seconds = 8_000_000_000  # ~253 years
+        nanos = 456_000_000  # 456 milliseconds
+
+        messages = [WithDuration(duration=Duration(seconds=large_seconds, nanos=nanos))]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
+
+        # Verify the Arrow type
+        assert batch.schema.field("duration").type == pa.duration("ms")
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert messages_back[0].duration.seconds == large_seconds
+        assert messages_back[0].duration.nanos == nanos
+
+    def test_repeated_timestamp_large_value_roundtrip(self):
+        """Repeated large timestamps should roundtrip with second unit."""
+        config = PtarsConfig(timestamp_unit="s", timestamp_tz=None)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Create timestamps with large values
+        large_seconds_1 = 16_725_225_600  # ~year 2500
+        large_seconds_2 = 20_000_000_000  # ~year 2604
+
+        messages = [
+            WithTimestamp(
+                timestamps=[
+                    Timestamp(seconds=large_seconds_1, nanos=0),
+                    Timestamp(seconds=large_seconds_2, nanos=0),
+                ]
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithTimestamp.DESCRIPTOR)
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
+        assert len(messages_back[0].timestamps) == 2
+        assert messages_back[0].timestamps[0].seconds == large_seconds_1
+        assert messages_back[0].timestamps[1].seconds == large_seconds_2
+
+    def test_repeated_duration_large_value_roundtrip(self):
+        """Repeated large durations should roundtrip with second unit."""
+        config = PtarsConfig(duration_unit="s")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+
+        # Create durations with large values
+        large_seconds_1 = 15_768_000_000  # ~500 years
+        large_seconds_2 = 31_536_000_000  # ~1000 years
+
+        messages = [
+            WithDuration(
+                durations=[
+                    Duration(seconds=large_seconds_1, nanos=0),
+                    Duration(seconds=large_seconds_2, nanos=0),
+                ]
+            )
+        ]
+        batch = pool.messages_to_record_batch(messages, WithDuration.DESCRIPTOR)
+
+        # Roundtrip back to protobuf
+        messages_back = pool.record_batch_to_messages(batch, WithDuration.DESCRIPTOR)
+        assert len(messages_back[0].durations) == 2
+        assert messages_back[0].durations[0].seconds == large_seconds_1
+        assert messages_back[0].durations[1].seconds == large_seconds_2
