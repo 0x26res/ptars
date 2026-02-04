@@ -39,6 +39,7 @@ urls.repository = "https://github.com/0x26res/ptars"
 
 [dependency-groups]
 dev = [
+  "bump-my-version>=0.28",
   "coverage>=6.5",
   "git-changelog>=2.2",
   "inflection>=0.5.1",
@@ -94,6 +95,32 @@ known_first_party = [ "ptars", "ptars_protos" ]
 profile = "black"
 skip = [ ".gitignore" ]
 src_paths = [ "ptars", "tests" ]
+
+[tool.bumpversion]
+current_version = "0.0.9"
+commit = true
+tag = true
+tag_name = "v{new_version}"
+tag_message = "Release v{new_version}"
+message = "Bump version: {current_version} → {new_version}"
+pre_commit_hooks = [
+  { id = "pre-commit", cmd = "pre-commit run --all-files" },
+]
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "ptars/Cargo.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "ptars-python/Cargo.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
 
 [tool.bandit]
 skips = [ "B101" ]
