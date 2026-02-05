@@ -1312,7 +1312,6 @@ wheels = [
 
 [[package]]
 name = "ptars"
-version = "0.0.9"
 source = { editable = "." }
 dependencies = [
     { name = "googleapis-common-protos" },

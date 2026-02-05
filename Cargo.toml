@@ -1,3 +1,6 @@
 [workspace]
 members = ["ptars", "ptars-python"]
 resolver = "2"
+
+[workspace.package]
+version = "0.0.0"
