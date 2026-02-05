@@ -10,6 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set version from tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
