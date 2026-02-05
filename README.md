@@ -33,7 +33,7 @@
 [Rust Crate](https://crates.io/crates/ptars) |
 [Rust Documentation](https://docs.rs/ptars)
 
-Protobuf to Arrow, using Rust
+Fast convertion from Protocol Buffers to Arrow, and back, using Rust, with Python bindings.
 
 ## Example
 

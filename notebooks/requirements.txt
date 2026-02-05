@@ -1,5 +1,0 @@
-jupyter
-ptars
-protarrow
-grpcio-tools
-pandas
