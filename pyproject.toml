@@ -76,6 +76,7 @@ docs = [
 bindings = "pyo3"
 exclude = [ "python/test/**", ".**", "sdist/**", ".github/**" ]
 features = [ "pyo3/extension-module" ]
+include = [ "LICENSE" ]
 manifest-path = "ptars-python/Cargo.toml"
 module-name = "ptars._lib"
 python-packages = [ "ptars" ]
