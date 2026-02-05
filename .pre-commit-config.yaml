@@ -34,7 +34,7 @@ repos:
         args:
           - "--fix"
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.9.29
+    rev: 0.9.30
     hooks:
       - id: uv-lock
   - repo: https://github.com/kynan/nbstripout
