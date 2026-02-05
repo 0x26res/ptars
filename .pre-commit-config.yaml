@@ -44,14 +44,6 @@ repos:
       - id: nbstripout
         args:
           - "--drop-empty-cells"
-  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.16.0
-    hooks:
-      - id: pretty-format-toml
-        files: "^.*.toml"
-        exclude: "^pyproject.toml$"
-        args:
-          - "--autofix"
 
   - repo: local
     hooks:
