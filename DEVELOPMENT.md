@@ -1,6 +1,6 @@
 # Development
 
-Most of the development tasks are expressed in the [Makefile](./Makefile)  
+Most of the development tasks are expressed in the [Makefile](./Makefile)
 
 ## Set up venv
 

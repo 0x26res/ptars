@@ -113,17 +113,17 @@ It is:
 
 ```benchmark
 ---- benchmark 'to_arrow': 2 tests ----
-Name (time in ms)        Mean          
+Name (time in ms)        Mean
 ---------------------------------------
-protarrow_to_arrow     9.4863 (2.63)   
-ptars_to_arrow         3.6009 (1.0)    
+protarrow_to_arrow     9.4863 (2.63)
+ptars_to_arrow         3.6009 (1.0)
 ---------------------------------------
 
 ---- benchmark 'to_proto': 2 tests -----
-Name (time in ms)         Mean          
+Name (time in ms)         Mean
 ----------------------------------------
-protarrow_to_proto     20.8297 (3.20)   
-ptars_to_proto          6.5013 (1.0)    
+protarrow_to_proto     20.8297 (3.20)
+ptars_to_proto          6.5013 (1.0)
 ----------------------------------------
 ```
 
