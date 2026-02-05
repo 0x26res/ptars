@@ -283,8 +283,12 @@ fn get_a_table(py: Python<'_>) -> PyResult<Py<PyAny>> {
     Ok(batch.to_pyarrow(py)?.unbind())
 }
 
+/// Version of the ptars package, sourced from Cargo.toml at compile time.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[pymodule]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", VERSION)?;
     m.add_function(wrap_pyfunction!(get_a_table, m)?)?;
     m.add_class::<ProtoRegistry>()?;
     m.add_class::<MessageHandler>()?;

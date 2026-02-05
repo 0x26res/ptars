@@ -47,3 +47,11 @@ def test_messages_to_record_batch():
     assert batch["int32_value"].to_pylist() == [0, 1]
 
     pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+
+
+def test_version():
+    import ptars
+
+    assert hasattr(ptars, "__version__")
+    assert isinstance(ptars.__version__, str)
+    assert len(ptars.__version__) > 0
