@@ -7,8 +7,8 @@ use arrow_array::types::{
     TimestampMillisecondType, TimestampNanosecondType, TimestampSecondType, UInt32Type, UInt64Type,
 };
 use arrow_array::{
-    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, ListArray, MapArray,
-    PrimitiveArray, RecordBatch, StringArray, StructArray,
+    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, LargeBinaryArray,
+    LargeStringArray, ListArray, MapArray, PrimitiveArray, RecordBatch, StringArray, StructArray,
 };
 use arrow_schema::{DataType, TimeUnit};
 use chrono::{Datelike, NaiveDate};
@@ -937,31 +937,62 @@ pub fn extract_repeated_array(
         Kind::Bool => extract_repeated_boolean(list_array, messages, field_descriptor),
 
         Kind::String => {
-            let values = values.as_any().downcast_ref::<StringArray>().unwrap();
-            for (i, message) in messages.iter_mut().enumerate() {
-                if !list_array.is_null(i) {
-                    let start = list_array.value_offsets()[i] as usize;
-                    let end = list_array.value_offsets()[i + 1] as usize;
-                    let values_vec: Vec<Value> = (start..end)
-                        .map(|idx| Value::String(values.value(idx).to_string()))
-                        .collect();
-                    message.set_field(field_descriptor, Value::List(values_vec));
-                }
+            // Helper macro to extract repeated strings
+            macro_rules! extract_repeated_strings {
+                ($array_type:ty) => {{
+                    let values = values.as_any().downcast_ref::<$array_type>().unwrap();
+                    for (i, message) in messages.iter_mut().enumerate() {
+                        if !list_array.is_null(i) {
+                            let start = list_array.value_offsets()[i] as usize;
+                            let end = list_array.value_offsets()[i + 1] as usize;
+                            let values_vec: Vec<Value> = (start..end)
+                                .filter(|&idx| !values.is_null(idx))
+                                .map(|idx| Value::String(values.value(idx).to_string()))
+                                .collect();
+                            if !values_vec.is_empty() {
+                                message.set_field(field_descriptor, Value::List(values_vec));
+                            }
+                        }
+                    }
+                }};
+            }
+            match values.data_type() {
+                DataType::Utf8 => extract_repeated_strings!(StringArray),
+                DataType::LargeUtf8 => extract_repeated_strings!(LargeStringArray),
+                _ => panic!("Expected Utf8 or LargeUtf8, got {:?}", values.data_type()),
             }
         }
         Kind::Bytes => {
-            let values = values.as_any().downcast_ref::<BinaryArray>().unwrap();
-            for (i, message) in messages.iter_mut().enumerate() {
-                if !list_array.is_null(i) {
-                    let start = list_array.value_offsets()[i] as usize;
-                    let end = list_array.value_offsets()[i + 1] as usize;
-                    let values_vec: Vec<Value> = (start..end)
-                        .map(|idx| {
-                            Value::Bytes(prost::bytes::Bytes::from(values.value(idx).to_vec()))
-                        })
-                        .collect();
-                    message.set_field(field_descriptor, Value::List(values_vec));
-                }
+            // Helper macro to extract repeated bytes
+            macro_rules! extract_repeated_bytes {
+                ($array_type:ty) => {{
+                    let values = values.as_any().downcast_ref::<$array_type>().unwrap();
+                    for (i, message) in messages.iter_mut().enumerate() {
+                        if !list_array.is_null(i) {
+                            let start = list_array.value_offsets()[i] as usize;
+                            let end = list_array.value_offsets()[i + 1] as usize;
+                            let values_vec: Vec<Value> = (start..end)
+                                .filter(|&idx| !values.is_null(idx))
+                                .map(|idx| {
+                                    Value::Bytes(prost::bytes::Bytes::from(
+                                        values.value(idx).to_vec(),
+                                    ))
+                                })
+                                .collect();
+                            if !values_vec.is_empty() {
+                                message.set_field(field_descriptor, Value::List(values_vec));
+                            }
+                        }
+                    }
+                }};
+            }
+            match values.data_type() {
+                DataType::Binary => extract_repeated_bytes!(BinaryArray),
+                DataType::LargeBinary => extract_repeated_bytes!(LargeBinaryArray),
+                _ => panic!(
+                    "Expected Binary or LargeBinary, got {:?}",
+                    values.data_type()
+                ),
             }
         }
         Kind::Message(message_descriptor) => {
@@ -1046,19 +1077,31 @@ pub fn extract_single_string(
     field_descriptor: &FieldDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap()
-        .iter()
-        .enumerate()
-        .for_each(|(index, value)| match value {
-            None => {}
-            Some(x) => {
+    // Helper to process string values from an iterator
+    fn process_strings<'a>(
+        iter: impl Iterator<Item = Option<&'a str>>,
+        field_descriptor: &FieldDescriptor,
+        messages: &mut [&mut DynamicMessage],
+    ) {
+        iter.enumerate().for_each(|(index, value)| {
+            if let Some(x) = value {
                 let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
                 element.set_field(field_descriptor, Value::String(x.to_string()));
             }
-        })
+        });
+    }
+
+    // Try StringArray first, then LargeStringArray
+    if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+        process_strings(arr.iter(), field_descriptor, messages);
+    } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+        process_strings(arr.iter(), field_descriptor, messages);
+    } else {
+        panic!(
+            "Expected StringArray or LargeStringArray, got {:?}",
+            array.data_type()
+        );
+    }
 }
 
 pub fn extract_single_bytes(
@@ -1066,23 +1109,34 @@ pub fn extract_single_bytes(
     field_descriptor: &FieldDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    array
-        .as_any()
-        .downcast_ref::<BinaryArray>()
-        .unwrap()
-        .iter()
-        .enumerate()
-        .for_each(|(index, value)| match value {
-            None => {}
-            Some(x) => {
+    // Helper to process binary values from an iterator
+    fn process_bytes<'a>(
+        iter: impl Iterator<Item = Option<&'a [u8]>>,
+        field_descriptor: &FieldDescriptor,
+        messages: &mut [&mut DynamicMessage],
+    ) {
+        iter.enumerate().for_each(|(index, value)| {
+            if let Some(x) = value {
                 let element: &mut DynamicMessage = messages.get_mut(index).unwrap();
-
                 element.set_field(
                     field_descriptor,
                     Value::Bytes(prost::bytes::Bytes::from(x.to_vec())),
                 );
             }
-        })
+        });
+    }
+
+    // Try BinaryArray first, then LargeBinaryArray
+    if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
+        process_bytes(arr.iter(), field_descriptor, messages);
+    } else if let Some(arr) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+        process_bytes(arr.iter(), field_descriptor, messages);
+    } else {
+        panic!(
+            "Expected BinaryArray or LargeBinaryArray, got {:?}",
+            array.data_type()
+        );
+    }
 }
 
 pub fn extract_single_message(
@@ -1432,17 +1486,35 @@ fn extract_single_wrapper_string(
     message_descriptor: &MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
     let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !arr.is_null(i) {
-            let sub_message = message
-                .get_field_mut(field_descriptor)
-                .as_message_mut()
-                .unwrap();
-            sub_message.set_field(&value_descriptor, Value::String(arr.value(i).to_string()));
+    // Helper to process string values
+    fn process<'a>(
+        iter: impl Iterator<Item = Option<&'a str>>,
+        field_descriptor: &FieldDescriptor,
+        value_descriptor: &FieldDescriptor,
+        messages: &mut [&mut DynamicMessage],
+    ) {
+        for (i, value) in iter.enumerate() {
+            if let Some(v) = value {
+                let sub_message = messages[i]
+                    .get_field_mut(field_descriptor)
+                    .as_message_mut()
+                    .unwrap();
+                sub_message.set_field(value_descriptor, Value::String(v.to_string()));
+            }
         }
+    }
+
+    if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+        process(arr.iter(), field_descriptor, &value_descriptor, messages);
+    } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+        process(arr.iter(), field_descriptor, &value_descriptor, messages);
+    } else {
+        panic!(
+            "Expected StringArray or LargeStringArray, got {:?}",
+            array.data_type()
+        );
     }
 }
 
@@ -1452,20 +1524,38 @@ fn extract_single_wrapper_bytes(
     message_descriptor: &MessageDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let arr = array.as_any().downcast_ref::<BinaryArray>().unwrap();
     let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !arr.is_null(i) {
-            let sub_message = message
-                .get_field_mut(field_descriptor)
-                .as_message_mut()
-                .unwrap();
-            sub_message.set_field(
-                &value_descriptor,
-                Value::Bytes(prost::bytes::Bytes::from(arr.value(i).to_vec())),
-            );
+    // Helper to process binary values
+    fn process<'a>(
+        iter: impl Iterator<Item = Option<&'a [u8]>>,
+        field_descriptor: &FieldDescriptor,
+        value_descriptor: &FieldDescriptor,
+        messages: &mut [&mut DynamicMessage],
+    ) {
+        for (i, value) in iter.enumerate() {
+            if let Some(v) = value {
+                let sub_message = messages[i]
+                    .get_field_mut(field_descriptor)
+                    .as_message_mut()
+                    .unwrap();
+                sub_message.set_field(
+                    value_descriptor,
+                    Value::Bytes(prost::bytes::Bytes::from(v.to_vec())),
+                );
+            }
         }
+    }
+
+    if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
+        process(arr.iter(), field_descriptor, &value_descriptor, messages);
+    } else if let Some(arr) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+        process(arr.iter(), field_descriptor, &value_descriptor, messages);
+    } else {
+        panic!(
+            "Expected BinaryArray or LargeBinaryArray, got {:?}",
+            array.data_type()
+        );
     }
 }
 
@@ -1548,11 +1638,21 @@ pub fn extract_map_array(
 fn extract_map_key(array: &ArrayRef, idx: usize, field: &FieldDescriptor) -> Option<MapKey> {
     match field.kind() {
         Kind::String => {
-            let arr = array.as_any().downcast_ref::<StringArray>()?;
-            if arr.is_null(idx) {
-                None
+            // Try StringArray first, then LargeStringArray
+            if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(MapKey::String(arr.value(idx).to_string()))
+                }
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(MapKey::String(arr.value(idx).to_string()))
+                }
             } else {
-                Some(MapKey::String(arr.value(idx).to_string()))
+                None
             }
         }
         Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
@@ -1670,21 +1770,43 @@ fn extract_map_value(array: &ArrayRef, idx: usize, field: &FieldDescriptor) -> O
             }
         }
         Kind::String => {
-            let arr = array.as_any().downcast_ref::<StringArray>()?;
-            if arr.is_null(idx) {
-                None
+            // Try StringArray first, then LargeStringArray
+            if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::String(arr.value(idx).to_string()))
+                }
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::String(arr.value(idx).to_string()))
+                }
             } else {
-                Some(Value::String(arr.value(idx).to_string()))
+                None
             }
         }
         Kind::Bytes => {
-            let arr = array.as_any().downcast_ref::<BinaryArray>()?;
-            if arr.is_null(idx) {
-                None
+            // Try BinaryArray first, then LargeBinaryArray
+            if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::Bytes(prost::bytes::Bytes::from(
+                        arr.value(idx).to_vec(),
+                    )))
+                }
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::Bytes(prost::bytes::Bytes::from(
+                        arr.value(idx).to_vec(),
+                    )))
+                }
             } else {
-                Some(Value::Bytes(prost::bytes::Bytes::from(
-                    arr.value(idx).to_vec(),
-                )))
+                None
             }
         }
         Kind::Enum(_) => {
@@ -2118,21 +2240,41 @@ fn extract_single_field_value(
             }
         }
         Kind::String => {
-            let arr = array.as_any().downcast_ref::<StringArray>()?;
-            if arr.is_null(idx) {
-                None
+            if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::String(arr.value(idx).to_string()))
+                }
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::String(arr.value(idx).to_string()))
+                }
             } else {
-                Some(Value::String(arr.value(idx).to_string()))
+                None
             }
         }
         Kind::Bytes => {
-            let arr = array.as_any().downcast_ref::<BinaryArray>()?;
-            if arr.is_null(idx) {
-                None
+            if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::Bytes(prost::bytes::Bytes::from(
+                        arr.value(idx).to_vec(),
+                    )))
+                }
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+                if arr.is_null(idx) {
+                    None
+                } else {
+                    Some(Value::Bytes(prost::bytes::Bytes::from(
+                        arr.value(idx).to_vec(),
+                    )))
+                }
             } else {
-                Some(Value::Bytes(prost::bytes::Bytes::from(
-                    arr.value(idx).to_vec(),
-                )))
+                None
             }
         }
         Kind::Enum(_) => {

@@ -607,7 +607,7 @@ def test_large_string() -> None:
     ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
     assert ptars_msgs == expected
 
-    record_batch = pa.RecordBatch.from_pylist(
+    record_batch_large = pa.RecordBatch.from_pylist(
         mapping=[{"string_value": "a large_string"}],
         schema=pa.schema(
             [
@@ -616,12 +616,56 @@ def test_large_string() -> None:
         ),
     )
 
-    protarrow_msgs = protarrow.record_batch_to_messages(record_batch, ExampleMessage)
+    protarrow_msgs = protarrow.record_batch_to_messages(
+        record_batch_large, ExampleMessage
+    )
     assert protarrow_msgs == expected
 
     # pa.large_string fails:
     # pyo3_runtime.PanicException: called `Option::unwrap()` on a `None` value
     # thread '<unnamed>' (3070163) panicked at ptars/src/arrow_to_proto.rs:1052:10:
     # called `Option::unwrap()` on a `None` value
+    ptars_msgs = pool.record_batch_to_messages(
+        record_batch_large, ExampleMessage.DESCRIPTOR
+    )
+    assert ptars_msgs == expected
+
+
+def test_large_binary() -> None:
+
+    pool = HandlerPool([bench_pb2.DESCRIPTOR])
+
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[{"bytes_value": b"some binary data"}],
+        schema=pa.schema(
+            [
+                ("bytes_value", pa.binary()),
+            ]
+        ),
+    )
+    expected = [ExampleMessage(bytes_value=b"some binary data")]
+
+    # pa.binary works for both protarrow and ptars
+    protarrow_msgs = protarrow.record_batch_to_messages(record_batch, ExampleMessage)
+    assert protarrow_msgs == expected
     ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected
+
+    record_batch_large = pa.RecordBatch.from_pylist(
+        mapping=[{"bytes_value": b"some binary data"}],
+        schema=pa.schema(
+            [
+                ("bytes_value", pa.large_binary()),
+            ]
+        ),
+    )
+
+    protarrow_msgs = protarrow.record_batch_to_messages(
+        record_batch_large, ExampleMessage
+    )
+    assert protarrow_msgs == expected
+
+    ptars_msgs = pool.record_batch_to_messages(
+        record_batch_large, ExampleMessage.DESCRIPTOR
+    )
     assert ptars_msgs == expected
