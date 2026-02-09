@@ -28,26 +28,22 @@ enum GenericListArray<'a> {
 
 impl<'a> GenericListArray<'a> {
     fn from_array(array: &'a ArrayRef) -> Option<Self> {
-        if let Some(list) = array.as_any().downcast_ref::<ListArray>() {
-            Some(GenericListArray::Regular(list))
-        } else if let Some(list) = array.as_any().downcast_ref::<LargeListArray>() {
-            Some(GenericListArray::Large(list))
-        } else {
-            None
-        }
+        array
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .map(GenericListArray::Regular)
+            .or_else(|| {
+                array
+                    .as_any()
+                    .downcast_ref::<LargeListArray>()
+                    .map(GenericListArray::Large)
+            })
     }
 
     fn values(&self) -> ArrayRef {
         match self {
             GenericListArray::Regular(a) => a.values().clone(),
             GenericListArray::Large(a) => a.values().clone(),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            GenericListArray::Regular(a) => a.len(),
-            GenericListArray::Large(a) => a.len(),
         }
     }
 
@@ -321,7 +317,7 @@ pub fn extract_single_primitive<P: ArrowPrimitiveType>(
         })
 }
 
-pub fn extract_repeated_primitive_type<P>(
+fn extract_repeated_primitive_type<P>(
     list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
@@ -353,7 +349,7 @@ pub fn extract_repeated_primitive_type<P>(
     }
 }
 
-pub fn extract_repeated_boolean(
+fn extract_repeated_boolean(
     list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
@@ -379,7 +375,7 @@ pub fn extract_repeated_boolean(
     }
 }
 
-pub fn extract_repeated_message(
+fn extract_repeated_message(
     list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
