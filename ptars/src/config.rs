@@ -142,3 +142,136 @@ impl PtarsConfig {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = PtarsConfig::default();
+        assert_eq!(config.timestamp_tz, Some(Arc::from("UTC")));
+        assert_eq!(config.timestamp_unit, TimeUnit::Nanosecond);
+        assert_eq!(config.time_unit, TimeUnit::Nanosecond);
+        assert_eq!(config.duration_unit, TimeUnit::Nanosecond);
+        assert_eq!(config.list_value_name.as_ref(), "item");
+        assert_eq!(config.map_value_name.as_ref(), "value");
+        assert!(!config.list_nullable);
+        assert!(!config.map_nullable);
+        assert!(!config.list_value_nullable);
+        assert!(!config.map_value_nullable);
+        assert!(!config.use_large_string);
+        assert!(!config.use_large_binary);
+    }
+
+    #[test]
+    fn test_new_config() {
+        let config = PtarsConfig::new();
+        assert_eq!(config.timestamp_tz, Some(Arc::from("UTC")));
+    }
+
+    #[test]
+    fn test_with_timestamp_tz() {
+        let config = PtarsConfig::new().with_timestamp_tz(Some("America/New_York"));
+        assert_eq!(config.timestamp_tz, Some(Arc::from("America/New_York")));
+
+        let config = PtarsConfig::new().with_timestamp_tz(None);
+        assert_eq!(config.timestamp_tz, None);
+    }
+
+    #[test]
+    fn test_with_timestamp_unit() {
+        let config = PtarsConfig::new().with_timestamp_unit(TimeUnit::Microsecond);
+        assert_eq!(config.timestamp_unit, TimeUnit::Microsecond);
+    }
+
+    #[test]
+    fn test_with_time_unit() {
+        let config = PtarsConfig::new().with_time_unit(TimeUnit::Millisecond);
+        assert_eq!(config.time_unit, TimeUnit::Millisecond);
+    }
+
+    #[test]
+    fn test_with_duration_unit() {
+        let config = PtarsConfig::new().with_duration_unit(TimeUnit::Second);
+        assert_eq!(config.duration_unit, TimeUnit::Second);
+    }
+
+    #[test]
+    fn test_with_list_value_name() {
+        let config = PtarsConfig::new().with_list_value_name("element");
+        assert_eq!(config.list_value_name.as_ref(), "element");
+    }
+
+    #[test]
+    fn test_with_map_value_name() {
+        let config = PtarsConfig::new().with_map_value_name("val");
+        assert_eq!(config.map_value_name.as_ref(), "val");
+    }
+
+    #[test]
+    fn test_with_list_nullable() {
+        let config = PtarsConfig::new().with_list_nullable(true);
+        assert!(config.list_nullable);
+    }
+
+    #[test]
+    fn test_with_map_nullable() {
+        let config = PtarsConfig::new().with_map_nullable(true);
+        assert!(config.map_nullable);
+    }
+
+    #[test]
+    fn test_with_list_value_nullable() {
+        let config = PtarsConfig::new().with_list_value_nullable(true);
+        assert!(config.list_value_nullable);
+    }
+
+    #[test]
+    fn test_with_map_value_nullable() {
+        let config = PtarsConfig::new().with_map_value_nullable(true);
+        assert!(config.map_value_nullable);
+    }
+
+    #[test]
+    fn test_with_use_large_string() {
+        let config = PtarsConfig::new().with_use_large_string(true);
+        assert!(config.use_large_string);
+    }
+
+    #[test]
+    fn test_with_use_large_binary() {
+        let config = PtarsConfig::new().with_use_large_binary(true);
+        assert!(config.use_large_binary);
+    }
+
+    #[test]
+    fn test_builder_chaining() {
+        let config = PtarsConfig::new()
+            .with_timestamp_tz(Some("Europe/London"))
+            .with_timestamp_unit(TimeUnit::Millisecond)
+            .with_time_unit(TimeUnit::Microsecond)
+            .with_duration_unit(TimeUnit::Second)
+            .with_list_value_name("elem")
+            .with_map_value_name("v")
+            .with_list_nullable(true)
+            .with_map_nullable(true)
+            .with_list_value_nullable(true)
+            .with_map_value_nullable(true)
+            .with_use_large_string(true)
+            .with_use_large_binary(true);
+
+        assert_eq!(config.timestamp_tz, Some(Arc::from("Europe/London")));
+        assert_eq!(config.timestamp_unit, TimeUnit::Millisecond);
+        assert_eq!(config.time_unit, TimeUnit::Microsecond);
+        assert_eq!(config.duration_unit, TimeUnit::Second);
+        assert_eq!(config.list_value_name.as_ref(), "elem");
+        assert_eq!(config.map_value_name.as_ref(), "v");
+        assert!(config.list_nullable);
+        assert!(config.map_nullable);
+        assert!(config.list_value_nullable);
+        assert!(config.map_value_nullable);
+        assert!(config.use_large_string);
+        assert!(config.use_large_binary);
+    }
+}
