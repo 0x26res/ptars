@@ -2388,3 +2388,183 @@ pub fn record_batch_to_array(
         .for_each(|x| results.append_value(x.encode_to_vec()));
     results.finish().to_data()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nanos_to_seconds_and_nanos_positive() {
+        let (seconds, nanos) = nanos_to_seconds_and_nanos(1_500_000_000);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_nanos_to_seconds_and_nanos_negative() {
+        // -0.5 seconds = -1 second + 500_000_000 nanos (for Timestamp)
+        let (seconds, nanos) = nanos_to_seconds_and_nanos(-500_000_000);
+        assert_eq!(seconds, -1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_nanos_to_seconds_and_nanos_exact_second() {
+        let (seconds, nanos) = nanos_to_seconds_and_nanos(2_000_000_000);
+        assert_eq!(seconds, 2);
+        assert_eq!(nanos, 0);
+    }
+
+    #[test]
+    fn test_nanos_to_duration_seconds_and_nanos_positive() {
+        let (seconds, nanos) = nanos_to_duration_seconds_and_nanos(1_500_000_000);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_nanos_to_duration_seconds_and_nanos_negative() {
+        // For Duration, nanos keeps the sign
+        let (seconds, nanos) = nanos_to_duration_seconds_and_nanos(-1_500_000_000);
+        assert_eq!(seconds, -1);
+        assert_eq!(nanos, -500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_seconds_and_nanos_second() {
+        let (seconds, nanos) = time_unit_to_seconds_and_nanos(42, TimeUnit::Second);
+        assert_eq!(seconds, 42);
+        assert_eq!(nanos, 0);
+    }
+
+    #[test]
+    fn test_time_unit_to_seconds_and_nanos_millisecond_positive() {
+        let (seconds, nanos) = time_unit_to_seconds_and_nanos(1500, TimeUnit::Millisecond);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_seconds_and_nanos_millisecond_negative() {
+        let (seconds, nanos) = time_unit_to_seconds_and_nanos(-500, TimeUnit::Millisecond);
+        assert_eq!(seconds, -1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_seconds_and_nanos_microsecond_positive() {
+        let (seconds, nanos) = time_unit_to_seconds_and_nanos(1_500_000, TimeUnit::Microsecond);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_seconds_and_nanos_microsecond_negative() {
+        let (seconds, nanos) = time_unit_to_seconds_and_nanos(-500_000, TimeUnit::Microsecond);
+        assert_eq!(seconds, -1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_seconds_and_nanos_nanosecond() {
+        let (seconds, nanos) = time_unit_to_seconds_and_nanos(1_500_000_000, TimeUnit::Nanosecond);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_duration_seconds_and_nanos_second() {
+        let (seconds, nanos) = time_unit_to_duration_seconds_and_nanos(42, TimeUnit::Second);
+        assert_eq!(seconds, 42);
+        assert_eq!(nanos, 0);
+    }
+
+    #[test]
+    fn test_time_unit_to_duration_seconds_and_nanos_millisecond() {
+        let (seconds, nanos) = time_unit_to_duration_seconds_and_nanos(1500, TimeUnit::Millisecond);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_duration_seconds_and_nanos_microsecond() {
+        let (seconds, nanos) =
+            time_unit_to_duration_seconds_and_nanos(1_500_000, TimeUnit::Microsecond);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time_unit_to_duration_seconds_and_nanos_nanosecond() {
+        let (seconds, nanos) =
+            time_unit_to_duration_seconds_and_nanos(1_500_000_000, TimeUnit::Nanosecond);
+        assert_eq!(seconds, 1);
+        assert_eq!(nanos, 500_000_000);
+    }
+
+    #[test]
+    fn test_time32_unit_to_nanos_second() {
+        let nanos = time32_unit_to_nanos(5, TimeUnit::Second);
+        assert_eq!(nanos, 5_000_000_000);
+    }
+
+    #[test]
+    fn test_time32_unit_to_nanos_millisecond() {
+        let nanos = time32_unit_to_nanos(1500, TimeUnit::Millisecond);
+        assert_eq!(nanos, 1_500_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Time32 only supports Second and Millisecond units")]
+    fn test_time32_unit_to_nanos_invalid_unit() {
+        time32_unit_to_nanos(1000, TimeUnit::Microsecond);
+    }
+
+    #[test]
+    fn test_time64_unit_to_nanos_microsecond() {
+        let nanos = time64_unit_to_nanos(1_500_000, TimeUnit::Microsecond);
+        assert_eq!(nanos, 1_500_000_000);
+    }
+
+    #[test]
+    fn test_time64_unit_to_nanos_nanosecond() {
+        let nanos = time64_unit_to_nanos(1_500_000_000, TimeUnit::Nanosecond);
+        assert_eq!(nanos, 1_500_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Time64 only supports Microsecond and Nanosecond units")]
+    fn test_time64_unit_to_nanos_invalid_unit() {
+        time64_unit_to_nanos(1000, TimeUnit::Second);
+    }
+
+    #[test]
+    fn test_date32_conversion() {
+        // Test the date conversion logic used inline
+        // 2024-01-15 = 19737 days since Unix epoch
+        let days: i32 = 19737;
+        let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+        assert_eq!(date.year(), 2024);
+        assert_eq!(date.month(), 1);
+        assert_eq!(date.day(), 15);
+    }
+
+    #[test]
+    fn test_date32_conversion_unix_epoch() {
+        let days: i32 = 0;
+        let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+        assert_eq!(date.year(), 1970);
+        assert_eq!(date.month(), 1);
+        assert_eq!(date.day(), 1);
+    }
+
+    #[test]
+    fn test_date32_conversion_negative() {
+        // 1969-12-31 = -1 days since Unix epoch
+        let days: i32 = -1;
+        let date = NaiveDate::from_num_days_from_ce_opt(days + CE_OFFSET).unwrap();
+        assert_eq!(date.year(), 1969);
+        assert_eq!(date.month(), 12);
+        assert_eq!(date.day(), 31);
+    }
+}
