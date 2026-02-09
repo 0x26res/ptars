@@ -1,5 +1,5 @@
 [dependencies]
-arrow = {version = "57.1.0", features = ["pyarrow"]}
+arrow = {version = "57.3.0", features = ["pyarrow"]}
 arrow-array = "57.1.0"
 arrow-schema = "57.1.0"
 prost = "0.14.1"
