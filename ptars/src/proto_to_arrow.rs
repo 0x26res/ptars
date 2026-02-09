@@ -1800,3 +1800,177 @@ pub fn binary_array_to_record_batch_with_config(
     }
     Ok(RecordBatch::from(builder.build_struct_array()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_seconds_nanos_to_unit_second() {
+        // Second unit just returns seconds, ignoring nanos
+        assert_eq!(
+            convert_seconds_nanos_to_unit(100, 500_000_000, TimeUnit::Second, "Test"),
+            100
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(-100, 500_000_000, TimeUnit::Second, "Test"),
+            -100
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(0, 999_999_999, TimeUnit::Second, "Test"),
+            0
+        );
+    }
+
+    #[test]
+    fn test_convert_seconds_nanos_to_unit_millisecond() {
+        // 1 second + 500ms = 1500ms
+        assert_eq!(
+            convert_seconds_nanos_to_unit(1, 500_000_000, TimeUnit::Millisecond, "Test"),
+            1500
+        );
+        // 0 seconds + 123ms
+        assert_eq!(
+            convert_seconds_nanos_to_unit(0, 123_000_000, TimeUnit::Millisecond, "Test"),
+            123
+        );
+        // Negative seconds
+        assert_eq!(
+            convert_seconds_nanos_to_unit(-1, 0, TimeUnit::Millisecond, "Test"),
+            -1000
+        );
+    }
+
+    #[test]
+    fn test_convert_seconds_nanos_to_unit_microsecond() {
+        // 1 second + 500us = 1_000_500us
+        assert_eq!(
+            convert_seconds_nanos_to_unit(1, 500_000, TimeUnit::Microsecond, "Test"),
+            1_000_500
+        );
+        // 0 seconds + 123us
+        assert_eq!(
+            convert_seconds_nanos_to_unit(0, 123_000, TimeUnit::Microsecond, "Test"),
+            123
+        );
+    }
+
+    #[test]
+    fn test_convert_seconds_nanos_to_unit_nanosecond() {
+        // 1 second + 500ns = 1_000_000_500ns
+        assert_eq!(
+            convert_seconds_nanos_to_unit(1, 500, TimeUnit::Nanosecond, "Test"),
+            1_000_000_500
+        );
+        // 0 seconds + 123ns
+        assert_eq!(
+            convert_seconds_nanos_to_unit(0, 123, TimeUnit::Nanosecond, "Test"),
+            123
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Timestamp overflow")]
+    fn test_convert_seconds_nanos_to_unit_overflow_millisecond() {
+        // i64::MAX seconds would overflow when converted to milliseconds
+        convert_seconds_nanos_to_unit(i64::MAX, 0, TimeUnit::Millisecond, "Timestamp");
+    }
+
+    #[test]
+    #[should_panic(expected = "Duration overflow")]
+    fn test_convert_seconds_nanos_to_unit_overflow_microsecond() {
+        // i64::MAX seconds would overflow when converted to microseconds
+        convert_seconds_nanos_to_unit(i64::MAX, 0, TimeUnit::Microsecond, "Duration");
+    }
+
+    #[test]
+    #[should_panic(expected = "Test overflow")]
+    fn test_convert_seconds_nanos_to_unit_overflow_nanosecond() {
+        // i64::MAX seconds would overflow when converted to nanoseconds
+        convert_seconds_nanos_to_unit(i64::MAX, 0, TimeUnit::Nanosecond, "Test");
+    }
+
+    #[test]
+    #[should_panic(expected = "overflow: value cannot be represented in milliseconds")]
+    fn test_convert_seconds_nanos_to_unit_overflow_addition_millisecond() {
+        // i64::MAX / 1000 is the max seconds that can be scaled to milliseconds without overflow
+        // Add nanos that would push it over after successful multiplication
+        let max_safe_seconds = i64::MAX / 1000;
+        // This value plus (nanos / 1_000_000) should overflow
+        convert_seconds_nanos_to_unit(max_safe_seconds, 808_000_000, TimeUnit::Millisecond, "Test");
+    }
+
+    #[test]
+    #[should_panic(expected = "overflow: value cannot be represented in microseconds")]
+    fn test_convert_seconds_nanos_to_unit_overflow_addition_microsecond() {
+        // i64::MAX / 1_000_000 = 9223372036854
+        // 9223372036854 * 1_000_000 = 9223372036854000000
+        // i64::MAX - 9223372036854000000 = 775807
+        // We need (nanos / 1_000) > 775807, so nanos > 775_807_000
+        let max_safe_seconds = i64::MAX / 1_000_000;
+        convert_seconds_nanos_to_unit(max_safe_seconds, 776_000_000, TimeUnit::Microsecond, "Test");
+    }
+
+    #[test]
+    #[should_panic(expected = "overflow: value cannot be represented in nanoseconds")]
+    fn test_convert_seconds_nanos_to_unit_overflow_addition_nanosecond() {
+        // i64::MAX / 1_000_000_000 = 9223372036
+        // 9223372036 * 1_000_000_000 = 9223372036000000000
+        // i64::MAX - 9223372036000000000 = 854775807
+        // We need nanos > 854775807
+        let max_safe_seconds = i64::MAX / 1_000_000_000;
+        convert_seconds_nanos_to_unit(max_safe_seconds, 855_000_000, TimeUnit::Nanosecond, "Test");
+    }
+
+    #[test]
+    fn test_string_builder_wrapper_len_and_is_empty() {
+        let config = PtarsConfig::default();
+        let mut builder = StringBuilderWrapper::new(&config);
+
+        assert!(builder.is_empty());
+        assert_eq!(builder.len(), 0);
+
+        builder.append(&Value::String("hello".to_string()));
+        assert!(!builder.is_empty());
+        assert_eq!(builder.len(), 1);
+    }
+
+    #[test]
+    fn test_string_builder_wrapper_large_len_and_is_empty() {
+        let config = PtarsConfig::new().with_use_large_string(true);
+        let mut builder = StringBuilderWrapper::new(&config);
+
+        assert!(builder.is_empty());
+        assert_eq!(builder.len(), 0);
+
+        builder.append(&Value::String("hello".to_string()));
+        assert!(!builder.is_empty());
+        assert_eq!(builder.len(), 1);
+    }
+
+    #[test]
+    fn test_binary_builder_wrapper_len_and_is_empty() {
+        let config = PtarsConfig::default();
+        let mut builder = BinaryBuilderWrapper::new(&config);
+
+        assert!(builder.is_empty());
+        assert_eq!(builder.len(), 0);
+
+        builder.append(&Value::Bytes(prost::bytes::Bytes::from_static(&[1, 2, 3])));
+        assert!(!builder.is_empty());
+        assert_eq!(builder.len(), 1);
+    }
+
+    #[test]
+    fn test_binary_builder_wrapper_large_len_and_is_empty() {
+        let config = PtarsConfig::new().with_use_large_binary(true);
+        let mut builder = BinaryBuilderWrapper::new(&config);
+
+        assert!(builder.is_empty());
+        assert_eq!(builder.len(), 0);
+
+        builder.append(&Value::Bytes(prost::bytes::Bytes::from_static(&[1, 2, 3])));
+        assert!(!builder.is_empty());
+        assert_eq!(builder.len(), 1);
+    }
+}
