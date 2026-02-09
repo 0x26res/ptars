@@ -1,7 +1,9 @@
 use arrow::array::ArrayData;
 use arrow::array::MapArray;
 use arrow::buffer::Buffer;
-use arrow_array::builder::{ArrayBuilder, BinaryBuilder, StringBuilder};
+use arrow_array::builder::{
+    ArrayBuilder, BinaryBuilder, LargeBinaryBuilder, LargeStringBuilder, StringBuilder,
+};
 use arrow_array::types::Date32Type;
 use arrow_array::{Array, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field, TimeUnit};
@@ -10,6 +12,16 @@ use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Va
 use std::sync::Arc;
 
 use crate::config::PtarsConfig;
+
+enum StringBuilderInner {
+    Regular(StringBuilder),
+    Large(LargeStringBuilder),
+}
+
+enum BinaryBuilderInner {
+    Regular(BinaryBuilder),
+    Large(LargeBinaryBuilder),
+}
 
 pub trait ProtoArrayBuilder {
     fn append(&mut self, value: &Value);
@@ -77,9 +89,11 @@ pub fn get_message_array_builder(
         }
         "google.protobuf.StringValue" => Ok(Box::new(StringWrapperBuilderWrapper::new(
             message_descriptor,
+            config,
         ))),
         "google.protobuf.BytesValue" => Ok(Box::new(BytesWrapperBuilderWrapper::new(
             message_descriptor,
+            config,
         ))),
         _ => Ok(Box::new(MessageArrayBuilder::new(
             message_descriptor,
@@ -115,8 +129,8 @@ pub fn get_singular_array_builder(
         Kind::Enum(_) => Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
             Value::as_enum_number,
         ))),
-        Kind::String => Ok(Box::new(StringBuilderWrapper::new())),
-        Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new())),
+        Kind::String => Ok(Box::new(StringBuilderWrapper::new(config))),
+        Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new(config))),
         Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor, config),
     }
 }
@@ -740,20 +754,27 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
 }
 
 struct RepeatedBinaryBuilderWrapper {
-    builder: BinaryBuilder,
+    builder: BinaryBuilderInner,
     offsets: Vec<i32>,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
+    use_large_binary: bool,
 }
 
 impl RepeatedBinaryBuilderWrapper {
     fn new(config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
+        let builder = if config.use_large_binary {
+            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+        } else {
+            BinaryBuilderInner::Regular(BinaryBuilder::new())
+        };
         Self {
-            builder: BinaryBuilder::new(),
+            builder,
             offsets,
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
+            use_large_binary: config.use_large_binary,
         }
     }
 }
@@ -762,35 +783,60 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
     fn append(&mut self, value: &Value) {
         if let Some(values) = value.as_list() {
             for each_value in values {
-                self.builder.append_value(each_value.as_bytes().unwrap());
+                match &mut self.builder {
+                    BinaryBuilderInner::Regular(b) => {
+                        b.append_value(each_value.as_bytes().unwrap())
+                    }
+                    BinaryBuilderInner::Large(b) => b.append_value(each_value.as_bytes().unwrap()),
+                }
             }
         }
-        self.offsets.push(self.builder.len() as i32);
+        let len = match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        };
+        self.offsets.push(len as i32);
     }
 
     fn append_null(&mut self) {
-        self.offsets.push(self.builder.len() as i32);
+        let len = match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        };
+        self.offsets.push(len as i32);
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        self.offsets.push(self.builder.len() as i32);
+        let len = match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        };
+        self.offsets.push(len as i32);
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
+        let values_data = match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => std::mem::take(b).finish().to_data(),
+            BinaryBuilderInner::Large(b) => std::mem::take(b).finish().to_data(),
+        };
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
+        let inner_data_type = if self.use_large_binary {
+            DataType::LargeBinary
+        } else {
+            DataType::Binary
+        };
         let list_data_type = DataType::List(Arc::new(Field::new(
             &*self.list_value_name,
-            DataType::Binary,
+            inner_data_type,
             self.list_value_nullable,
         )));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
             .add_buffer(offsets_buffer)
-            .add_child_data(values.to_data())
+            .add_child_data(values_data)
             .build()
             .unwrap();
 
@@ -807,20 +853,27 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
 }
 
 struct RepeatedStringBuilderWrapper {
-    builder: StringBuilder,
+    builder: StringBuilderInner,
     offsets: Vec<i32>,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
+    use_large_string: bool,
 }
 
 impl RepeatedStringBuilderWrapper {
     fn new(config: &PtarsConfig) -> Self {
         let offsets: Vec<i32> = vec![0];
+        let builder = if config.use_large_string {
+            StringBuilderInner::Large(LargeStringBuilder::new())
+        } else {
+            StringBuilderInner::Regular(StringBuilder::new())
+        };
         Self {
-            builder: StringBuilder::new(),
+            builder,
             offsets,
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
+            use_large_string: config.use_large_string,
         }
     }
 }
@@ -829,35 +882,58 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
     fn append(&mut self, value: &Value) {
         if let Some(values) = value.as_list() {
             for each_value in values {
-                self.builder.append_value(each_value.as_str().unwrap());
+                match &mut self.builder {
+                    StringBuilderInner::Regular(b) => b.append_value(each_value.as_str().unwrap()),
+                    StringBuilderInner::Large(b) => b.append_value(each_value.as_str().unwrap()),
+                }
             }
         }
-        self.offsets.push(self.builder.len() as i32);
+        let len = match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        };
+        self.offsets.push(len as i32);
     }
 
     fn append_null(&mut self) {
-        self.offsets.push(self.builder.len() as i32);
+        let len = match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        };
+        self.offsets.push(len as i32);
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        self.offsets.push(self.builder.len() as i32);
+        let len = match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        };
+        self.offsets.push(len as i32);
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
+        let values_data = match &mut self.builder {
+            StringBuilderInner::Regular(b) => std::mem::take(b).finish().to_data(),
+            StringBuilderInner::Large(b) => std::mem::take(b).finish().to_data(),
+        };
         let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
 
+        let inner_data_type = if self.use_large_string {
+            DataType::LargeUtf8
+        } else {
+            DataType::Utf8
+        };
         let list_data_type = DataType::List(Arc::new(Field::new(
             &*self.list_value_name,
-            DataType::Utf8,
+            inner_data_type,
             self.list_value_nullable,
         )));
 
         let list_data = ArrayData::builder(list_data_type)
             .len(offsets_buffer.len() / 4 - 1)
             .add_buffer(offsets_buffer)
-            .add_child_data(values.to_data())
+            .add_child_data(values_data)
             .build()
             .unwrap();
 
@@ -1393,14 +1469,19 @@ impl ProtoArrayBuilder for BoolWrapperBuilderWrapper {
 }
 
 struct StringWrapperBuilderWrapper {
-    builder: StringBuilder,
+    builder: StringBuilderInner,
     value_descriptor: FieldDescriptor,
 }
 
 impl StringWrapperBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_string {
+            StringBuilderInner::Large(LargeStringBuilder::new())
+        } else {
+            StringBuilderInner::Regular(StringBuilder::new())
+        };
         Self {
-            builder: StringBuilder::new(),
+            builder,
             value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
         }
     }
@@ -1410,43 +1491,66 @@ impl ProtoArrayBuilder for StringWrapperBuilderWrapper {
     fn append(&mut self, value: &Value) {
         if let Some(message) = value.as_message() {
             let v = message.get_field(&self.value_descriptor);
-            self.builder.append_value(v.as_str().unwrap());
+            match &mut self.builder {
+                StringBuilderInner::Regular(b) => b.append_value(v.as_str().unwrap()),
+                StringBuilderInner::Large(b) => b.append_value(v.as_str().unwrap()),
+            }
         } else {
             self.append_null();
         }
     }
 
     fn append_null(&mut self) {
-        self.builder.append_null();
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_null(),
+            StringBuilderInner::Large(b) => b.append_null(),
+        }
     }
 
     fn append_default(&mut self) {
         // Wrapper types are message types, default is null
-        self.builder.append_null();
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_null(),
+            StringBuilderInner::Large(b) => b.append_null(),
+        }
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        }
     }
 
     fn len(&self) -> usize {
-        self.builder.len()
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        }
     }
 
     fn is_empty(&self) -> bool {
-        self.builder.is_empty()
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.is_empty(),
+            StringBuilderInner::Large(b) => b.is_empty(),
+        }
     }
 }
 
 struct BytesWrapperBuilderWrapper {
-    builder: BinaryBuilder,
+    builder: BinaryBuilderInner,
     value_descriptor: FieldDescriptor,
 }
 
 impl BytesWrapperBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
+    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_binary {
+            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+        } else {
+            BinaryBuilderInner::Regular(BinaryBuilder::new())
+        };
         Self {
-            builder: BinaryBuilder::new(),
+            builder,
             value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
         }
     }
@@ -1456,107 +1560,167 @@ impl ProtoArrayBuilder for BytesWrapperBuilderWrapper {
     fn append(&mut self, value: &Value) {
         if let Some(message) = value.as_message() {
             let v = message.get_field(&self.value_descriptor);
-            self.builder.append_value(v.as_bytes().unwrap());
+            match &mut self.builder {
+                BinaryBuilderInner::Regular(b) => b.append_value(v.as_bytes().unwrap()),
+                BinaryBuilderInner::Large(b) => b.append_value(v.as_bytes().unwrap()),
+            }
         } else {
             self.append_null();
         }
     }
 
     fn append_null(&mut self) {
-        self.builder.append_null();
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_null(),
+            BinaryBuilderInner::Large(b) => b.append_null(),
+        }
     }
 
     fn append_default(&mut self) {
         // Wrapper types are message types, default is null
-        self.builder.append_null();
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_null(),
+            BinaryBuilderInner::Large(b) => b.append_null(),
+        }
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        }
     }
 
     fn len(&self) -> usize {
-        self.builder.len()
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        }
     }
 
     fn is_empty(&self) -> bool {
-        self.builder.is_empty()
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.is_empty(),
+            BinaryBuilderInner::Large(b) => b.is_empty(),
+        }
     }
 }
 
 struct StringBuilderWrapper {
-    builder: StringBuilder,
+    builder: StringBuilderInner,
 }
 
 impl StringBuilderWrapper {
-    fn new() -> Self {
-        Self {
-            builder: StringBuilder::new(),
-        }
+    fn new(config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_string {
+            StringBuilderInner::Large(LargeStringBuilder::new())
+        } else {
+            StringBuilderInner::Regular(StringBuilder::new())
+        };
+        Self { builder }
     }
 }
 
 impl ProtoArrayBuilder for StringBuilderWrapper {
     fn append(&mut self, value: &Value) {
-        self.builder.append_value(value.as_str().unwrap());
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_value(value.as_str().unwrap()),
+            StringBuilderInner::Large(b) => b.append_value(value.as_str().unwrap()),
+        }
     }
 
     fn append_null(&mut self) {
-        self.builder.append_null();
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_null(),
+            StringBuilderInner::Large(b) => b.append_null(),
+        }
     }
 
     fn append_default(&mut self) {
-        self.builder.append_value("");
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_value(""),
+            StringBuilderInner::Large(b) => b.append_value(""),
+        }
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        }
     }
 
     fn len(&self) -> usize {
-        self.builder.len()
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        }
     }
 
     fn is_empty(&self) -> bool {
-        self.builder.is_empty()
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.is_empty(),
+            StringBuilderInner::Large(b) => b.is_empty(),
+        }
     }
 }
 
 struct BinaryBuilderWrapper {
-    builder: BinaryBuilder,
+    builder: BinaryBuilderInner,
 }
 
 impl BinaryBuilderWrapper {
-    fn new() -> Self {
-        Self {
-            builder: BinaryBuilder::new(),
-        }
+    fn new(config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_binary {
+            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+        } else {
+            BinaryBuilderInner::Regular(BinaryBuilder::new())
+        };
+        Self { builder }
     }
 }
 
 impl ProtoArrayBuilder for BinaryBuilderWrapper {
     fn append(&mut self, value: &Value) {
-        self.builder.append_value(value.as_bytes().unwrap());
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_value(value.as_bytes().unwrap()),
+            BinaryBuilderInner::Large(b) => b.append_value(value.as_bytes().unwrap()),
+        }
     }
 
     fn append_null(&mut self) {
-        self.builder.append_null();
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_null(),
+            BinaryBuilderInner::Large(b) => b.append_null(),
+        }
     }
 
     fn append_default(&mut self) {
-        self.builder.append_value(b"");
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_value(b""),
+            BinaryBuilderInner::Large(b) => b.append_value(b""),
+        }
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        }
     }
 
     fn len(&self) -> usize {
-        self.builder.len()
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        }
     }
 
     fn is_empty(&self) -> bool {
-        self.builder.is_empty()
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.is_empty(),
+            BinaryBuilderInner::Large(b) => b.is_empty(),
+        }
     }
 }
 

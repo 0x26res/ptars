@@ -821,32 +821,62 @@ fn extract_repeated_wrapper_string(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values = list_array
-        .values()
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
+    let values_array = list_array.values();
     let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+    fn process_string_values<'a>(
+        iter_fn: impl Fn(usize) -> &'a str,
+        list_array: &ListArray,
+        messages: &mut [&mut DynamicMessage],
+        field_descriptor: &FieldDescriptor,
+        message_descriptor: &MessageDescriptor,
+        value_descriptor: &FieldDescriptor,
+    ) {
+        for (i, message) in messages.iter_mut().enumerate() {
+            if !list_array.is_null(i) {
+                let start = list_array.value_offsets()[i] as usize;
+                let end = list_array.value_offsets()[i + 1] as usize;
 
-            if start < end {
-                let sub_messages: Vec<Value> = (start..end)
-                    .map(|idx| {
-                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
-                        sub_message.set_field(
-                            &value_descriptor,
-                            Value::String(values.value(idx).to_string()),
-                        );
-                        Value::Message(sub_message)
-                    })
-                    .collect();
-                message.set_field(field_descriptor, Value::List(sub_messages));
+                if start < end {
+                    let sub_messages: Vec<Value> = (start..end)
+                        .map(|idx| {
+                            let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                            sub_message.set_field(
+                                value_descriptor,
+                                Value::String(iter_fn(idx).to_string()),
+                            );
+                            Value::Message(sub_message)
+                        })
+                        .collect();
+                    message.set_field(field_descriptor, Value::List(sub_messages));
+                }
             }
         }
+    }
+
+    if let Some(arr) = values_array.as_any().downcast_ref::<StringArray>() {
+        process_string_values(
+            |idx| arr.value(idx),
+            list_array,
+            messages,
+            field_descriptor,
+            message_descriptor,
+            &value_descriptor,
+        );
+    } else if let Some(arr) = values_array.as_any().downcast_ref::<LargeStringArray>() {
+        process_string_values(
+            |idx| arr.value(idx),
+            list_array,
+            messages,
+            field_descriptor,
+            message_descriptor,
+            &value_descriptor,
+        );
+    } else {
+        panic!(
+            "Expected StringArray or LargeStringArray, got {:?}",
+            values_array.data_type()
+        );
     }
 }
 
@@ -856,32 +886,62 @@ fn extract_repeated_wrapper_bytes(
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values = list_array
-        .values()
-        .as_any()
-        .downcast_ref::<BinaryArray>()
-        .unwrap();
+    let values_array = list_array.values();
     let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
 
-    for (i, message) in messages.iter_mut().enumerate() {
-        if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+    fn process_bytes_values<'a>(
+        iter_fn: impl Fn(usize) -> &'a [u8],
+        list_array: &ListArray,
+        messages: &mut [&mut DynamicMessage],
+        field_descriptor: &FieldDescriptor,
+        message_descriptor: &MessageDescriptor,
+        value_descriptor: &FieldDescriptor,
+    ) {
+        for (i, message) in messages.iter_mut().enumerate() {
+            if !list_array.is_null(i) {
+                let start = list_array.value_offsets()[i] as usize;
+                let end = list_array.value_offsets()[i + 1] as usize;
 
-            if start < end {
-                let sub_messages: Vec<Value> = (start..end)
-                    .map(|idx| {
-                        let mut sub_message = DynamicMessage::new(message_descriptor.clone());
-                        sub_message.set_field(
-                            &value_descriptor,
-                            Value::Bytes(prost::bytes::Bytes::from(values.value(idx).to_vec())),
-                        );
-                        Value::Message(sub_message)
-                    })
-                    .collect();
-                message.set_field(field_descriptor, Value::List(sub_messages));
+                if start < end {
+                    let sub_messages: Vec<Value> = (start..end)
+                        .map(|idx| {
+                            let mut sub_message = DynamicMessage::new(message_descriptor.clone());
+                            sub_message.set_field(
+                                value_descriptor,
+                                Value::Bytes(prost::bytes::Bytes::from(iter_fn(idx).to_vec())),
+                            );
+                            Value::Message(sub_message)
+                        })
+                        .collect();
+                    message.set_field(field_descriptor, Value::List(sub_messages));
+                }
             }
         }
+    }
+
+    if let Some(arr) = values_array.as_any().downcast_ref::<BinaryArray>() {
+        process_bytes_values(
+            |idx| arr.value(idx),
+            list_array,
+            messages,
+            field_descriptor,
+            message_descriptor,
+            &value_descriptor,
+        );
+    } else if let Some(arr) = values_array.as_any().downcast_ref::<LargeBinaryArray>() {
+        process_bytes_values(
+            |idx| arr.value(idx),
+            list_array,
+            messages,
+            field_descriptor,
+            message_descriptor,
+            &value_descriptor,
+        );
+    } else {
+        panic!(
+            "Expected BinaryArray or LargeBinaryArray, got {:?}",
+            values_array.data_type()
+        );
     }
 }
 
