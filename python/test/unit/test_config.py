@@ -828,3 +828,99 @@ class TestMapValueTimeUnits:
         assert tod.seconds == 45
         # Nanos preserved at millisecond precision
         assert tod.nanos == 500_000_000
+
+
+class TestLargeStringBinaryConfig:
+    """Test large string and binary config options."""
+
+    def test_use_large_string_default_is_false(self):
+        """Default config uses regular Utf8."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        pool = HandlerPool([BENCH_DESCRIPTOR])
+        messages = [ExampleMessage(string_value="test")]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        assert batch.schema.field("string_value").type == pa.string()
+
+    def test_use_large_string_true(self):
+        """Config with use_large_string=True uses LargeUtf8."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_string=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(string_value="test")]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        assert batch.schema.field("string_value").type == pa.large_string()
+
+    def test_use_large_binary_default_is_false(self):
+        """Default config uses regular Binary."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        pool = HandlerPool([BENCH_DESCRIPTOR])
+        messages = [ExampleMessage(bytes_value=b"test")]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        assert batch.schema.field("bytes_value").type == pa.binary()
+
+    def test_use_large_binary_true(self):
+        """Config with use_large_binary=True uses LargeBinary."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_binary=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(bytes_value=b"test")]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        assert batch.schema.field("bytes_value").type == pa.large_binary()
+
+    def test_use_large_string_repeated(self):
+        """Config with use_large_string=True uses LargeUtf8 for repeated fields."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_string=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(string_values=["a", "b", "c"])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        list_type = batch.schema.field("string_values").type
+        assert isinstance(list_type, pa.ListType)
+        assert list_type.value_type == pa.large_string()
+
+    def test_use_large_binary_repeated(self):
+        """Config with use_large_binary=True uses LargeBinary for repeated fields."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_binary=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(bytes_values=[b"a", b"b", b"c"])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        list_type = batch.schema.field("bytes_values").type
+        assert isinstance(list_type, pa.ListType)
+        assert list_type.value_type == pa.large_binary()
+
+    def test_use_large_string_roundtrip(self):
+        """Large string values should roundtrip correctly."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_string=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(string_value="test string")]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    def test_use_large_binary_roundtrip(self):
+        """Large binary values should roundtrip correctly."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_binary=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(bytes_value=b"test bytes")]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+        assert messages_back == messages

@@ -37,6 +37,8 @@ class PtarsConfig:
         map_nullable: Whether map fields can be null.
         list_value_nullable: Whether list elements can be null.
         map_value_nullable: Whether map values can be null.
+        use_large_string: Whether to use LargeUtf8 instead of Utf8 for strings.
+        use_large_binary: Whether to use LargeBinary instead of Binary for bytes.
 
     Note:
         The Rust API also supports `map_value_name` for customizing the field name
@@ -55,6 +57,8 @@ class PtarsConfig:
     map_nullable: bool = False
     list_value_nullable: bool = False
     map_value_nullable: bool = False
+    use_large_string: bool = False
+    use_large_binary: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -68,3 +72,5 @@ class PtarsConfig:
         _check_type(self.map_nullable, bool, "map_nullable")
         _check_type(self.list_value_nullable, bool, "list_value_nullable")
         _check_type(self.map_value_nullable, bool, "map_value_nullable")
+        _check_type(self.use_large_string, bool, "use_large_string")
+        _check_type(self.use_large_binary, bool, "use_large_binary")

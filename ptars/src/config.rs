@@ -37,6 +37,12 @@ pub struct PtarsConfig {
 
     /// Whether map values can be null. Default: false
     pub map_value_nullable: bool,
+
+    /// Whether to use LargeUtf8 instead of Utf8 for string fields. Default: false
+    pub use_large_string: bool,
+
+    /// Whether to use LargeBinary instead of Binary for bytes fields. Default: false
+    pub use_large_binary: bool,
 }
 
 impl Default for PtarsConfig {
@@ -52,6 +58,8 @@ impl Default for PtarsConfig {
             map_nullable: false,
             list_value_nullable: false,
             map_value_nullable: false,
+            use_large_string: false,
+            use_large_binary: false,
         }
     }
 }
@@ -119,6 +127,18 @@ impl PtarsConfig {
     /// Set whether map values can be null.
     pub fn with_map_value_nullable(mut self, nullable: bool) -> Self {
         self.map_value_nullable = nullable;
+        self
+    }
+
+    /// Set whether to use LargeUtf8 instead of Utf8 for string fields.
+    pub fn with_use_large_string(mut self, use_large: bool) -> Self {
+        self.use_large_string = use_large;
+        self
+    }
+
+    /// Set whether to use LargeBinary instead of Binary for bytes fields.
+    pub fn with_use_large_binary(mut self, use_large: bool) -> Self {
+        self.use_large_binary = use_large;
         self
     }
 }
