@@ -585,3 +585,43 @@ def test_map_of_maps_complex():
         messages, NestedExampleMessage
     )
     assert record_batch == record_batch_protarrow
+
+
+def test_large_string() -> None:
+
+    pool = HandlerPool([bench_pb2.DESCRIPTOR])
+
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[{"string_value": "a large_string"}],
+        schema=pa.schema(
+            [
+                ("string_value", pa.string()),
+            ]
+        ),
+    )
+    expected = [ExampleMessage(string_value="a large_string")]
+
+    # pa.string works for both protarrow and ptars
+    protarrow_msgs = protarrow.record_batch_to_messages(record_batch, ExampleMessage)
+    assert protarrow_msgs == expected
+    ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected
+
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[{"string_value": "a large_string"}],
+        schema=pa.schema(
+            [
+                ("string_value", pa.large_string()),
+            ]
+        ),
+    )
+
+    protarrow_msgs = protarrow.record_batch_to_messages(record_batch, ExampleMessage)
+    assert protarrow_msgs == expected
+
+    # pa.large_string fails:
+    # pyo3_runtime.PanicException: called `Option::unwrap()` on a `None` value
+    # thread '<unnamed>' (3070163) panicked at ptars/src/arrow_to_proto.rs:1052:10:
+    # called `Option::unwrap()` on a `None` value
+    ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected
