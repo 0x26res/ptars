@@ -669,3 +669,36 @@ def test_large_binary() -> None:
         record_batch_large, ExampleMessage.DESCRIPTOR
     )
     assert ptars_msgs == expected
+
+
+def test_large_list() -> None:
+    pool = HandlerPool([bench_pb2.DESCRIPTOR])
+
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[{"string_values": ["a large_string"]}],
+        schema=pa.schema(
+            [
+                ("string_values", pa.list_(pa.string())),
+            ]
+        ),
+    )
+    expected = [bench_pb2.ExampleMessage(string_values=["a large_string"])]
+
+    # pa.list_ works for both protarrow and ptars
+    protarrow_msgs = protarrow.record_batch_to_messages(record_batch, ExampleMessage)
+    assert protarrow_msgs == expected
+    ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected
+
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[{"string_values": ["a large_string"]}],
+        schema=pa.schema(
+            [
+                ("string_values", pa.large_list(pa.string())),
+            ]
+        ),
+    )
+    protarrow_msgs = protarrow.record_batch_to_messages(record_batch, ExampleMessage)
+    assert protarrow_msgs == expected
+    ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected

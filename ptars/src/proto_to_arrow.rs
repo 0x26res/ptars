@@ -5,7 +5,7 @@ use arrow_array::builder::{
     ArrayBuilder, BinaryBuilder, LargeBinaryBuilder, LargeStringBuilder, StringBuilder,
 };
 use arrow_array::types::Date32Type;
-use arrow_array::{Array, ListArray, RecordBatch, StructArray};
+use arrow_array::{Array, LargeListArray, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field, TimeUnit};
 use chrono::Datelike;
 use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
@@ -21,6 +21,74 @@ enum StringBuilderInner {
 enum BinaryBuilderInner {
     Regular(BinaryBuilder),
     Large(LargeBinaryBuilder),
+}
+
+/// Helper enum to handle both regular (i32) and large (i64) list offsets
+enum ListOffsets {
+    Regular(Vec<i32>),
+    Large(Vec<i64>),
+}
+
+impl ListOffsets {
+    fn new(use_large_list: bool) -> Self {
+        if use_large_list {
+            ListOffsets::Large(vec![0])
+        } else {
+            ListOffsets::Regular(vec![0])
+        }
+    }
+
+    fn push(&mut self, value: usize) {
+        match self {
+            ListOffsets::Regular(v) => v.push(value as i32),
+            ListOffsets::Large(v) => v.push(value as i64),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            ListOffsets::Regular(v) => v.len(),
+            ListOffsets::Large(v) => v.len(),
+        }
+    }
+
+    fn finish(
+        self,
+        values: Arc<dyn Array>,
+        list_value_name: &str,
+        list_value_nullable: bool,
+    ) -> Arc<dyn Array> {
+        let field = Arc::new(Field::new(
+            list_value_name,
+            values.data_type().clone(),
+            list_value_nullable,
+        ));
+
+        match self {
+            ListOffsets::Regular(offsets) => {
+                let offsets_buffer = Buffer::from_vec(offsets);
+                let list_data_type = DataType::List(field);
+                let list_data = ArrayData::builder(list_data_type)
+                    .len(offsets_buffer.len() / 4 - 1)
+                    .add_buffer(offsets_buffer)
+                    .add_child_data(values.to_data())
+                    .build()
+                    .unwrap();
+                Arc::new(ListArray::from(list_data))
+            }
+            ListOffsets::Large(offsets) => {
+                let offsets_buffer = Buffer::from_vec(offsets);
+                let list_data_type = DataType::LargeList(field);
+                let list_data = ArrayData::builder(list_data_type)
+                    .len(offsets_buffer.len() / 8 - 1)
+                    .add_buffer(offsets_buffer)
+                    .add_child_data(values.to_data())
+                    .build()
+                    .unwrap();
+                Arc::new(LargeListArray::from(list_data))
+            }
+        }
+    }
 }
 
 pub trait ProtoArrayBuilder {
@@ -544,7 +612,7 @@ where
     T: ArrowPrimitiveType,
 {
     builder: PrimitiveBuilder<T>,
-    offsets: Vec<i32>,
+    offsets: ListOffsets,
     extractor: fn(&Value) -> Option<T::Native>,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
@@ -555,10 +623,9 @@ where
     T: ArrowPrimitiveType,
 {
     fn new(extractor: fn(&Value) -> Option<T::Native>, config: &PtarsConfig) -> Self {
-        let offsets: Vec<i32> = vec![0];
         Self {
             builder: PrimitiveBuilder::<T>::new(),
-            offsets,
+            offsets: ListOffsets::new(config.use_large_list),
             extractor,
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
@@ -577,37 +644,23 @@ where
                     .append_value((self.extractor)(each_value).unwrap());
             }
         }
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn append_null(&mut self) {
         // For repeated fields, a null value is an empty list.
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
-        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
-
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            &*self.list_value_name,
-            values.data_type().clone(),
-            self.list_value_nullable,
-        )));
-
-        let list_data = ArrayData::builder(list_data_type)
-            .len(offsets_buffer.len() / 4 - 1)
-            .add_buffer(offsets_buffer)
-            .add_child_data(values.to_data())
-            .build()
-            .unwrap();
-
-        Arc::new(ListArray::from(list_data))
+        let values = Arc::new(std::mem::take(&mut self.builder).finish());
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
     }
 
     fn len(&self) -> usize {
@@ -615,23 +668,22 @@ where
     }
 
     fn is_empty(&self) -> bool {
-        self.offsets.iter().len() == 1
+        self.offsets.len() == 1
     }
 }
 
 struct RepeatedMessageBuilderWrapper {
     builder: Box<dyn ProtoArrayBuilder>,
-    offsets: Vec<i32>,
+    offsets: ListOffsets,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
 }
 
 impl RepeatedMessageBuilderWrapper {
     fn new(builder: Box<dyn ProtoArrayBuilder>, config: &PtarsConfig) -> Self {
-        let offsets: Vec<i32> = vec![0];
         Self {
             builder,
-            offsets,
+            offsets: ListOffsets::new(config.use_large_list),
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
         }
@@ -645,36 +697,22 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
                 self.builder.append(each_value);
             }
         }
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn append_null(&mut self) {
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
         let values = self.builder.finish();
-        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
-
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            &*self.list_value_name,
-            values.data_type().clone(),
-            self.list_value_nullable,
-        )));
-
-        let list_data = ArrayData::builder(list_data_type)
-            .len(offsets_buffer.len() / 4 - 1)
-            .add_buffer(offsets_buffer)
-            .add_child_data(values.to_data())
-            .build()
-            .unwrap();
-
-        Arc::new(ListArray::from(list_data))
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
     }
 
     fn len(&self) -> usize {
@@ -688,17 +726,16 @@ impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
 
 struct RepeatedBooleanBuilderWrapper {
     builder: BooleanBuilder,
-    offsets: Vec<i32>,
+    offsets: ListOffsets,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
 }
 
 impl RepeatedBooleanBuilderWrapper {
     fn new(config: &PtarsConfig) -> Self {
-        let offsets: Vec<i32> = vec![0];
         Self {
             builder: BooleanBuilder::new(),
-            offsets,
+            offsets: ListOffsets::new(config.use_large_list),
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
         }
@@ -712,36 +749,22 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
                 self.builder.append_value(each_value.as_bool().unwrap());
             }
         }
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn append_null(&mut self) {
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        self.offsets.push(self.builder.len() as i32);
+        self.offsets.push(self.builder.len());
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
-        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
-
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            &*self.list_value_name,
-            DataType::Boolean,
-            self.list_value_nullable,
-        )));
-
-        let list_data = ArrayData::builder(list_data_type)
-            .len(offsets_buffer.len() / 4 - 1)
-            .add_buffer(offsets_buffer)
-            .add_child_data(values.to_data())
-            .build()
-            .unwrap();
-
-        Arc::new(ListArray::from(list_data))
+        let values = Arc::new(std::mem::take(&mut self.builder).finish());
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
     }
 
     fn len(&self) -> usize {
@@ -755,15 +778,13 @@ impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
 
 struct RepeatedBinaryBuilderWrapper {
     builder: BinaryBuilderInner,
-    offsets: Vec<i32>,
+    offsets: ListOffsets,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
-    use_large_binary: bool,
 }
 
 impl RepeatedBinaryBuilderWrapper {
     fn new(config: &PtarsConfig) -> Self {
-        let offsets: Vec<i32> = vec![0];
         let builder = if config.use_large_binary {
             BinaryBuilderInner::Large(LargeBinaryBuilder::new())
         } else {
@@ -771,10 +792,16 @@ impl RepeatedBinaryBuilderWrapper {
         };
         Self {
             builder,
-            offsets,
+            offsets: ListOffsets::new(config.use_large_list),
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
-            use_large_binary: config.use_large_binary,
+        }
+    }
+
+    fn builder_len(&self) -> usize {
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
         }
     }
 }
@@ -791,56 +818,25 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
                 }
             }
         }
-        let len = match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        };
-        self.offsets.push(len as i32);
+        self.offsets.push(self.builder_len());
     }
 
     fn append_null(&mut self) {
-        let len = match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        };
-        self.offsets.push(len as i32);
+        self.offsets.push(self.builder_len());
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        let len = match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        };
-        self.offsets.push(len as i32);
+        self.offsets.push(self.builder_len());
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let values_data = match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => std::mem::take(b).finish().to_data(),
-            BinaryBuilderInner::Large(b) => std::mem::take(b).finish().to_data(),
+        let values: Arc<dyn Array> = match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
         };
-        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
-
-        let inner_data_type = if self.use_large_binary {
-            DataType::LargeBinary
-        } else {
-            DataType::Binary
-        };
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            &*self.list_value_name,
-            inner_data_type,
-            self.list_value_nullable,
-        )));
-
-        let list_data = ArrayData::builder(list_data_type)
-            .len(offsets_buffer.len() / 4 - 1)
-            .add_buffer(offsets_buffer)
-            .add_child_data(values_data)
-            .build()
-            .unwrap();
-
-        Arc::new(ListArray::from(list_data))
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
     }
 
     fn len(&self) -> usize {
@@ -854,15 +850,13 @@ impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
 
 struct RepeatedStringBuilderWrapper {
     builder: StringBuilderInner,
-    offsets: Vec<i32>,
+    offsets: ListOffsets,
     list_value_name: Arc<str>,
     list_value_nullable: bool,
-    use_large_string: bool,
 }
 
 impl RepeatedStringBuilderWrapper {
     fn new(config: &PtarsConfig) -> Self {
-        let offsets: Vec<i32> = vec![0];
         let builder = if config.use_large_string {
             StringBuilderInner::Large(LargeStringBuilder::new())
         } else {
@@ -870,10 +864,16 @@ impl RepeatedStringBuilderWrapper {
         };
         Self {
             builder,
-            offsets,
+            offsets: ListOffsets::new(config.use_large_list),
             list_value_name: config.list_value_name.clone(),
             list_value_nullable: config.list_value_nullable,
-            use_large_string: config.use_large_string,
+        }
+    }
+
+    fn builder_len(&self) -> usize {
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
         }
     }
 }
@@ -888,56 +888,25 @@ impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
                 }
             }
         }
-        let len = match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        };
-        self.offsets.push(len as i32);
+        self.offsets.push(self.builder_len());
     }
 
     fn append_null(&mut self) {
-        let len = match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        };
-        self.offsets.push(len as i32);
+        self.offsets.push(self.builder_len());
     }
 
     fn append_default(&mut self) {
         // Default for repeated field is empty list
-        let len = match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        };
-        self.offsets.push(len as i32);
+        self.offsets.push(self.builder_len());
     }
 
     fn finish(&mut self) -> Arc<dyn Array> {
-        let values_data = match &mut self.builder {
-            StringBuilderInner::Regular(b) => std::mem::take(b).finish().to_data(),
-            StringBuilderInner::Large(b) => std::mem::take(b).finish().to_data(),
+        let values: Arc<dyn Array> = match &mut self.builder {
+            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
         };
-        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
-
-        let inner_data_type = if self.use_large_string {
-            DataType::LargeUtf8
-        } else {
-            DataType::Utf8
-        };
-        let list_data_type = DataType::List(Arc::new(Field::new(
-            &*self.list_value_name,
-            inner_data_type,
-            self.list_value_nullable,
-        )));
-
-        let list_data = ArrayData::builder(list_data_type)
-            .len(offsets_buffer.len() / 4 - 1)
-            .add_buffer(offsets_buffer)
-            .add_child_data(values_data)
-            .build()
-            .unwrap();
-
-        Arc::new(ListArray::from(list_data))
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
     }
 
     fn len(&self) -> usize {

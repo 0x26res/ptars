@@ -8,7 +8,8 @@ use arrow_array::types::{
 };
 use arrow_array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, LargeBinaryArray,
-    LargeStringArray, ListArray, MapArray, PrimitiveArray, RecordBatch, StringArray, StructArray,
+    LargeListArray, LargeStringArray, ListArray, MapArray, PrimitiveArray, RecordBatch,
+    StringArray, StructArray,
 };
 use arrow_schema::{DataType, TimeUnit};
 use chrono::{Datelike, NaiveDate};
@@ -18,6 +19,54 @@ use std::collections::HashMap;
 
 // Days from CE epoch to Unix epoch (1970-01-01)
 const CE_OFFSET: i32 = 719163;
+
+/// Helper enum to work with both ListArray and LargeListArray
+enum GenericListArray<'a> {
+    Regular(&'a ListArray),
+    Large(&'a LargeListArray),
+}
+
+impl<'a> GenericListArray<'a> {
+    fn from_array(array: &'a ArrayRef) -> Option<Self> {
+        array
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .map(GenericListArray::Regular)
+            .or_else(|| {
+                array
+                    .as_any()
+                    .downcast_ref::<LargeListArray>()
+                    .map(GenericListArray::Large)
+            })
+    }
+
+    fn values(&self) -> ArrayRef {
+        match self {
+            GenericListArray::Regular(a) => a.values().clone(),
+            GenericListArray::Large(a) => a.values().clone(),
+        }
+    }
+
+    fn is_null(&self, i: usize) -> bool {
+        match self {
+            GenericListArray::Regular(a) => a.is_null(i),
+            GenericListArray::Large(a) => a.is_null(i),
+        }
+    }
+
+    fn value_offsets(&self, i: usize) -> (usize, usize) {
+        match self {
+            GenericListArray::Regular(a) => {
+                let offsets = a.value_offsets();
+                (offsets[i] as usize, offsets[i + 1] as usize)
+            }
+            GenericListArray::Large(a) => {
+                let offsets = a.value_offsets();
+                (offsets[i] as usize, offsets[i + 1] as usize)
+            }
+        }
+    }
+}
 
 /// Convert total nanoseconds to (seconds, nanos) tuple for Timestamp.
 /// Handles negative values correctly by ensuring nanos is always in [0, 999999999].
@@ -268,24 +317,23 @@ pub fn extract_single_primitive<P: ArrowPrimitiveType>(
         })
 }
 
-pub fn extract_repeated_primitive_type<P>(
-    list_array: &ListArray,
+fn extract_repeated_primitive_type<P>(
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     value_creator: &dyn Fn(P::Native) -> Value,
 ) where
     P: ArrowPrimitiveType,
 {
-    let values: &PrimitiveArray<P> = list_array
-        .values()
+    let values_array = list_array.values();
+    let values: &PrimitiveArray<P> = values_array
         .as_any()
         .downcast_ref::<PrimitiveArray<P>>()
         .unwrap();
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+            let (start, end) = list_array.value_offsets(i);
             if start < end {
                 let slice = values.slice(start, end - start);
                 let values = slice
@@ -301,21 +349,20 @@ pub fn extract_repeated_primitive_type<P>(
     }
 }
 
-pub fn extract_repeated_boolean(
-    list_array: &ListArray,
+fn extract_repeated_boolean(
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
 ) {
-    let values: &BooleanArray = list_array
-        .values()
+    let values_array = list_array.values();
+    let values: &BooleanArray = values_array
         .as_any()
         .downcast_ref::<BooleanArray>()
         .unwrap();
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+            let (start, end) = list_array.value_offsets(i);
             if start < end {
                 let each_values = (start..end)
                     .map(|x| values.value(x))
@@ -328,8 +375,8 @@ pub fn extract_repeated_boolean(
     }
 }
 
-pub fn extract_repeated_message(
-    list_array: &ListArray,
+fn extract_repeated_message(
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: MessageDescriptor,
@@ -447,16 +494,12 @@ pub fn extract_repeated_message(
         _ => {}
     }
 
-    let struct_array = list_array
-        .values()
-        .as_any()
-        .downcast_ref::<StructArray>()
-        .unwrap();
+    let values_array = list_array.values();
+    let struct_array = values_array.as_any().downcast_ref::<StructArray>().unwrap();
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+            let (start, end) = list_array.value_offsets(i);
 
             if start < end {
                 // Create sub-messages for each list element
@@ -484,7 +527,7 @@ pub fn extract_repeated_message(
 }
 
 fn extract_repeated_timestamp(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
@@ -511,8 +554,7 @@ fn extract_repeated_timestamp(
 
             for (i, message) in messages.iter_mut().enumerate() {
                 if !list_array.is_null(i) {
-                    let start = list_array.value_offsets()[i] as usize;
-                    let end = list_array.value_offsets()[i + 1] as usize;
+                    let (start, end) = list_array.value_offsets(i);
 
                     if start < end {
                         // Filter out null child values - protobuf repeated fields cannot contain nulls
@@ -548,7 +590,7 @@ fn extract_repeated_timestamp(
 }
 
 fn extract_repeated_duration(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
@@ -575,8 +617,7 @@ fn extract_repeated_duration(
 
             for (i, message) in messages.iter_mut().enumerate() {
                 if !list_array.is_null(i) {
-                    let start = list_array.value_offsets()[i] as usize;
-                    let end = list_array.value_offsets()[i + 1] as usize;
+                    let (start, end) = list_array.value_offsets(i);
 
                     if start < end {
                         // Filter out null child values - protobuf repeated fields cannot contain nulls
@@ -614,13 +655,13 @@ fn extract_repeated_duration(
 }
 
 fn extract_repeated_date(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values: &PrimitiveArray<Date32Type> = list_array
-        .values()
+    let values_array = list_array.values();
+    let values: &PrimitiveArray<Date32Type> = values_array
         .as_any()
         .downcast_ref::<PrimitiveArray<Date32Type>>()
         .unwrap();
@@ -628,8 +669,7 @@ fn extract_repeated_date(
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+            let (start, end) = list_array.value_offsets(i);
 
             if start < end {
                 let sub_messages: Vec<Value> = (start..end)
@@ -649,7 +689,7 @@ fn extract_repeated_date(
 }
 
 fn extract_repeated_time_of_day(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
@@ -667,8 +707,7 @@ fn extract_repeated_time_of_day(
 
             for (i, message) in messages.iter_mut().enumerate() {
                 if !list_array.is_null(i) {
-                    let start = list_array.value_offsets()[i] as usize;
-                    let end = list_array.value_offsets()[i + 1] as usize;
+                    let (start, end) = list_array.value_offsets(i);
 
                     if start < end {
                         // Filter out null child values - protobuf repeated fields cannot contain nulls
@@ -703,8 +742,7 @@ fn extract_repeated_time_of_day(
 
             for (i, message) in messages.iter_mut().enumerate() {
                 if !list_array.is_null(i) {
-                    let start = list_array.value_offsets()[i] as usize;
-                    let end = list_array.value_offsets()[i + 1] as usize;
+                    let (start, end) = list_array.value_offsets(i);
 
                     if start < end {
                         // Filter out null child values - protobuf repeated fields cannot contain nulls
@@ -751,14 +789,14 @@ fn extract_repeated_time_of_day(
 
 // Generic repeated wrapper type extraction function for primitive types
 fn extract_repeated_wrapper_primitive<P: ArrowPrimitiveType>(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
     value_creator: &dyn Fn(P::Native) -> Value,
 ) {
-    let values = list_array
-        .values()
+    let values_array = list_array.values();
+    let values = values_array
         .as_any()
         .downcast_ref::<PrimitiveArray<P>>()
         .unwrap();
@@ -766,8 +804,7 @@ fn extract_repeated_wrapper_primitive<P: ArrowPrimitiveType>(
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+            let (start, end) = list_array.value_offsets(i);
 
             if start < end {
                 let sub_messages: Vec<Value> = (start..end)
@@ -784,13 +821,13 @@ fn extract_repeated_wrapper_primitive<P: ArrowPrimitiveType>(
 }
 
 fn extract_repeated_wrapper_bool(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
 ) {
-    let values = list_array
-        .values()
+    let values_array = list_array.values();
+    let values = values_array
         .as_any()
         .downcast_ref::<BooleanArray>()
         .unwrap();
@@ -798,8 +835,7 @@ fn extract_repeated_wrapper_bool(
 
     for (i, message) in messages.iter_mut().enumerate() {
         if !list_array.is_null(i) {
-            let start = list_array.value_offsets()[i] as usize;
-            let end = list_array.value_offsets()[i + 1] as usize;
+            let (start, end) = list_array.value_offsets(i);
 
             if start < end {
                 let sub_messages: Vec<Value> = (start..end)
@@ -816,7 +852,7 @@ fn extract_repeated_wrapper_bool(
 }
 
 fn extract_repeated_wrapper_string(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
@@ -824,54 +860,36 @@ fn extract_repeated_wrapper_string(
     let values_array = list_array.values();
     let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
 
-    fn process_string_values<'a>(
-        iter_fn: impl Fn(usize) -> &'a str,
-        list_array: &ListArray,
-        messages: &mut [&mut DynamicMessage],
-        field_descriptor: &FieldDescriptor,
-        message_descriptor: &MessageDescriptor,
-        value_descriptor: &FieldDescriptor,
-    ) {
-        for (i, message) in messages.iter_mut().enumerate() {
-            if !list_array.is_null(i) {
-                let start = list_array.value_offsets()[i] as usize;
-                let end = list_array.value_offsets()[i + 1] as usize;
+    // Helper macro to avoid code duplication across string types
+    macro_rules! process_string_values {
+        ($arr:expr) => {{
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let (start, end) = list_array.value_offsets(i);
 
-                if start < end {
-                    let sub_messages: Vec<Value> = (start..end)
-                        .map(|idx| {
-                            let mut sub_message = DynamicMessage::new(message_descriptor.clone());
-                            sub_message.set_field(
-                                value_descriptor,
-                                Value::String(iter_fn(idx).to_string()),
-                            );
-                            Value::Message(sub_message)
-                        })
-                        .collect();
-                    message.set_field(field_descriptor, Value::List(sub_messages));
+                    if start < end {
+                        let sub_messages: Vec<Value> = (start..end)
+                            .map(|idx| {
+                                let mut sub_message =
+                                    DynamicMessage::new(message_descriptor.clone());
+                                sub_message.set_field(
+                                    &value_descriptor,
+                                    Value::String($arr.value(idx).to_string()),
+                                );
+                                Value::Message(sub_message)
+                            })
+                            .collect();
+                        message.set_field(field_descriptor, Value::List(sub_messages));
+                    }
                 }
             }
-        }
+        }};
     }
 
     if let Some(arr) = values_array.as_any().downcast_ref::<StringArray>() {
-        process_string_values(
-            |idx| arr.value(idx),
-            list_array,
-            messages,
-            field_descriptor,
-            message_descriptor,
-            &value_descriptor,
-        );
+        process_string_values!(arr);
     } else if let Some(arr) = values_array.as_any().downcast_ref::<LargeStringArray>() {
-        process_string_values(
-            |idx| arr.value(idx),
-            list_array,
-            messages,
-            field_descriptor,
-            message_descriptor,
-            &value_descriptor,
-        );
+        process_string_values!(arr);
     } else {
         panic!(
             "Expected StringArray or LargeStringArray, got {:?}",
@@ -881,7 +899,7 @@ fn extract_repeated_wrapper_string(
 }
 
 fn extract_repeated_wrapper_bytes(
-    list_array: &ListArray,
+    list_array: &GenericListArray,
     messages: &mut [&mut DynamicMessage],
     field_descriptor: &FieldDescriptor,
     message_descriptor: &MessageDescriptor,
@@ -889,54 +907,38 @@ fn extract_repeated_wrapper_bytes(
     let values_array = list_array.values();
     let value_descriptor = message_descriptor.get_field_by_name("value").unwrap();
 
-    fn process_bytes_values<'a>(
-        iter_fn: impl Fn(usize) -> &'a [u8],
-        list_array: &ListArray,
-        messages: &mut [&mut DynamicMessage],
-        field_descriptor: &FieldDescriptor,
-        message_descriptor: &MessageDescriptor,
-        value_descriptor: &FieldDescriptor,
-    ) {
-        for (i, message) in messages.iter_mut().enumerate() {
-            if !list_array.is_null(i) {
-                let start = list_array.value_offsets()[i] as usize;
-                let end = list_array.value_offsets()[i + 1] as usize;
+    // Helper macro to avoid code duplication across binary types
+    macro_rules! process_bytes_values {
+        ($arr:expr) => {{
+            for (i, message) in messages.iter_mut().enumerate() {
+                if !list_array.is_null(i) {
+                    let (start, end) = list_array.value_offsets(i);
 
-                if start < end {
-                    let sub_messages: Vec<Value> = (start..end)
-                        .map(|idx| {
-                            let mut sub_message = DynamicMessage::new(message_descriptor.clone());
-                            sub_message.set_field(
-                                value_descriptor,
-                                Value::Bytes(prost::bytes::Bytes::from(iter_fn(idx).to_vec())),
-                            );
-                            Value::Message(sub_message)
-                        })
-                        .collect();
-                    message.set_field(field_descriptor, Value::List(sub_messages));
+                    if start < end {
+                        let sub_messages: Vec<Value> = (start..end)
+                            .map(|idx| {
+                                let mut sub_message =
+                                    DynamicMessage::new(message_descriptor.clone());
+                                sub_message.set_field(
+                                    &value_descriptor,
+                                    Value::Bytes(prost::bytes::Bytes::from(
+                                        $arr.value(idx).to_vec(),
+                                    )),
+                                );
+                                Value::Message(sub_message)
+                            })
+                            .collect();
+                        message.set_field(field_descriptor, Value::List(sub_messages));
+                    }
                 }
             }
-        }
+        }};
     }
 
     if let Some(arr) = values_array.as_any().downcast_ref::<BinaryArray>() {
-        process_bytes_values(
-            |idx| arr.value(idx),
-            list_array,
-            messages,
-            field_descriptor,
-            message_descriptor,
-            &value_descriptor,
-        );
+        process_bytes_values!(arr);
     } else if let Some(arr) = values_array.as_any().downcast_ref::<LargeBinaryArray>() {
-        process_bytes_values(
-            |idx| arr.value(idx),
-            list_array,
-            messages,
-            field_descriptor,
-            message_descriptor,
-            &value_descriptor,
-        );
+        process_bytes_values!(arr);
     } else {
         panic!(
             "Expected BinaryArray or LargeBinaryArray, got {:?}",
@@ -950,64 +952,64 @@ pub fn extract_repeated_array(
     field_descriptor: &FieldDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let list_array: &ListArray = array.as_any().downcast_ref::<ListArray>().unwrap();
+    let list_array =
+        GenericListArray::from_array(array).expect("Expected ListArray or LargeListArray");
     let values = list_array.values();
 
     match field_descriptor.kind() {
         Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => {
             extract_repeated_primitive_type::<Int32Type>(
-                list_array,
+                &list_array,
                 messages,
                 field_descriptor,
                 &Value::I32,
             )
         }
         Kind::Fixed32 | Kind::Uint32 => extract_repeated_primitive_type::<UInt32Type>(
-            list_array,
+            &list_array,
             messages,
             field_descriptor,
             &Value::U32,
         ),
         Kind::Sint64 | Kind::Sfixed64 | Kind::Int64 => {
             extract_repeated_primitive_type::<Int64Type>(
-                list_array,
+                &list_array,
                 messages,
                 field_descriptor,
                 &Value::I64,
             )
         }
         Kind::Fixed64 | Kind::Uint64 => extract_repeated_primitive_type::<UInt64Type>(
-            list_array,
+            &list_array,
             messages,
             field_descriptor,
             &Value::U64,
         ),
         Kind::Float => extract_repeated_primitive_type::<Float32Type>(
-            list_array,
+            &list_array,
             messages,
             field_descriptor,
             &Value::F32,
         ),
         Kind::Double => extract_repeated_primitive_type::<Float64Type>(
-            list_array,
+            &list_array,
             messages,
             field_descriptor,
             &Value::F64,
         ),
-        Kind::Bool => extract_repeated_boolean(list_array, messages, field_descriptor),
+        Kind::Bool => extract_repeated_boolean(&list_array, messages, field_descriptor),
 
         Kind::String => {
             // Helper macro to extract repeated strings
             macro_rules! extract_repeated_strings {
                 ($array_type:ty) => {{
-                    let values = values.as_any().downcast_ref::<$array_type>().unwrap();
+                    let values_arr = values.as_any().downcast_ref::<$array_type>().unwrap();
                     for (i, message) in messages.iter_mut().enumerate() {
                         if !list_array.is_null(i) {
-                            let start = list_array.value_offsets()[i] as usize;
-                            let end = list_array.value_offsets()[i + 1] as usize;
+                            let (start, end) = list_array.value_offsets(i);
                             let values_vec: Vec<Value> = (start..end)
-                                .filter(|&idx| !values.is_null(idx))
-                                .map(|idx| Value::String(values.value(idx).to_string()))
+                                .filter(|&idx| !values_arr.is_null(idx))
+                                .map(|idx| Value::String(values_arr.value(idx).to_string()))
                                 .collect();
                             if !values_vec.is_empty() {
                                 message.set_field(field_descriptor, Value::List(values_vec));
@@ -1026,16 +1028,15 @@ pub fn extract_repeated_array(
             // Helper macro to extract repeated bytes
             macro_rules! extract_repeated_bytes {
                 ($array_type:ty) => {{
-                    let values = values.as_any().downcast_ref::<$array_type>().unwrap();
+                    let values_arr = values.as_any().downcast_ref::<$array_type>().unwrap();
                     for (i, message) in messages.iter_mut().enumerate() {
                         if !list_array.is_null(i) {
-                            let start = list_array.value_offsets()[i] as usize;
-                            let end = list_array.value_offsets()[i + 1] as usize;
+                            let (start, end) = list_array.value_offsets(i);
                             let values_vec: Vec<Value> = (start..end)
-                                .filter(|&idx| !values.is_null(idx))
+                                .filter(|&idx| !values_arr.is_null(idx))
                                 .map(|idx| {
                                     Value::Bytes(prost::bytes::Bytes::from(
-                                        values.value(idx).to_vec(),
+                                        values_arr.value(idx).to_vec(),
                                     ))
                                 })
                                 .collect();
@@ -1056,10 +1057,10 @@ pub fn extract_repeated_array(
             }
         }
         Kind::Message(message_descriptor) => {
-            extract_repeated_message(list_array, messages, field_descriptor, message_descriptor)
+            extract_repeated_message(&list_array, messages, field_descriptor, message_descriptor)
         }
         Kind::Enum(_) => extract_repeated_primitive_type::<Int32Type>(
-            list_array,
+            &list_array,
             messages,
             field_descriptor,
             &Value::EnumNumber,
@@ -2206,20 +2207,19 @@ fn extract_struct_field_value(
     }
 
     if field.is_list() {
-        // Handle repeated fields
-        let list_array = array.as_any().downcast_ref::<ListArray>()?;
+        // Handle repeated fields - support both ListArray and LargeListArray
+        let list_array = GenericListArray::from_array(array)?;
         if list_array.is_null(idx) {
             return None;
         }
-        let start = list_array.value_offsets()[idx] as usize;
-        let end = list_array.value_offsets()[idx + 1] as usize;
+        let (start, end) = list_array.value_offsets(idx);
         if start >= end {
             return Some(Value::List(vec![]));
         }
         let values_array = list_array.values();
         let mut values = Vec::with_capacity(end - start);
         for i in start..end {
-            if let Some(v) = extract_single_field_value(values_array, i, field) {
+            if let Some(v) = extract_single_field_value(&values_array, i, field) {
                 values.push(v);
             }
         }

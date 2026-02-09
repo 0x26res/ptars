@@ -924,3 +924,73 @@ class TestLargeStringBinaryConfig:
         batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
         messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
         assert messages_back == messages
+
+
+class TestLargeListConfig:
+    """Test large list config option."""
+
+    def test_use_large_list_default_is_false(self):
+        """Default config uses regular List."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        pool = HandlerPool([BENCH_DESCRIPTOR])
+        messages = [ExampleMessage(int32_values=[1, 2, 3])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        list_type = batch.schema.field("int32_values").type
+        assert isinstance(list_type, pa.ListType)
+        assert not isinstance(list_type, pa.LargeListType)
+
+    def test_use_large_list_true(self):
+        """Config with use_large_list=True uses LargeList."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_list=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(int32_values=[1, 2, 3])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        list_type = batch.schema.field("int32_values").type
+        assert isinstance(list_type, pa.LargeListType)
+
+    def test_use_large_list_roundtrip(self):
+        """Large list values should roundtrip correctly."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_list=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(int32_values=[1, 2, 3], string_values=["a", "b"])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    def test_use_large_list_with_large_string(self):
+        """Large list with large string should work together."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_list=True, use_large_string=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(string_values=["hello", "world"])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        list_type = batch.schema.field("string_values").type
+        assert isinstance(list_type, pa.LargeListType)
+        assert list_type.value_type == pa.large_string()
+        messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    def test_use_large_list_with_large_binary(self):
+        """Large list with large binary should work together."""
+        from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+        from ptars_protos.bench_pb2 import ExampleMessage
+
+        config = PtarsConfig(use_large_list=True, use_large_binary=True)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        messages = [ExampleMessage(bytes_values=[b"hello", b"world"])]
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        list_type = batch.schema.field("bytes_values").type
+        assert isinstance(list_type, pa.LargeListType)
+        assert list_type.value_type == pa.large_binary()
+        messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+        assert messages_back == messages

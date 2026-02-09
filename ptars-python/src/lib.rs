@@ -41,6 +41,7 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
     let map_value_nullable: bool = config.getattr("map_value_nullable")?.extract()?;
     let use_large_string: bool = config.getattr("use_large_string")?.extract()?;
     let use_large_binary: bool = config.getattr("use_large_binary")?.extract()?;
+    let use_large_list: bool = config.getattr("use_large_list")?.extract()?;
 
     Ok(ptars::PtarsConfig::default()
         .with_timestamp_tz(timestamp_tz.as_deref())
@@ -53,7 +54,8 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
         .with_list_value_nullable(list_value_nullable)
         .with_map_value_nullable(map_value_nullable)
         .with_use_large_string(use_large_string)
-        .with_use_large_binary(use_large_binary))
+        .with_use_large_binary(use_large_binary)
+        .with_use_large_list(use_large_list))
 }
 
 /// Read a varint from a reader. Returns None if EOF is reached at the start.

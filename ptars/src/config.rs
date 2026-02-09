@@ -43,6 +43,9 @@ pub struct PtarsConfig {
 
     /// Whether to use LargeBinary instead of Binary for bytes fields. Default: false
     pub use_large_binary: bool,
+
+    /// Whether to use LargeList instead of List for repeated fields. Default: false
+    pub use_large_list: bool,
 }
 
 impl Default for PtarsConfig {
@@ -60,6 +63,7 @@ impl Default for PtarsConfig {
             map_value_nullable: false,
             use_large_string: false,
             use_large_binary: false,
+            use_large_list: false,
         }
     }
 }
@@ -141,6 +145,12 @@ impl PtarsConfig {
         self.use_large_binary = use_large;
         self
     }
+
+    /// Set whether to use LargeList instead of List for repeated fields.
+    pub fn with_use_large_list(mut self, use_large: bool) -> Self {
+        self.use_large_list = use_large;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +172,7 @@ mod tests {
         assert!(!config.map_value_nullable);
         assert!(!config.use_large_string);
         assert!(!config.use_large_binary);
+        assert!(!config.use_large_list);
     }
 
     #[test]
@@ -246,6 +257,12 @@ mod tests {
     }
 
     #[test]
+    fn test_with_use_large_list() {
+        let config = PtarsConfig::new().with_use_large_list(true);
+        assert!(config.use_large_list);
+    }
+
+    #[test]
     fn test_builder_chaining() {
         let config = PtarsConfig::new()
             .with_timestamp_tz(Some("Europe/London"))
@@ -259,7 +276,8 @@ mod tests {
             .with_list_value_nullable(true)
             .with_map_value_nullable(true)
             .with_use_large_string(true)
-            .with_use_large_binary(true);
+            .with_use_large_binary(true)
+            .with_use_large_list(true);
 
         assert_eq!(config.timestamp_tz, Some(Arc::from("Europe/London")));
         assert_eq!(config.timestamp_unit, TimeUnit::Millisecond);
@@ -273,5 +291,6 @@ mod tests {
         assert!(config.map_value_nullable);
         assert!(config.use_large_string);
         assert!(config.use_large_binary);
+        assert!(config.use_large_list);
     }
 }
