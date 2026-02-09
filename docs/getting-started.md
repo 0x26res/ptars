@@ -263,6 +263,8 @@ record_batch = pool.messages_to_record_batch(messages, MyMessage.DESCRIPTOR)
 | `map_nullable`        | `False`   | Whether map fields can be null                          |
 | `list_value_nullable` | `False`   | Whether list elements can be null                       |
 | `map_value_nullable`  | `False`   | Whether map values can be null                          |
+| `use_large_string`    | `False`   | Use `large_utf8` instead of `utf8` for strings          |
+| `use_large_binary`    | `False`   | Use `large_binary` instead of `binary` for bytes        |
 
 !!! note
     Map values always use "value" as the field name in Python. The Rust API supports

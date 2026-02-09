@@ -98,6 +98,8 @@ record_batch = handler.array_to_record_batch(binary_array)
         - map_nullable
         - list_value_nullable
         - map_value_nullable
+        - use_large_string
+        - use_large_binary
 
 ### Configuration Options
 
@@ -112,6 +114,8 @@ record_batch = handler.array_to_record_batch(binary_array)
 | `map_nullable`        | `bool`                           | `False`   | Whether map fields can be null.                                          |
 | `list_value_nullable` | `bool`                           | `False`   | Whether list elements can be null.                                       |
 | `map_value_nullable`  | `bool`                           | `False`   | Whether map values can be null.                                          |
+| `use_large_string`    | `bool`                           | `False`   | Use `large_utf8` instead of `utf8` for string fields.                    |
+| `use_large_binary`    | `bool`                           | `False`   | Use `large_binary` instead of `binary` for bytes fields.                 |
 
 !!! note "Map Value Field Name"
     The Rust API supports `map_value_name` for customizing the field name of map values
@@ -173,24 +177,29 @@ ptars converts protobuf types to Arrow types as follows:
 
 ### Scalar Types
 
-| Protobuf Type | Arrow Type |
-|---------------|------------|
-| `double`      | `float64`  |
-| `float`       | `float32`  |
-| `int32`       | `int32`    |
-| `int64`       | `int64`    |
-| `uint32`      | `uint32`   |
-| `uint64`      | `uint64`   |
-| `sint32`      | `int32`    |
-| `sint64`      | `int64`    |
-| `fixed32`     | `uint32`   |
-| `fixed64`     | `uint64`   |
-| `sfixed32`    | `int32`    |
-| `sfixed64`    | `int64`    |
-| `bool`        | `bool`     |
-| `string`      | `utf8`     |
-| `bytes`       | `binary`   |
-| `enum`        | `int32`    |
+| Protobuf Type | Arrow Type                 |
+|---------------|----------------------------|
+| `double`      | `float64`                  |
+| `float`       | `float32`                  |
+| `int32`       | `int32`                    |
+| `int64`       | `int64`                    |
+| `uint32`      | `uint32`                   |
+| `uint64`      | `uint64`                   |
+| `sint32`      | `int32`                    |
+| `sint64`      | `int64`                    |
+| `fixed32`     | `uint32`                   |
+| `fixed64`     | `uint64`                   |
+| `sfixed32`    | `int32`                    |
+| `sfixed64`    | `int64`                    |
+| `bool`        | `bool`                     |
+| `string`      | `utf8` or `large_utf8`     |
+| `bytes`       | `binary` or `large_binary` |
+| `enum`        | `int32`                    |
+
+!!! note "Large String/Binary Types"
+    By default, `string` fields map to `utf8` and `bytes` fields map to `binary`.
+    Set `use_large_string=True` or `use_large_binary=True` in `PtarsConfig` to use
+    `large_utf8` or `large_binary` instead. Large types support offsets >2GB.
 
 ### Composite Types
 
@@ -222,14 +231,14 @@ __TimeOfDay type mapping by unit:__
 Wrapper types are converted to their corresponding Arrow types with nullability.
 These are useful for representing nullable scalars in proto3.
 
-| Protobuf Type                 | Arrow Type           |
-|-------------------------------|----------------------|
-| `google.protobuf.DoubleValue` | `float64` (nullable) |
-| `google.protobuf.FloatValue`  | `float32` (nullable) |
-| `google.protobuf.Int64Value`  | `int64` (nullable)   |
-| `google.protobuf.UInt64Value` | `uint64` (nullable)  |
-| `google.protobuf.Int32Value`  | `int32` (nullable)   |
-| `google.protobuf.UInt32Value` | `uint32` (nullable)  |
-| `google.protobuf.BoolValue`   | `bool` (nullable)    |
-| `google.protobuf.StringValue` | `utf8` (nullable)    |
-| `google.protobuf.BytesValue`  | `binary` (nullable)  |
+| Protobuf Type                 | Arrow Type                            |
+|-------------------------------|---------------------------------------|
+| `google.protobuf.DoubleValue` | `float64` (nullable)                  |
+| `google.protobuf.FloatValue`  | `float32` (nullable)                  |
+| `google.protobuf.Int64Value`  | `int64` (nullable)                    |
+| `google.protobuf.UInt64Value` | `uint64` (nullable)                   |
+| `google.protobuf.Int32Value`  | `int32` (nullable)                    |
+| `google.protobuf.UInt32Value` | `uint32` (nullable)                   |
+| `google.protobuf.BoolValue`   | `bool` (nullable)                     |
+| `google.protobuf.StringValue` | `utf8` or `large_utf8` (nullable)     |
+| `google.protobuf.BytesValue`  | `binary` or `large_binary` (nullable) |
