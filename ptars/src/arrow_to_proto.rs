@@ -7,9 +7,9 @@ use arrow_array::types::{
     TimestampMillisecondType, TimestampNanosecondType, TimestampSecondType, UInt32Type, UInt64Type,
 };
 use arrow_array::{
-    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, LargeBinaryArray,
-    LargeListArray, LargeStringArray, ListArray, MapArray, PrimitiveArray, RecordBatch,
-    StringArray, StructArray,
+    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, BooleanArray, FixedSizeListArray,
+    LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, PrimitiveArray,
+    RecordBatch, StringArray, StructArray,
 };
 use arrow_schema::{DataType, TimeUnit};
 use chrono::{Datelike, NaiveDate};
@@ -20,10 +20,11 @@ use std::collections::HashMap;
 // Days from CE epoch to Unix epoch (1970-01-01)
 const CE_OFFSET: i32 = 719163;
 
-/// Helper enum to work with both ListArray and LargeListArray
+/// Helper enum to work with ListArray, LargeListArray, and FixedSizeListArray
 enum GenericListArray<'a> {
     Regular(&'a ListArray),
     Large(&'a LargeListArray),
+    FixedSize(&'a FixedSizeListArray),
 }
 
 impl<'a> GenericListArray<'a> {
@@ -38,12 +39,19 @@ impl<'a> GenericListArray<'a> {
                     .downcast_ref::<LargeListArray>()
                     .map(GenericListArray::Large)
             })
+            .or_else(|| {
+                array
+                    .as_any()
+                    .downcast_ref::<FixedSizeListArray>()
+                    .map(GenericListArray::FixedSize)
+            })
     }
 
     fn values(&self) -> ArrayRef {
         match self {
             GenericListArray::Regular(a) => a.values().clone(),
             GenericListArray::Large(a) => a.values().clone(),
+            GenericListArray::FixedSize(a) => a.values().clone(),
         }
     }
 
@@ -51,6 +59,7 @@ impl<'a> GenericListArray<'a> {
         match self {
             GenericListArray::Regular(a) => a.is_null(i),
             GenericListArray::Large(a) => a.is_null(i),
+            GenericListArray::FixedSize(a) => a.is_null(i),
         }
     }
 
@@ -63,6 +72,10 @@ impl<'a> GenericListArray<'a> {
             GenericListArray::Large(a) => {
                 let offsets = a.value_offsets();
                 (offsets[i] as usize, offsets[i + 1] as usize)
+            }
+            GenericListArray::FixedSize(a) => {
+                let size = a.value_length() as usize;
+                (i * size, (i + 1) * size)
             }
         }
     }
@@ -952,8 +965,8 @@ pub fn extract_repeated_array(
     field_descriptor: &FieldDescriptor,
     messages: &mut [&mut DynamicMessage],
 ) {
-    let list_array =
-        GenericListArray::from_array(array).expect("Expected ListArray or LargeListArray");
+    let list_array = GenericListArray::from_array(array)
+        .expect("Expected ListArray, LargeListArray, or FixedSizeListArray");
     let values = list_array.values();
 
     match field_descriptor.kind() {

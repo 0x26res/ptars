@@ -702,3 +702,42 @@ def test_large_list() -> None:
     assert protarrow_msgs == expected
     ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
     assert ptars_msgs == expected
+
+
+def test_fixed_size_list() -> None:
+    """Test that FixedSizeListArray can be converted to protobuf repeated field."""
+    pool = HandlerPool([bench_pb2.DESCRIPTOR])
+
+    # Create a RecordBatch with a fixed size list (size=1)
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[{"string_values": ["abc", "def"]}],
+        schema=pa.schema(
+            [
+                ("string_values", pa.list_(pa.string(), 2)),
+            ]
+        ),
+    )
+    expected = [bench_pb2.ExampleMessage(string_values=["abc", "def"])]
+
+    # ptars should handle fixed size list
+    ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected
+
+    # Test with larger fixed size
+    record_batch = pa.RecordBatch.from_pylist(
+        mapping=[
+            {"string_values": ["a", "b", "c"]},
+            {"string_values": ["d", "e", "f"]},
+        ],
+        schema=pa.schema(
+            [
+                ("string_values", pa.list_(pa.string(), 3)),
+            ]
+        ),
+    )
+    expected = [
+        bench_pb2.ExampleMessage(string_values=["a", "b", "c"]),
+        bench_pb2.ExampleMessage(string_values=["d", "e", "f"]),
+    ]
+    ptars_msgs = pool.record_batch_to_messages(record_batch, ExampleMessage.DESCRIPTOR)
+    assert ptars_msgs == expected
