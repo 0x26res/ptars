@@ -34,7 +34,9 @@ dependencies = [
   "protobuf",
   "pyarrow",
 ]
+urls.changelog = "https://github.com/0x26res/ptars/releases"
 urls.documentation = "https://ptars.readthedocs.io/en/latest/"
+urls.issues = "https://github.com/0x26res/ptars/issues"
 urls.repository = "https://github.com/0x26res/ptars"
 
 [dependency-groups]
