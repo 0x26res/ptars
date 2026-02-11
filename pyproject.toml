@@ -35,6 +35,8 @@ dependencies = [
   "pyarrow",
 ]
 urls.changelog = "https://github.com/0x26res/ptars/releases"
+urls.code-of-conduct = "https://github.com/0x26res/ptars/blob/main/CODE_OF_CONDUCT.md"
+urls.contributing = "https://github.com/0x26res/ptars/blob/main/CONTRIBUTING.md"
 urls.documentation = "https://ptars.readthedocs.io/en/latest/"
 urls.issues = "https://github.com/0x26res/ptars/issues"
 urls.repository = "https://github.com/0x26res/ptars"
