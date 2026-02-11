@@ -7,14 +7,17 @@ import warnings
 from typing import TYPE_CHECKING
 
 import google._upb._message
+import google.protobuf.descriptor
 import pyarrow as pa
-from google.protobuf.descriptor import Descriptor, FileDescriptor
+from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
 from ptars._lib import MessageHandler, ProtoRegistry  # type: ignore[unresolved-import]
 
 if TYPE_CHECKING:
     from ptars import PtarsConfig
+
+Descriptor = google.protobuf.descriptor.Descriptor | google._upb._message.Descriptor
 
 
 def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:
@@ -75,7 +78,7 @@ class HandlerPool:
         all_descriptors = []
         for file_descriptor in file_descriptors:
             if not isinstance(file_descriptor, FileDescriptor):
-                raise TypeError(f"Expecting {Descriptor.__name__}")
+                raise TypeError(f"Expecting {FileDescriptor.__name__}")
 
             if file_descriptor not in all_descriptors:
                 new_descriptors = _get_dependencies(file_descriptor)
@@ -89,9 +92,7 @@ class HandlerPool:
         self._config = config
         self._pool: dict[str, MessageHandler] = {}
 
-    def get_for_message(
-        self, descriptor: Descriptor | google._upb._message.Descriptor
-    ) -> MessageHandler:
+    def get_for_message(self, descriptor: Descriptor) -> MessageHandler:
         """Get a message handler for the given protobuf descriptor.
 
         Args:
@@ -110,10 +111,12 @@ class HandlerPool:
                 f" instead of {Descriptor.__class__.__name__}"
             )
             descriptor = descriptor.DESCRIPTOR
-        if not isinstance(descriptor, Descriptor):
-            raise TypeError(f"Expecting {Descriptor.__name__}")
+        if not isinstance(
+            descriptor,
+            (google.protobuf.descriptor.Descriptor, google._upb._message.Descriptor),
+        ):
+            raise TypeError("Expecting Descriptor")
 
-        assert isinstance(descriptor, Descriptor)
         try:
             return self._pool[descriptor.full_name]
         except KeyError:

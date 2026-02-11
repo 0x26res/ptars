@@ -1,7 +1,7 @@
 import pyarrow as pa
 import pytest
 from google.protobuf.descriptor import FileDescriptor
-from ptars._lib import MessageHandler
+from ptars._lib import MessageHandler  # type: ignore[unresolved-import]
 
 from ptars import HandlerPool
 from ptars_protos.bench_pb2 import DESCRIPTOR, ExampleMessage
@@ -14,7 +14,7 @@ def test_with_descriptor():
     assert isinstance(handler, MessageHandler)
     same_handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
     assert handler is same_handler
-    with_message = pool.get_for_message(ExampleMessage)
+    with_message = pool.get_for_message(ExampleMessage)  # type: ignore[invalid-argument-type]
     assert with_message is handler
 
     other_pool = HandlerPool([DESCRIPTOR])
@@ -26,7 +26,7 @@ def test_with_wrong_types():
     pool = HandlerPool([DESCRIPTOR])
 
     with pytest.raises(TypeError, match="Expecting Descriptor"):
-        pool.get_for_message(None)
+        pool.get_for_message(None)  # type: ignore[invalid-argument-type]
 
     assert isinstance(ExampleMessage.DESCRIPTOR.file, FileDescriptor)
     with pytest.raises(TypeError, match="Expecting Descriptor"):
