@@ -103,14 +103,11 @@ make benchmark
 
 ## Releasing
 
-1. Update the version in `Cargo.toml`
-2. Update the cargo lock file: `cargo generate-lockfile`
-3. Update the version in `pyproject.toml`
-4. Update the uv lock file: `uv lock --upgrade`
-5. Run prek: `prek autoupdate && prek run --all-files`
-6. Tag and push (prepend `v` to the version, e.g., `v0.0.8`)
+Create a release from a new tag in Github. The CI takes care of the rest.
 
-The CI script for releases is auto-generated:
+## CI
+
+The CI script for releases is auto-generated, though it had to be customized.
 
 ```bash
 make generate-ci
