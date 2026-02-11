@@ -53,7 +53,7 @@ repos:
         entry: uv run ty check
         language: python
         types: [python]
-        files: ^python/ptars/.*
+        files: ^(python/test/unit/test_api.*|python/ptars/.*)
         pass_filenames: true
 
 
