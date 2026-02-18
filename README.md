@@ -25,6 +25,9 @@
 [![Contributing][contributing-image]][contributing-url]
 [![FOSSA Status][fossa-image]][fossa-url]
 [![Repo Size][repo-size-image]][repo-size-url]
+[![Rust][rust-image]][rust-url]
+[![Apache Arrow][apache-arrow-image]][apache-arrow-url]
+[![prek][prek-image]][prek-url]
 
 [Repository](https://github.com/0x26res/ptars) |
 [Python Documentation](https://ptars.readthedocs.io/) |
@@ -174,3 +177,9 @@ ptars_to_proto          6.5013 (1.0)
 [release-image]: https://img.shields.io/github/v/release/0x26res/ptars
 [release-date-image]: https://img.shields.io/github/release-date/0x26res/ptars
 [release-url]: https://github.com/0x26res/ptars/releases
+[rust-image]: https://img.shields.io/badge/rust-%23000000.svg?logo=rust&logoColor=white
+[rust-url]: https://www.rust-lang.org/
+[apache-arrow-image]: https://img.shields.io/badge/Apache%20Arrow-powered-orange.svg
+[apache-arrow-url]: https://arrow.apache.org/
+[prek-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/j178/prek/master/docs/assets/badge-v0.json
+[prek-url]: https://github.com/j178/prek
