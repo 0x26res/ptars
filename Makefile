@@ -4,11 +4,21 @@ all:
 
 .PHONY: clean
 clean:
-	cargo clean && rm -rf target
+	cargo clean
+	rm -rf target
+	find . -name "*.profraw" | xargs rm
+	rm -f python/ptars/*.so
+	rm -rf ptars_protos
+	rm -rf site
+	rm -f .coverage
+	rm -f coverage.xml
+	rm -f lcov.info
+	rm -rf .venv
+
 
 .PHONY: env
 env:
-	test -d .venv || python3 -m venv .venv
+	test -d .venv || uv venv
 	. .venv/bin/activate && \
 		uv sync --group=test --no-dev
 
