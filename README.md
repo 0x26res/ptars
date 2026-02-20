@@ -150,7 +150,7 @@ ptars_to_proto          6.5013 (1.0)
 [license-url]: https://github.com/0x26res/ptars/blob/master/LICENSE
 [ruff-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
 [ruff-url]: https://github.com/astral-sh/ruff
-[snyk-image]: https://snyk.io/advisor/python/ptars/badge.svg
+[snyk-image]: https://snyk.io/test/github/0x26res/ptars/badge.svg
 [snyk-url]: https://snyk.io/advisor/python/ptars
 [stars-image]: https://img.shields.io/github/stars/0x26res/ptars
 [stars-url]: https://github.com/0x26res/ptars
