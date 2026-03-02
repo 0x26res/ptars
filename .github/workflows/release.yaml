@@ -216,7 +216,7 @@ jobs:
       # Used to generate artifact attestation
       attestations: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
       - name: Merge wheels into dist directory
         run: |
           mkdir -p dist
