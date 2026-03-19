@@ -91,7 +91,7 @@ impl ListOffsets {
     }
 }
 
-pub trait ProtoArrayBuilder {
+pub trait ProtoArrayBuilder: Send {
     fn append(&mut self, value: &Value);
     fn append_null(&mut self);
     /// Append the protobuf default value for this field type.
@@ -103,6 +103,9 @@ pub trait ProtoArrayBuilder {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool;
 }
+
+const fn assert_send<T: Send>() {}
+const _: () = assert_send::<Box<dyn ProtoArrayBuilder>>();
 
 pub static CE_OFFSET: i32 = 719163;
 
