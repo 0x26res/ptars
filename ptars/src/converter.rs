@@ -5646,4 +5646,433 @@ mod tests {
             Some(200)
         );
     }
+
+    // ==================== Enum Repr Format Tests ====================
+
+    #[test]
+    fn test_enum_string_repr() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(1)); // ACTIVE
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        // Verify the column is a StringArray with the enum name
+        let col = record_batch.column(0);
+        let string_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(string_array.value(0), "ACTIVE");
+    }
+
+    #[test]
+    fn test_enum_string_repr_large() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(2)); // INACTIVE
+
+        let config = PtarsConfig::default()
+            .with_enum_repr(EnumRepr::String)
+            .with_use_large_string(true);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(0);
+        let large_string_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::LargeStringArray>()
+            .unwrap();
+        assert_eq!(large_string_array.value(0), "INACTIVE");
+    }
+
+    #[test]
+    fn test_enum_binary_repr() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(1)); // ACTIVE
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(0);
+        let binary_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert_eq!(binary_array.value(0), b"ACTIVE");
+    }
+
+    #[test]
+    fn test_enum_binary_repr_large() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(2)); // INACTIVE
+
+        let config = PtarsConfig::default()
+            .with_enum_repr(EnumRepr::Binary)
+            .with_use_large_binary(true);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(0);
+        let large_binary_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::LargeBinaryArray>()
+            .unwrap();
+        assert_eq!(large_binary_array.value(0), b"INACTIVE");
+    }
+
+    #[test]
+    fn test_enum_string_repr_default_value() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        // Don't set status — should get the default (0 = UNKNOWN)
+        let msg = DynamicMessage::new(message_descriptor.clone());
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(0);
+        let string_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(string_array.value(0), "UNKNOWN");
+    }
+
+    #[test]
+    fn test_enum_binary_repr_default_value() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let msg = DynamicMessage::new(message_descriptor.clone());
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(0);
+        let binary_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert_eq!(binary_array.value(0), b"UNKNOWN");
+    }
+
+    #[test]
+    fn test_repeated_enum_string_repr() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "statuses",
+            Value::List(vec![
+                Value::EnumNumber(0), // UNKNOWN
+                Value::EnumNumber(1), // ACTIVE
+                Value::EnumNumber(2), // INACTIVE
+            ]),
+        );
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(1); // statuses is the second field
+        let list_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let string_array = values
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(string_array.len(), 3);
+        assert_eq!(string_array.value(0), "UNKNOWN");
+        assert_eq!(string_array.value(1), "ACTIVE");
+        assert_eq!(string_array.value(2), "INACTIVE");
+    }
+
+    #[test]
+    fn test_repeated_enum_binary_repr() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "statuses",
+            Value::List(vec![
+                Value::EnumNumber(0), // UNKNOWN
+                Value::EnumNumber(1), // ACTIVE
+                Value::EnumNumber(2), // INACTIVE
+            ]),
+        );
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+
+        let col = record_batch.column(1);
+        let list_array = col
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let binary_array = values
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert_eq!(binary_array.len(), 3);
+        assert_eq!(binary_array.value(0), b"UNKNOWN");
+        assert_eq!(binary_array.value(1), b"ACTIVE");
+        assert_eq!(binary_array.value(2), b"INACTIVE");
+    }
+
+    #[test]
+    fn test_enum_string_repr_roundtrip() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(1)); // ACTIVE
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        assert_eq!(
+            decoded
+                .get_field_by_name("status")
+                .unwrap()
+                .as_enum_number(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_enum_binary_repr_roundtrip() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("status", Value::EnumNumber(2)); // INACTIVE
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        assert_eq!(
+            decoded
+                .get_field_by_name("status")
+                .unwrap()
+                .as_enum_number(),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_repeated_enum_string_repr_roundtrip() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "statuses",
+            Value::List(vec![
+                Value::EnumNumber(1), // ACTIVE
+                Value::EnumNumber(2), // INACTIVE
+            ]),
+        );
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let statuses = decoded.get_field_by_name("statuses").unwrap();
+        let list = statuses.as_list().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].as_enum_number(), Some(1));
+        assert_eq!(list[1].as_enum_number(), Some(2));
+    }
+
+    #[test]
+    fn test_repeated_enum_binary_repr_roundtrip() {
+        use crate::config::EnumRepr;
+
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name(
+            "statuses",
+            Value::List(vec![
+                Value::EnumNumber(0), // UNKNOWN
+                Value::EnumNumber(2), // INACTIVE
+            ]),
+        );
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let statuses = decoded.get_field_by_name("statuses").unwrap();
+        let list = statuses.as_list().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].as_enum_number(), Some(0));
+        assert_eq!(list[1].as_enum_number(), Some(2));
+    }
+
+    #[test]
+    fn test_map_with_enum_value_string_repr_roundtrip() {
+        use crate::config::EnumRepr;
+
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            enum_type: vec![prost_reflect::prost_types::EnumDescriptorProto {
+                name: Some("Priority".to_string()),
+                value: vec![
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("LOW".to_string()),
+                        number: Some(0),
+                        ..Default::default()
+                    },
+                    prost_reflect::prost_types::EnumValueDescriptorProto {
+                        name: Some("HIGH".to_string()),
+                        number: Some(1),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            message_type: vec![
+                DescriptorProto {
+                    name: Some("PriorityEntry".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("key".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("value".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Enum.into()),
+                            type_name: Some(".test.Priority".to_string()),
+                            ..Default::default()
+                        },
+                    ],
+                    options: Some(prost_reflect::prost_types::MessageOptions {
+                        map_entry: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                DescriptorProto {
+                    name: Some("WithEnumMap".to_string()),
+                    field: vec![FieldDescriptorProto {
+                        name: Some("priorities".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.PriorityEntry".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        use std::collections::HashMap;
+        let pool = create_pool_with_message(file_descriptor);
+        let message_descriptor = pool.get_message_by_name("test.WithEnumMap").unwrap();
+
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(
+            prost_reflect::MapKey::String("task1".to_string()),
+            Value::EnumNumber(0), // LOW
+        );
+        map.insert(
+            prost_reflect::MapKey::String("task2".to_string()),
+            Value::EnumNumber(1), // HIGH
+        );
+
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("priorities", Value::Map(map));
+
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let record_batch =
+            messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+
+        let map_value = decoded.get_field_by_name("priorities").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get(&prost_reflect::MapKey::String("task1".to_string()))
+                .unwrap()
+                .as_enum_number(),
+            Some(0)
+        );
+        assert_eq!(
+            map.get(&prost_reflect::MapKey::String("task2".to_string()))
+                .unwrap()
+                .as_enum_number(),
+            Some(1)
+        );
+    }
 }
