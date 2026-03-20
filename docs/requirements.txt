@@ -4,28 +4,20 @@ babel==2.18.0
     # via mkdocs-material
 backrefs==6.2
     # via mkdocs-material
-certifi==2026.1.4
+certifi==2026.2.25
     # via requests
-charset-normalizer==3.4.4
+charset-normalizer==3.4.6
     # via requests
 click==8.3.1
     # via mkdocs
 colorama==0.4.6
-    # via
-    #   griffecli
-    #   mkdocs-material
+    # via mkdocs-material
 ghp-import==2.1.0
     # via mkdocs
-googleapis-common-protos==1.72.0
+googleapis-common-protos==1.73.0
     # via ptars
-griffe==2.0.0
-    # via mkdocstrings-python
-griffecli==2.0.0
-    # via griffe
 griffelib==2.0.0
-    # via
-    #   griffe
-    #   griffecli
+    # via mkdocstrings-python
 idna==3.11
     # via requests
 jinja2==3.1.6
@@ -60,9 +52,9 @@ mkdocs-autorefs==1.4.4
     # via
     #   mkdocstrings
     #   mkdocstrings-python
-mkdocs-get-deps==0.2.0
+mkdocs-get-deps==0.2.2
     # via mkdocs
-mkdocs-material==9.7.1
+mkdocs-material==9.7.6
     # via -r docs/requirements.txt.in
 mkdocs-material-extensions==1.3.1
     # via mkdocs-material
@@ -70,7 +62,7 @@ mkdocstrings==1.0.3
     # via
     #   -r docs/requirements.txt.in
     #   mkdocstrings-python
-mkdocstrings-python==2.0.2
+mkdocstrings-python==2.0.3
     # via mkdocstrings
 packaging==26.0
     # via mkdocs
@@ -78,13 +70,13 @@ paginate==0.5.7
     # via mkdocs-material
 pathspec==1.0.4
     # via mkdocs
-platformdirs==4.9.2
+platformdirs==4.9.4
     # via mkdocs-get-deps
-protobuf==6.33.5
+protobuf==6.33.6
     # via
     #   googleapis-common-protos
     #   ptars
-ptars==0.0.15
+ptars==0.0.16
     # via -r docs/requirements.txt.in
 pyarrow==23.0.1
     # via ptars
