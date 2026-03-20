@@ -138,7 +138,29 @@ def sort_map_by_key(map_array: pa.MapArray):
     ).sort_by([("index", "ascending"), ("key", "ascending")])
 
 
-@pytest.mark.parametrize("message_type", MESSAGES[:1])
+def assert_arrays_equal(a: pa.Array, b: pa.Array):
+    """Compare two Arrow arrays, sorting map keys for deterministic comparison."""
+    if a == b:
+        return
+    if pa.types.is_map(a.type):
+        sorted_a = sort_map_by_key(a)
+        sorted_b = sort_map_by_key(b)
+        assert sorted_a["index"] == sorted_b["index"]
+        assert sorted_a["key"] == sorted_b["key"]
+        assert_arrays_equal(
+            sorted_a["value"].combine_chunks(), sorted_b["value"].combine_chunks()
+        )
+    elif pa.types.is_struct(a.type):
+        for i in range(a.type.num_fields):
+            assert_arrays_equal(a.field(i), b.field(i))
+    elif pa.types.is_list(a.type) or pa.types.is_large_list(a.type):
+        assert_arrays_equal(a.flatten(), b.flatten())
+        assert a.offsets == b.offsets
+    else:
+        assert a == b
+
+
+@pytest.mark.parametrize("message_type", MESSAGES)
 def test_protarrow_parity(message_type: MessageMeta):
     messages = generate_messages(message_type, 10)
     payloads = [m.SerializeToString() for m in messages]
@@ -150,15 +172,9 @@ def test_protarrow_parity(message_type: MessageMeta):
     record_batch_protarrow = protarrow.messages_to_record_batch(messages, message_type)
     assert record_batch.schema == record_batch_protarrow.schema
     for field in record_batch.schema:
-        if "date" in field.name and "map" in field.name:
-            # TODO: there an issue with how defaults are handled in date
-            pass
-        elif pa.types.is_map(field.type):
-            assert sort_map_by_key(record_batch[field.name]) == sort_map_by_key(
-                record_batch_protarrow[field.name]
-            )
-        else:
-            assert record_batch[field.name] == record_batch_protarrow[field.name]
+        assert_arrays_equal(
+            record_batch[field.name], record_batch_protarrow[field.name]
+        )
 
 
 def test_arrow_to_proto(pool):
@@ -237,23 +253,24 @@ def test_date_missing(pool):
 
     assert record_batch["date"].type == pa.date32()
     assert record_batch["date"].is_null().to_pylist() == [False, False, True]
-    assert record_batch["date"].to_pylist() == [
-        datetime.date(2024, 4, 9),
-        datetime.date(1970, 1, 1),
-        None,
-    ]
-    assert record_batch["dates"].to_pylist() == [
-        [datetime.date(2024, 4, 10), datetime.date(1970, 1, 1)],
-        [],
-        [],
-    ]
-    assert record_batch["int_to_date"].to_pylist() == [
-        [
-            (1, datetime.date(1970, 1, 1)),
-        ],
-        [],
-        [],
-    ]
+    # Date() with (year=0, month=0, day=0) maps to 0000-12-31 (date32 value -719163)
+    date_sentinel = -719163
+    date_array = record_batch["date"]
+    assert date_array[0].as_py() == datetime.date(2024, 4, 9)
+    assert date_array[1].cast(pa.int32()).as_py() == date_sentinel
+    assert date_array[2].as_py() is None
+
+    dates_flat = record_batch["dates"].flatten()
+    assert dates_flat[0].as_py() == datetime.date(2024, 4, 10)
+    assert dates_flat[1].cast(pa.int32()).as_py() == date_sentinel
+    assert record_batch["dates"].offsets.to_pylist() == [0, 2, 2, 2]
+
+    int_to_date = record_batch["int_to_date"]
+    assert int_to_date.offsets.to_pylist() == [0, 1, 1, 1]
+    assert int_to_date.keys[0].as_py() == 1
+    assert (
+        int_to_date.values.field("value")[0].cast(pa.int32()).as_py() == date_sentinel
+    )
 
 
 def test_repeated_date(pool):

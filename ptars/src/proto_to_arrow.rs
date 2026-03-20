@@ -1099,7 +1099,8 @@ impl ProtoArrayBuilder for DateArrayBuilder {
             let day = message.get_field(&self.day_descriptor).as_i32().unwrap();
 
             if year == 0 && month == 0 && day == 0 {
-                self.builder.append_value(0);
+                // Sentinel value for unset date: 0000-12-31 (day before 0001-01-01 CE)
+                self.builder.append_value(-CE_OFFSET);
             } else {
                 self.builder.append_value(
                     chrono::NaiveDate::from_ymd_opt(year, month as u32, day as u32)

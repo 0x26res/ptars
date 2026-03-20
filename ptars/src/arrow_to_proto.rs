@@ -242,7 +242,8 @@ fn create_date_message(
     fields: &DateFields,
 ) -> DynamicMessage {
     let mut msg = DynamicMessage::new(message_descriptor.clone());
-    if days == 0 {
+    if days == -CE_OFFSET {
+        // Sentinel value for unset date (0000-12-31 maps back to year=0, month=0, day=0)
         msg.set_field(&fields.year, Value::I32(0));
         msg.set_field(&fields.month, Value::I32(0));
         msg.set_field(&fields.day, Value::I32(0));
