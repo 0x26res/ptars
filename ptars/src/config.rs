@@ -1,6 +1,18 @@
 use arrow_schema::TimeUnit;
 use std::sync::Arc;
 
+/// How to represent protobuf enum fields in Arrow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EnumRepr {
+    /// Store as Int32 (protobuf enum number). This is the default.
+    #[default]
+    Int32,
+    /// Store as Utf8/LargeUtf8 (enum value name as string).
+    String,
+    /// Store as Binary/LargeBinary (enum value name as bytes).
+    Binary,
+}
+
 /// Configuration for protobuf to Arrow conversions.
 ///
 /// This struct allows customizing how protobuf types are mapped to Arrow types,
@@ -46,6 +58,11 @@ pub struct PtarsConfig {
 
     /// Whether to use LargeList instead of List for repeated fields. Default: false
     pub use_large_list: bool,
+
+    /// How to represent enum fields in Arrow. Default: Int32
+    /// When String, use_large_string controls Utf8 vs LargeUtf8.
+    /// When Binary, use_large_binary controls Binary vs LargeBinary.
+    pub enum_repr: EnumRepr,
 }
 
 impl Default for PtarsConfig {
@@ -64,6 +81,7 @@ impl Default for PtarsConfig {
             use_large_string: false,
             use_large_binary: false,
             use_large_list: false,
+            enum_repr: EnumRepr::default(),
         }
     }
 }
@@ -151,6 +169,12 @@ impl PtarsConfig {
         self.use_large_list = use_large;
         self
     }
+
+    /// Set how enum fields are represented in Arrow.
+    pub fn with_enum_repr(mut self, repr: EnumRepr) -> Self {
+        self.enum_repr = repr;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +197,7 @@ mod tests {
         assert!(!config.use_large_string);
         assert!(!config.use_large_binary);
         assert!(!config.use_large_list);
+        assert_eq!(config.enum_repr, EnumRepr::Int32);
     }
 
     #[test]
@@ -277,7 +302,8 @@ mod tests {
             .with_map_value_nullable(true)
             .with_use_large_string(true)
             .with_use_large_binary(true)
-            .with_use_large_list(true);
+            .with_use_large_list(true)
+            .with_enum_repr(EnumRepr::String);
 
         assert_eq!(config.timestamp_tz, Some(Arc::from("Europe/London")));
         assert_eq!(config.timestamp_unit, TimeUnit::Millisecond);
@@ -292,5 +318,6 @@ mod tests {
         assert!(config.use_large_string);
         assert!(config.use_large_binary);
         assert!(config.use_large_list);
+        assert_eq!(config.enum_repr, EnumRepr::String);
     }
 }

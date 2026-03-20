@@ -8,10 +8,12 @@ use arrow_array::types::Date32Type;
 use arrow_array::{Array, LargeListArray, ListArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field, TimeUnit};
 use chrono::Datelike;
-use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, Value};
+use prost_reflect::{
+    DynamicMessage, EnumDescriptor, FieldDescriptor, Kind, MessageDescriptor, Value,
+};
 use std::sync::Arc;
 
-use crate::config::PtarsConfig;
+use crate::config::{EnumRepr, PtarsConfig};
 
 enum StringBuilderInner {
     Regular(StringBuilder),
@@ -194,9 +196,13 @@ pub fn get_singular_array_builder(
             Value::as_u64,
         ))),
         Kind::Bool => Ok(Box::new(BooleanBuilderWrapper::new())),
-        Kind::Enum(_) => Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
-            Value::as_enum_number,
-        ))),
+        Kind::Enum(enum_desc) => match config.enum_repr {
+            EnumRepr::Int32 => Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
+                Value::as_enum_number,
+            ))),
+            EnumRepr::String => Ok(Box::new(EnumStringBuilderWrapper::new(&enum_desc, config))),
+            EnumRepr::Binary => Ok(Box::new(EnumBinaryBuilderWrapper::new(&enum_desc, config))),
+        },
         Kind::String => Ok(Box::new(StringBuilderWrapper::new(config))),
         Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new(config))),
         Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor, config),
@@ -227,10 +233,18 @@ pub fn get_repeated_array_builder(
             RepeatedPrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64, config),
         )),
         Kind::Bool => Ok(Box::new(RepeatedBooleanBuilderWrapper::new(config))),
-        Kind::Enum(_) => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(
-            Value::as_enum_number,
-            config,
-        ))),
+        Kind::Enum(enum_desc) => match config.enum_repr {
+            EnumRepr::Int32 => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(
+                Value::as_enum_number,
+                config,
+            ))),
+            EnumRepr::String => Ok(Box::new(RepeatedEnumStringBuilderWrapper::new(
+                &enum_desc, config,
+            ))),
+            EnumRepr::Binary => Ok(Box::new(RepeatedEnumBinaryBuilderWrapper::new(
+                &enum_desc, config,
+            ))),
+        },
         Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new(config))),
         Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new(config))),
         Kind::Message(message_descriptor) => {
@@ -1690,6 +1704,293 @@ impl ProtoArrayBuilder for BinaryBuilderWrapper {
             BinaryBuilderInner::Regular(b) => b.is_empty(),
             BinaryBuilderInner::Large(b) => b.is_empty(),
         }
+    }
+}
+
+/// Get the enum value name for a given number, falling back to the number as a string.
+fn enum_name(enum_descriptor: &EnumDescriptor, number: i32) -> String {
+    match enum_descriptor.get_value(number) {
+        Some(v) => v.name().to_string(),
+        None => number.to_string(),
+    }
+}
+
+/// Get the default enum name (value 0).
+fn enum_default_name(enum_descriptor: &EnumDescriptor) -> String {
+    enum_name(enum_descriptor, 0)
+}
+
+struct EnumStringBuilderWrapper {
+    builder: StringBuilderInner,
+    enum_descriptor: EnumDescriptor,
+}
+
+impl EnumStringBuilderWrapper {
+    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_string {
+            StringBuilderInner::Large(LargeStringBuilder::new())
+        } else {
+            StringBuilderInner::Regular(StringBuilder::new())
+        };
+        Self {
+            builder,
+            enum_descriptor: enum_descriptor.clone(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for EnumStringBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        let name = enum_name(&self.enum_descriptor, value.as_enum_number().unwrap());
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_value(&name),
+            StringBuilderInner::Large(b) => b.append_value(&name),
+        }
+    }
+
+    fn append_null(&mut self) {
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_null(),
+            StringBuilderInner::Large(b) => b.append_null(),
+        }
+    }
+
+    fn append_default(&mut self) {
+        let name = enum_default_name(&self.enum_descriptor);
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => b.append_value(&name),
+            StringBuilderInner::Large(b) => b.append_value(&name),
+        }
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        match &mut self.builder {
+            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.is_empty(),
+            StringBuilderInner::Large(b) => b.is_empty(),
+        }
+    }
+}
+
+struct EnumBinaryBuilderWrapper {
+    builder: BinaryBuilderInner,
+    enum_descriptor: EnumDescriptor,
+}
+
+impl EnumBinaryBuilderWrapper {
+    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_binary {
+            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+        } else {
+            BinaryBuilderInner::Regular(BinaryBuilder::new())
+        };
+        Self {
+            builder,
+            enum_descriptor: enum_descriptor.clone(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for EnumBinaryBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        let name = enum_name(&self.enum_descriptor, value.as_enum_number().unwrap());
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_value(name.as_bytes()),
+            BinaryBuilderInner::Large(b) => b.append_value(name.as_bytes()),
+        }
+    }
+
+    fn append_null(&mut self) {
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_null(),
+            BinaryBuilderInner::Large(b) => b.append_null(),
+        }
+    }
+
+    fn append_default(&mut self) {
+        let name = enum_default_name(&self.enum_descriptor);
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => b.append_value(name.as_bytes()),
+            BinaryBuilderInner::Large(b) => b.append_value(name.as_bytes()),
+        }
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.is_empty(),
+            BinaryBuilderInner::Large(b) => b.is_empty(),
+        }
+    }
+}
+
+struct RepeatedEnumStringBuilderWrapper {
+    builder: StringBuilderInner,
+    offsets: ListOffsets,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
+    enum_descriptor: EnumDescriptor,
+}
+
+impl RepeatedEnumStringBuilderWrapper {
+    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_string {
+            StringBuilderInner::Large(LargeStringBuilder::new())
+        } else {
+            StringBuilderInner::Regular(StringBuilder::new())
+        };
+        Self {
+            builder,
+            offsets: ListOffsets::new(config.use_large_list),
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
+            enum_descriptor: enum_descriptor.clone(),
+        }
+    }
+
+    fn builder_len(&self) -> usize {
+        match &self.builder {
+            StringBuilderInner::Regular(b) => b.len(),
+            StringBuilderInner::Large(b) => b.len(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for RepeatedEnumStringBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                let name = enum_name(&self.enum_descriptor, each_value.as_enum_number().unwrap());
+                match &mut self.builder {
+                    StringBuilderInner::Regular(b) => b.append_value(&name),
+                    StringBuilderInner::Large(b) => b.append_value(&name),
+                }
+            }
+        }
+        self.offsets.push(self.builder_len());
+    }
+
+    fn append_null(&mut self) {
+        self.offsets.push(self.builder_len());
+    }
+
+    fn append_default(&mut self) {
+        self.offsets.push(self.builder_len());
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values: Arc<dyn Array> = match &mut self.builder {
+            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        };
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
+    }
+}
+
+struct RepeatedEnumBinaryBuilderWrapper {
+    builder: BinaryBuilderInner,
+    offsets: ListOffsets,
+    list_value_name: Arc<str>,
+    list_value_nullable: bool,
+    enum_descriptor: EnumDescriptor,
+}
+
+impl RepeatedEnumBinaryBuilderWrapper {
+    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
+        let builder = if config.use_large_binary {
+            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+        } else {
+            BinaryBuilderInner::Regular(BinaryBuilder::new())
+        };
+        Self {
+            builder,
+            offsets: ListOffsets::new(config.use_large_list),
+            list_value_name: config.list_value_name.clone(),
+            list_value_nullable: config.list_value_nullable,
+            enum_descriptor: enum_descriptor.clone(),
+        }
+    }
+
+    fn builder_len(&self) -> usize {
+        match &self.builder {
+            BinaryBuilderInner::Regular(b) => b.len(),
+            BinaryBuilderInner::Large(b) => b.len(),
+        }
+    }
+}
+
+impl ProtoArrayBuilder for RepeatedEnumBinaryBuilderWrapper {
+    fn append(&mut self, value: &Value) {
+        if let Some(values) = value.as_list() {
+            for each_value in values {
+                let name = enum_name(&self.enum_descriptor, each_value.as_enum_number().unwrap());
+                match &mut self.builder {
+                    BinaryBuilderInner::Regular(b) => b.append_value(name.as_bytes()),
+                    BinaryBuilderInner::Large(b) => b.append_value(name.as_bytes()),
+                }
+            }
+        }
+        self.offsets.push(self.builder_len());
+    }
+
+    fn append_null(&mut self) {
+        self.offsets.push(self.builder_len());
+    }
+
+    fn append_default(&mut self) {
+        self.offsets.push(self.builder_len());
+    }
+
+    fn finish(&mut self) -> Arc<dyn Array> {
+        let values: Arc<dyn Array> = match &mut self.builder {
+            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        };
+        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
+        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
+    }
+
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.offsets.len() == 1
     }
 }
 
