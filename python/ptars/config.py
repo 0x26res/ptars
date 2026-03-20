@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 TimeUnitLiteral = Literal["s", "ms", "us", "ns"]
-
+EnumReprLiteral = Literal["int32", "string", "binary"]
 
 _VALID_TIME_UNITS = {"s", "ms", "us", "ns"}
+_VALID_ENUM_REPRS = {"int32", "string", "binary"}
 
 
 def _check_type(value: Any, expected_type: type, name: str) -> None:
@@ -40,6 +41,7 @@ class PtarsConfig:
         use_large_string: Whether to use LargeUtf8 instead of Utf8 for strings.
         use_large_binary: Whether to use LargeBinary instead of Binary for bytes.
         use_large_list: Whether to use LargeList instead of List for repeated fields.
+        enum_repr: How to represent enum fields ("int32", "string", "binary").
 
     Note:
         The Rust API also supports `map_value_name` for customizing the field name
@@ -61,6 +63,7 @@ class PtarsConfig:
     use_large_string: bool = False
     use_large_binary: bool = False
     use_large_list: bool = False
+    enum_repr: EnumReprLiteral = "int32"
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -77,3 +80,8 @@ class PtarsConfig:
         _check_type(self.use_large_string, bool, "use_large_string")
         _check_type(self.use_large_binary, bool, "use_large_binary")
         _check_type(self.use_large_list, bool, "use_large_list")
+        _check_type(self.enum_repr, str, "enum_repr")
+        if self.enum_repr not in _VALID_ENUM_REPRS:
+            raise ValueError(
+                f"enum_repr must be one of {_VALID_ENUM_REPRS}, got {self.enum_repr!r}"
+            )

@@ -14,11 +14,74 @@ use arrow_array::{
 use arrow_schema::{DataType, TimeUnit};
 use chrono::{Datelike, NaiveDate};
 use prost::Message;
-use prost_reflect::{DynamicMessage, FieldDescriptor, Kind, MapKey, MessageDescriptor, Value};
+use prost_reflect::{
+    DynamicMessage, EnumDescriptor, FieldDescriptor, Kind, MapKey, MessageDescriptor, Value,
+};
 use std::collections::HashMap;
 
 // Days from CE epoch to Unix epoch (1970-01-01)
 const CE_OFFSET: i32 = 719163;
+
+/// Look up enum number by name, returning 0 (proto3 default) for unknown names.
+fn enum_number_from_name(name: &str, enum_descriptor: &EnumDescriptor) -> i32 {
+    enum_descriptor
+        .get_value_by_name(name)
+        .map(|v| v.number())
+        .unwrap_or(0)
+}
+
+/// Extract an enum value from an array at a given index, auto-detecting the type.
+fn extract_enum_value_at(
+    array: &ArrayRef,
+    idx: usize,
+    enum_descriptor: &EnumDescriptor,
+) -> Option<Value> {
+    if let Some(arr) = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>() {
+        if arr.is_null(idx) {
+            None
+        } else {
+            Some(Value::EnumNumber(arr.value(idx)))
+        }
+    } else if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+        if arr.is_null(idx) {
+            None
+        } else {
+            Some(Value::EnumNumber(enum_number_from_name(
+                arr.value(idx),
+                enum_descriptor,
+            )))
+        }
+    } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+        if arr.is_null(idx) {
+            None
+        } else {
+            Some(Value::EnumNumber(enum_number_from_name(
+                arr.value(idx),
+                enum_descriptor,
+            )))
+        }
+    } else if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
+        if arr.is_null(idx) {
+            None
+        } else {
+            Some(Value::EnumNumber(enum_number_from_name(
+                std::str::from_utf8(arr.value(idx)).unwrap(),
+                enum_descriptor,
+            )))
+        }
+    } else if let Some(arr) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+        if arr.is_null(idx) {
+            None
+        } else {
+            Some(Value::EnumNumber(enum_number_from_name(
+                std::str::from_utf8(arr.value(idx)).unwrap(),
+                enum_descriptor,
+            )))
+        }
+    } else {
+        None
+    }
+}
 
 /// Helper enum to work with both ListArray and LargeListArray
 enum GenericListArray<'a> {
@@ -1059,12 +1122,74 @@ pub fn extract_repeated_array(
         Kind::Message(message_descriptor) => {
             extract_repeated_message(&list_array, messages, field_descriptor, message_descriptor)
         }
-        Kind::Enum(_) => extract_repeated_primitive_type::<Int32Type>(
-            &list_array,
-            messages,
-            field_descriptor,
-            &Value::EnumNumber,
-        ),
+        Kind::Enum(enum_desc) => {
+            let values = list_array.values();
+            match values.data_type() {
+                DataType::Int32 => extract_repeated_primitive_type::<Int32Type>(
+                    &list_array,
+                    messages,
+                    field_descriptor,
+                    &Value::EnumNumber,
+                ),
+                DataType::Utf8 | DataType::LargeUtf8 => {
+                    macro_rules! extract_repeated_enum_strings {
+                        ($array_type:ty) => {{
+                            let values_arr = values.as_any().downcast_ref::<$array_type>().unwrap();
+                            for (i, message) in messages.iter_mut().enumerate() {
+                                if !list_array.is_null(i) {
+                                    let (start, end) = list_array.value_offsets(i);
+                                    let values_vec: Vec<Value> = (start..end)
+                                        .filter(|&idx| !values_arr.is_null(idx))
+                                        .map(|idx| {
+                                            Value::EnumNumber(enum_number_from_name(
+                                                values_arr.value(idx),
+                                                &enum_desc,
+                                            ))
+                                        })
+                                        .collect();
+                                    if !values_vec.is_empty() {
+                                        message.set_field(field_descriptor, Value::List(values_vec));
+                                    }
+                                }
+                            }
+                        }};
+                    }
+                    match values.data_type() {
+                        DataType::Utf8 => extract_repeated_enum_strings!(StringArray),
+                        DataType::LargeUtf8 => extract_repeated_enum_strings!(LargeStringArray),
+                        _ => unreachable!(),
+                    }
+                }
+                DataType::Binary | DataType::LargeBinary => {
+                    macro_rules! extract_repeated_enum_bytes {
+                        ($array_type:ty) => {{
+                            let values_arr = values.as_any().downcast_ref::<$array_type>().unwrap();
+                            for (i, message) in messages.iter_mut().enumerate() {
+                                if !list_array.is_null(i) {
+                                    let (start, end) = list_array.value_offsets(i);
+                                    let values_vec: Vec<Value> = (start..end)
+                                        .filter(|&idx| !values_arr.is_null(idx))
+                                        .map(|idx| {
+                                            let name = std::str::from_utf8(values_arr.value(idx)).unwrap();
+                                            Value::EnumNumber(enum_number_from_name(name, &enum_desc))
+                                        })
+                                        .collect();
+                                    if !values_vec.is_empty() {
+                                        message.set_field(field_descriptor, Value::List(values_vec));
+                                    }
+                                }
+                            }
+                        }};
+                    }
+                    match values.data_type() {
+                        DataType::Binary => extract_repeated_enum_bytes!(BinaryArray),
+                        DataType::LargeBinary => extract_repeated_enum_bytes!(LargeBinaryArray),
+                        _ => unreachable!(),
+                    }
+                }
+                dt => panic!("Expected Int32, Utf8, LargeUtf8, Binary, or LargeBinary for repeated enum, got {:?}", dt),
+            }
+        }
     }
 }
 
@@ -1124,11 +1249,71 @@ pub fn extract_singular_array(
         Kind::Message(message_descriptor) => {
             extract_single_message(array, field_descriptor, message_descriptor, messages)
         }
-        Kind::Enum(_) => extract_single_primitive::<Int32Type>(
+        Kind::Enum(enum_desc) => extract_single_enum(array, field_descriptor, &enum_desc, messages),
+    }
+}
+
+fn extract_single_enum(
+    array: &ArrayRef,
+    field_descriptor: &FieldDescriptor,
+    enum_descriptor: &EnumDescriptor,
+    messages: &mut [&mut DynamicMessage],
+) {
+    match array.data_type() {
+        DataType::Int32 => extract_single_primitive::<Int32Type>(
             array,
             messages,
             field_descriptor,
             &Value::EnumNumber,
+        ),
+        DataType::Utf8 | DataType::LargeUtf8 => {
+            fn process_strings<'a>(
+                iter: impl Iterator<Item = Option<&'a str>>,
+                field_descriptor: &FieldDescriptor,
+                enum_descriptor: &EnumDescriptor,
+                messages: &mut [&mut DynamicMessage],
+            ) {
+                for (i, value) in iter.enumerate() {
+                    if let Some(name) = value {
+                        messages[i].set_field(
+                            field_descriptor,
+                            Value::EnumNumber(enum_number_from_name(name, enum_descriptor)),
+                        );
+                    }
+                }
+            }
+            if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
+                process_strings(arr.iter(), field_descriptor, enum_descriptor, messages);
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeStringArray>() {
+                process_strings(arr.iter(), field_descriptor, enum_descriptor, messages);
+            }
+        }
+        DataType::Binary | DataType::LargeBinary => {
+            fn process_bytes<'a>(
+                iter: impl Iterator<Item = Option<&'a [u8]>>,
+                field_descriptor: &FieldDescriptor,
+                enum_descriptor: &EnumDescriptor,
+                messages: &mut [&mut DynamicMessage],
+            ) {
+                for (i, value) in iter.enumerate() {
+                    if let Some(bytes) = value {
+                        let name = std::str::from_utf8(bytes).unwrap();
+                        messages[i].set_field(
+                            field_descriptor,
+                            Value::EnumNumber(enum_number_from_name(name, enum_descriptor)),
+                        );
+                    }
+                }
+            }
+            if let Some(arr) = array.as_any().downcast_ref::<BinaryArray>() {
+                process_bytes(arr.iter(), field_descriptor, enum_descriptor, messages);
+            } else if let Some(arr) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+                process_bytes(arr.iter(), field_descriptor, enum_descriptor, messages);
+            }
+        }
+        dt => panic!(
+            "Expected Int32, Utf8, LargeUtf8, Binary, or LargeBinary for enum, got {:?}",
+            dt
         ),
     }
 }
@@ -1870,14 +2055,7 @@ fn extract_map_value(array: &ArrayRef, idx: usize, field: &FieldDescriptor) -> O
                 None
             }
         }
-        Kind::Enum(_) => {
-            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
-            if arr.is_null(idx) {
-                None
-            } else {
-                Some(Value::EnumNumber(arr.value(idx)))
-            }
-        }
+        Kind::Enum(enum_desc) => extract_enum_value_at(array, idx, &enum_desc),
         Kind::Message(message_descriptor) => {
             extract_map_message_value(array, idx, &message_descriptor)
         }
@@ -2337,14 +2515,7 @@ fn extract_single_field_value(
                 None
             }
         }
-        Kind::Enum(_) => {
-            let arr = array.as_any().downcast_ref::<PrimitiveArray<Int32Type>>()?;
-            if arr.is_null(idx) {
-                None
-            } else {
-                Some(Value::EnumNumber(arr.value(idx)))
-            }
-        }
+        Kind::Enum(enum_desc) => extract_enum_value_at(array, idx, &enum_desc),
         Kind::Message(msg_desc) => extract_map_message_value(array, idx, &msg_desc),
     }
 }

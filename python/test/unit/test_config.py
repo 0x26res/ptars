@@ -8,8 +8,11 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from google.type.timeofday_pb2 import TimeOfDay
 
 from ptars import HandlerPool, PtarsConfig
+from ptars_protos.bench_pb2 import DESCRIPTOR as BENCH_DESCRIPTOR
+from ptars_protos.bench_pb2 import ExampleMessage
 from ptars_protos.simple_pb2 import (
     DESCRIPTOR,
+    TestMessage,
     WithDuration,
     WithMap,
     WithTimeOfDay,
@@ -994,3 +997,294 @@ class TestLargeListConfig:
         assert list_type.value_type == pa.large_binary()
         messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
         assert messages_back == messages
+
+
+class TestEnumReprConfig:
+    """Test enum representation configuration."""
+
+    # (enum_repr, extra_config, messages, column, expected_arrow_values, expected_type)
+    SINGULAR_CASES = [
+        pytest.param(
+            "int32",
+            {},
+            [TestMessage(enum_value=1)],
+            "enum_value",
+            [1],
+            pa.int32(),
+            id="int32-default",
+        ),
+        pytest.param(
+            "int32",
+            {},
+            [TestMessage(enum_value=0)],
+            "enum_value",
+            [0],
+            pa.int32(),
+            id="int32-zero",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [TestMessage(enum_value=1)],
+            "enum_value",
+            ["HELLO"],
+            pa.string(),
+            id="string",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [TestMessage(enum_value=0)],
+            "enum_value",
+            ["UNKNOWN_TEST_ENUM"],
+            pa.string(),
+            id="string-zero",
+        ),
+        pytest.param(
+            "string",
+            {"use_large_string": True},
+            [TestMessage(enum_value=1)],
+            "enum_value",
+            ["HELLO"],
+            pa.large_string(),
+            id="string-large",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [TestMessage(enum_value=2)],
+            "enum_value",
+            [b"WORLD"],
+            pa.binary(),
+            id="binary",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [TestMessage(enum_value=0)],
+            "enum_value",
+            [b"UNKNOWN_TEST_ENUM"],
+            pa.binary(),
+            id="binary-zero",
+        ),
+        pytest.param(
+            "binary",
+            {"use_large_binary": True},
+            [TestMessage(enum_value=1)],
+            "enum_value",
+            [b"HELLO"],
+            pa.large_binary(),
+            id="binary-large",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [TestMessage(enum_value=1), TestMessage(enum_value=2)],
+            "enum_value",
+            ["HELLO", "WORLD"],
+            pa.string(),
+            id="string-multiple-messages",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [TestMessage(enum_value=1), TestMessage(enum_value=2)],
+            "enum_value",
+            [b"HELLO", b"WORLD"],
+            pa.binary(),
+            id="binary-multiple-messages",
+        ),
+    ]
+
+    REPEATED_CASES = [
+        pytest.param(
+            "int32",
+            {},
+            [TestMessage(enum_values=[0, 1, 2])],
+            "enum_values",
+            [[0, 1, 2]],
+            pa.int32(),
+            id="int32-repeated",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [TestMessage(enum_values=[0, 1, 2])],
+            "enum_values",
+            [["UNKNOWN_TEST_ENUM", "HELLO", "WORLD"]],
+            pa.string(),
+            id="string-repeated",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [TestMessage(enum_values=[0, 1, 2])],
+            "enum_values",
+            [[b"UNKNOWN_TEST_ENUM", b"HELLO", b"WORLD"]],
+            pa.binary(),
+            id="binary-repeated",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [TestMessage(enum_values=[])],
+            "enum_values",
+            [[]],
+            pa.string(),
+            id="string-repeated-empty",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [TestMessage(enum_values=[])],
+            "enum_values",
+            [[]],
+            pa.binary(),
+            id="binary-repeated-empty",
+        ),
+    ]
+
+    MAP_CASES = [
+        pytest.param(
+            "int32",
+            {},
+            [ExampleMessage(example_enum_int32_map={1: 0, 2: 1})],
+            "example_enum_int32_map",
+            pa.int32(),
+            id="int32-map",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [ExampleMessage(example_enum_int32_map={1: 0, 2: 1})],
+            "example_enum_int32_map",
+            pa.string(),
+            id="string-map",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [ExampleMessage(example_enum_int32_map={1: 0, 2: 1})],
+            "example_enum_int32_map",
+            pa.binary(),
+            id="binary-map",
+        ),
+    ]
+
+    ROUNDTRIP_CASES = [
+        pytest.param(
+            "int32", {}, [TestMessage(enum_value=1, enum_values=[0, 1, 2])], id="int32"
+        ),
+        pytest.param(
+            "string",
+            {},
+            [TestMessage(enum_value=2, enum_values=[0, 1, 2])],
+            id="string",
+        ),
+        pytest.param(
+            "string",
+            {"use_large_string": True},
+            [TestMessage(enum_value=1, enum_values=[2, 0])],
+            id="string-large",
+        ),
+        pytest.param(
+            "binary", {}, [TestMessage(enum_value=1, enum_values=[2, 0])], id="binary"
+        ),
+        pytest.param(
+            "binary",
+            {"use_large_binary": True},
+            [TestMessage(enum_value=2, enum_values=[1])],
+            id="binary-large",
+        ),
+        pytest.param(
+            "string",
+            {},
+            [ExampleMessage(example_enum_int32_map={1: 0, 2: 1})],
+            id="string-map",
+        ),
+        pytest.param(
+            "binary",
+            {},
+            [ExampleMessage(example_enum_int32_map={1: 0, 2: 1})],
+            id="binary-map",
+        ),
+    ]
+
+    CROSS_FORMAT_CASES = [
+        pytest.param("string", "int32", id="string-to-int32"),
+        pytest.param("binary", "int32", id="binary-to-int32"),
+        pytest.param("string", "binary", id="string-to-binary"),
+        pytest.param("int32", "string", id="int32-to-string"),
+    ]
+
+    @pytest.mark.parametrize(
+        "enum_repr,extra_config,messages,column,expected,expected_type", SINGULAR_CASES
+    )
+    def test_singular_enum(
+        self, enum_repr, extra_config, messages, column, expected, expected_type
+    ):
+        config = PtarsConfig(enum_repr=enum_repr, **extra_config)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(messages, TestMessage.DESCRIPTOR)
+        assert batch.schema.field(column).type == expected_type
+        assert batch[column].to_pylist() == expected
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    @pytest.mark.parametrize(
+        "enum_repr,extra_config,messages,column,expected,expected_value_type",
+        REPEATED_CASES,
+    )
+    def test_repeated_enum(
+        self, enum_repr, extra_config, messages, column, expected, expected_value_type
+    ):
+        config = PtarsConfig(enum_repr=enum_repr, **extra_config)
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(messages, TestMessage.DESCRIPTOR)
+        list_type = batch.schema.field(column).type
+        assert isinstance(list_type, pa.ListType)
+        assert list_type.value_type == expected_value_type
+        assert batch[column].to_pylist() == expected
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    @pytest.mark.parametrize(
+        "enum_repr,extra_config,messages,column,expected_value_type", MAP_CASES
+    )
+    def test_map_enum(
+        self, enum_repr, extra_config, messages, column, expected_value_type
+    ):
+        config = PtarsConfig(enum_repr=enum_repr, **extra_config)
+        pool = HandlerPool([BENCH_DESCRIPTOR], config=config)
+        batch = pool.messages_to_record_batch(messages, ExampleMessage.DESCRIPTOR)
+        map_type = batch.schema.field(column).type
+        assert map_type.item_type == expected_value_type
+        messages_back = pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    @pytest.mark.parametrize("enum_repr,extra_config,messages", ROUNDTRIP_CASES)
+    def test_roundtrip(self, enum_repr, extra_config, messages):
+        config = PtarsConfig(enum_repr=enum_repr, **extra_config)
+        descriptor_file = (
+            BENCH_DESCRIPTOR if isinstance(messages[0], ExampleMessage) else DESCRIPTOR
+        )
+        message_descriptor = type(messages[0]).DESCRIPTOR
+        pool = HandlerPool([descriptor_file], config=config)
+        batch = pool.messages_to_record_batch(messages, message_descriptor)
+        messages_back = pool.record_batch_to_messages(batch, message_descriptor)
+        assert messages_back == messages
+
+    @pytest.mark.parametrize("write_repr,read_repr", CROSS_FORMAT_CASES)
+    def test_cross_format_read(self, write_repr, read_repr):
+        messages = [TestMessage(enum_value=2, enum_values=[1, 0])]
+        write_pool = HandlerPool([DESCRIPTOR], config=PtarsConfig(enum_repr=write_repr))
+        batch = write_pool.messages_to_record_batch(messages, TestMessage.DESCRIPTOR)
+        read_pool = HandlerPool([DESCRIPTOR], config=PtarsConfig(enum_repr=read_repr))
+        messages_back = read_pool.record_batch_to_messages(
+            batch, TestMessage.DESCRIPTOR
+        )
+        assert messages_back == messages
+
+    def test_enum_repr_invalid(self):
+        with pytest.raises(ValueError, match="enum_repr must be one of"):
+            PtarsConfig(enum_repr="invalid")
