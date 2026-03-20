@@ -543,8 +543,11 @@ def test_nested_list_of_primitive():
     array_protarrow = struct_array_protarrow.field(
         struct_array_protarrow.type.get_field_index("double_values")
     )
-    assert array_protarrow.to_pylist() == [[1.0, 2.0, 0.0], None]  # Bug in protarrow
-    struct_array_protarrow.type.field("double_values").nullable is False
+    assert array_protarrow.to_pylist() == [
+        [1.0, 2.0, 0.0],
+        [],
+    ]  # Bug in protarrow, now fixed
+    assert struct_array_protarrow.type.field("double_values").nullable is False
 
 
 def test_map_of_maps_complex():

@@ -623,7 +623,7 @@ class TestLargeValueOverflow:
 
         # Verify the value is correct
         ts_array = batch.column("timestamp")
-        assert ts_array[0].as_py().timestamp() == large_seconds
+        assert ts_array[0].value == large_seconds
 
         # Roundtrip back to protobuf
         messages_back = pool.record_batch_to_messages(batch, WithTimestamp.DESCRIPTOR)
