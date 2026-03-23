@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::arrow_to_proto::record_batch_to_array;
+    use crate::arrow_to_proto_direct::record_batch_to_array;
     use crate::config::PtarsConfig;
     use crate::proto_to_arrow::{
         field_to_array, get_array_builder, get_singular_array_builder, is_nullable,

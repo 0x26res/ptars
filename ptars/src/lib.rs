@@ -28,7 +28,7 @@
 //! let record_batch = messages_to_record_batch(&messages, &message_descriptor);
 //! ```
 
-pub mod arrow_to_proto;
+pub mod arrow_to_proto_direct;
 pub mod config;
 pub mod proto_to_arrow;
 
@@ -36,7 +36,7 @@ pub mod proto_to_arrow;
 mod converter;
 
 // Re-export commonly used items
-pub use arrow_to_proto::record_batch_to_array;
+pub use arrow_to_proto_direct::record_batch_to_array;
 pub use config::{EnumRepr, PtarsConfig};
 pub use proto_to_arrow::{
     binary_array_to_messages, binary_array_to_record_batch,

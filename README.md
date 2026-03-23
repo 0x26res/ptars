@@ -111,22 +111,22 @@ pool = HandlerPool([SearchRequest.DESCRIPTOR.file], config=config)
 which is implemented in plain python.
 It is:
 
-- 2.5 times faster when converting from proto to arrow.
-- 3 times faster when converting from arrow to proto.
+- 2.5+ times faster when converting from proto to arrow.
+- 30+ times faster when converting from arrow to proto.
 
 ```benchmark
 ---- benchmark 'to_arrow': 2 tests ----
 Name (time in ms)        Mean
 ---------------------------------------
-protarrow_to_arrow     9.4863 (2.63)
-ptars_to_arrow         3.6009 (1.0)
+protarrow_to_arrow     5.0710 (2.90)
+ptars_to_arrow         1.7458 (1.0)
 ---------------------------------------
 
 ---- benchmark 'to_proto': 2 tests -----
 Name (time in ms)         Mean
 ----------------------------------------
-protarrow_to_proto     20.8297 (3.20)
-ptars_to_proto          6.5013 (1.0)
+protarrow_to_proto     13.2916 (34.96)
+ptars_to_proto          0.3802 (1.0)
 ----------------------------------------
 ```
 
