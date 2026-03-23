@@ -86,15 +86,6 @@ def test_ptars_to_proto(benchmark: BenchmarkFixture, payloads: list[bytes]):
     benchmark(handler.record_batch_to_array, record_batch)
 
 
-def test_ptars_to_proto_direct(benchmark: BenchmarkFixture, payloads: list[bytes]):
-    benchmark.group = "to_proto"
-    pool = ptars.HandlerPool([benchmark_pb2.DESCRIPTOR])
-    handler = pool.get_for_message(BenchmarkMessage.DESCRIPTOR)
-    record_batch = handler.list_to_record_batch(payloads)
-
-    benchmark(handler.record_batch_to_bytes, record_batch)
-
-
 def run_python_deserialize(payloads, message_type):
     [message_type.FromString(p) for p in payloads]
 

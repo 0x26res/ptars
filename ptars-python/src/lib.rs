@@ -189,20 +189,6 @@ impl MessageHandler {
         )
     }
 
-    fn record_batch_to_bytes(
-        &self,
-        record_batch: &Bound<PyAny>,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyAny>> {
-        let arrow_record_batch: RecordBatch =
-            RecordBatch::from_pyarrow_bound(record_batch).unwrap();
-        Ok(
-            ptars::record_batch_to_bytes(&arrow_record_batch, &self.message_descriptor)
-                .to_pyarrow(py)?
-                .unbind(),
-        )
-    }
-
     /// Convert a binary array of serialized protobuf messages to a record batch.
     ///
     /// Each element in the binary array is expected to be a serialized protobuf message.
