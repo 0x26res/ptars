@@ -71,6 +71,14 @@ def test_ptars_to_arrow(benchmark: BenchmarkFixture, payloads: list[bytes]):
     benchmark(handler.list_to_record_batch, payloads)
 
 
+def test_ptars_to_arrow_direct(benchmark: BenchmarkFixture, payloads: list[bytes]):
+    benchmark.group = "to_arrow"
+    pool = ptars.HandlerPool([benchmark_pb2.DESCRIPTOR])
+    handler = pool.get_for_message(BenchmarkMessage.DESCRIPTOR)
+
+    benchmark(handler.list_to_record_batch_direct, payloads)
+
+
 def test_protarrow_to_proto(benchmark: BenchmarkFixture, payloads: list[bytes]):
     benchmark.group = "to_proto"
     record_batch = run_protarrow_to_arrow(payloads, BenchmarkMessage)

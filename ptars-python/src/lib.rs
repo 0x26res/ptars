@@ -168,6 +168,26 @@ impl MessageHandler {
         .unbind())
     }
 
+    fn list_to_record_batch_direct(
+        &self,
+        values: &Bound<'_, PyList>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let mut builder = arrow_array::builder::BinaryBuilder::new();
+        for value in values.iter() {
+            let bytes: &[u8] = value.extract()?;
+            builder.append_value(bytes);
+        }
+        let binary_array = builder.finish();
+        let record_batch = ptars::binary_array_to_record_batch_direct(
+            &binary_array,
+            &self.message_descriptor,
+            &self.config,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(record_batch.to_pyarrow(py)?.unbind())
+    }
+
     fn just_convert(&self, values: &Bound<'_, PyList>, _py: Python<'_>) {
         for value in values.iter() {
             let bytes: &[u8] = value.extract().unwrap();

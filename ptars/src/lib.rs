@@ -31,6 +31,7 @@
 pub mod arrow_to_proto_direct;
 pub mod config;
 pub mod proto_to_arrow;
+pub mod proto_to_arrow_direct;
 
 #[cfg(test)]
 mod converter;
@@ -43,3 +44,4 @@ pub use proto_to_arrow::{
     binary_array_to_record_batch_with_config, messages_to_record_batch,
     messages_to_record_batch_with_config,
 };
+pub use proto_to_arrow_direct::binary_array_to_record_batch_direct;

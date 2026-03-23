@@ -6075,4 +6075,252 @@ mod tests {
             Some(1)
         );
     }
+
+    // ==================== Direct Decoding Tests ====================
+
+    mod direct_decoding {
+        use super::*;
+        use crate::proto_to_arrow_direct::binary_array_to_record_batch_direct;
+
+        /// Helper: encode messages to binary, decode with both paths, compare columns.
+        fn assert_scalar_equivalence(
+            messages: &[DynamicMessage],
+            message_descriptor: &MessageDescriptor,
+        ) {
+            let config = PtarsConfig::default();
+            // Encode to RecordBatch via existing path
+            let rb_old = messages_to_record_batch(messages, message_descriptor);
+            // Encode to binary protobuf
+            let binary_data = record_batch_to_array(&rb_old, message_descriptor);
+            let binary_array = arrow::array::BinaryArray::from(binary_data);
+            // Decode with both paths
+            let rb_existing = crate::proto_to_arrow::binary_array_to_record_batch_with_config(
+                &binary_array,
+                message_descriptor,
+                &config,
+            )
+            .unwrap();
+            let rb_direct =
+                binary_array_to_record_batch_direct(&binary_array, message_descriptor, &config)
+                    .unwrap();
+            // Compare columns that exist in both
+            for field in rb_direct.schema().fields() {
+                let col_direct = rb_direct.column_by_name(field.name()).unwrap();
+                let col_existing = rb_existing.column_by_name(field.name()).unwrap();
+                assert_eq!(
+                    col_direct.as_ref(),
+                    col_existing.as_ref(),
+                    "column '{}' mismatch",
+                    field.name()
+                );
+            }
+        }
+
+        #[test]
+        fn test_direct_simple_message() {
+            let file_descriptor_proto = file_descriptor_proto_fixture();
+            let pool = create_pool_with_message(file_descriptor_proto);
+            let md = pool.get_message_by_name("test.TestMessage").unwrap();
+            let messages = dynamic_messages_fixture(&md);
+            assert_scalar_equivalence(&messages, &md);
+        }
+
+        #[test]
+        fn test_direct_all_primitive_types() {
+            let file_descriptor = FileDescriptorProto {
+                name: Some("test.proto".to_string()),
+                package: Some("test".to_string()),
+                syntax: Some("proto3".to_string()),
+                message_type: vec![DescriptorProto {
+                    name: Some("AllTypes".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("int32_field".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int32.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("int64_field".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Int64.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("uint32_field".to_string()),
+                            number: Some(3),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Uint32.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("uint64_field".to_string()),
+                            number: Some(4),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Uint64.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("float_field".to_string()),
+                            number: Some(5),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Float.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("double_field".to_string()),
+                            number: Some(6),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Double.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("bool_field".to_string()),
+                            number: Some(7),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Bool.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("string_field".to_string()),
+                            number: Some(8),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::String.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("bytes_field".to_string()),
+                            number: Some(9),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Bytes.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let pool = create_pool_with_message(file_descriptor);
+            let md = pool.get_message_by_name("test.AllTypes").unwrap();
+
+            let mut msg = DynamicMessage::new(md.clone());
+            msg.set_field_by_name("int32_field", Value::I32(-42));
+            msg.set_field_by_name("int64_field", Value::I64(-9999999999i64));
+            msg.set_field_by_name("uint32_field", Value::U32(42));
+            msg.set_field_by_name("uint64_field", Value::U64(9999999999u64));
+            msg.set_field_by_name("float_field", Value::F32(3.14));
+            msg.set_field_by_name("double_field", Value::F64(2.71828));
+            msg.set_field_by_name("bool_field", Value::Bool(true));
+            msg.set_field_by_name("string_field", Value::String("test string".to_string()));
+            msg.set_field_by_name(
+                "bytes_field",
+                Value::Bytes(prost::bytes::Bytes::from(vec![1, 2, 3, 4, 5])),
+            );
+
+            assert_scalar_equivalence(&[msg], &md);
+        }
+
+        #[test]
+        fn test_direct_sfixed_sint_fixed_types() {
+            let file_descriptor = FileDescriptorProto {
+                name: Some("test.proto".to_string()),
+                package: Some("test".to_string()),
+                syntax: Some("proto3".to_string()),
+                message_type: vec![DescriptorProto {
+                    name: Some("FixedTypes".to_string()),
+                    field: vec![
+                        FieldDescriptorProto {
+                            name: Some("sfixed32_field".to_string()),
+                            number: Some(1),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Sfixed32.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("sfixed64_field".to_string()),
+                            number: Some(2),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Sfixed64.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("sint32_field".to_string()),
+                            number: Some(3),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Sint32.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("sint64_field".to_string()),
+                            number: Some(4),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Sint64.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("fixed32_field".to_string()),
+                            number: Some(5),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Fixed32.into()),
+                            ..Default::default()
+                        },
+                        FieldDescriptorProto {
+                            name: Some("fixed64_field".to_string()),
+                            number: Some(6),
+                            label: Some(Label::Optional.into()),
+                            r#type: Some(Type::Fixed64.into()),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let pool = create_pool_with_message(file_descriptor);
+            let md = pool.get_message_by_name("test.FixedTypes").unwrap();
+
+            let mut msg = DynamicMessage::new(md.clone());
+            msg.set_field_by_name("sfixed32_field", Value::I32(-123));
+            msg.set_field_by_name("sfixed64_field", Value::I64(-456));
+            msg.set_field_by_name("sint32_field", Value::I32(-789));
+            msg.set_field_by_name("sint64_field", Value::I64(-101112));
+            msg.set_field_by_name("fixed32_field", Value::U32(999));
+            msg.set_field_by_name("fixed64_field", Value::U64(131415));
+
+            assert_scalar_equivalence(&[msg], &md);
+        }
+
+        #[test]
+        fn test_direct_enum_int32() {
+            let (_pool, md) = create_enum_message_descriptor();
+            let mut msg = DynamicMessage::new(md.clone());
+            msg.set_field_by_name("status", Value::EnumNumber(1));
+            assert_scalar_equivalence(&[msg], &md);
+        }
+
+        #[test]
+        fn test_direct_default_values() {
+            let (_, md) = create_primitive_message_descriptor("value", Type::Int32);
+            let msg = DynamicMessage::new(md.clone());
+            assert_scalar_equivalence(&[msg], &md);
+        }
+
+        #[test]
+        fn test_direct_multiple_rows() {
+            let file_descriptor_proto = file_descriptor_proto_fixture();
+            let pool = create_pool_with_message(file_descriptor_proto);
+            let md = pool.get_message_by_name("test.TestMessage").unwrap();
+
+            let mut messages = Vec::new();
+            for i in 0..50 {
+                let mut msg = DynamicMessage::new(md.clone());
+                msg.set_field_by_name("id", Value::I32(i));
+                msg.set_field_by_name("name", Value::String(format!("name_{}", i)));
+                messages.push(msg);
+            }
+            assert_scalar_equivalence(&messages, &md);
+        }
+    }
 }
