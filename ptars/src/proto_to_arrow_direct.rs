@@ -3028,7 +3028,13 @@ impl MessageDecoder {
 
     pub fn finish(mut self) -> RecordBatch {
         if self.decoders.is_empty() {
-            return RecordBatch::new_empty(Arc::new(arrow_schema::Schema::empty()));
+            let schema = Arc::new(arrow_schema::Schema::empty());
+            return RecordBatch::try_new_with_options(
+                schema,
+                vec![],
+                &arrow_array::RecordBatchOptions::new().with_row_count(Some(self.num_rows)),
+            )
+            .unwrap();
         }
         let struct_array = self.build_struct_array(None);
         RecordBatch::from(struct_array)
@@ -3633,8 +3639,8 @@ fn build_singular_decoder_for_map(
 
 /// Decode a BinaryArray of serialized protobuf messages directly into a RecordBatch.
 ///
-/// This skips DynamicMessage allocation and parses wire format directly into
-/// Arrow builders.
+/// Parses protobuf wire format directly into Arrow builders — no intermediate
+/// message objects are created.
 pub fn binary_array_to_record_batch_direct(
     array: &BinaryArray,
     descriptor: &MessageDescriptor,
@@ -3649,4 +3655,56 @@ pub fn binary_array_to_record_batch_direct(
         }
     }
     Ok(decoder.finish())
+}
+
+/// Convert DynamicMessage instances to a RecordBatch using the default configuration.
+///
+/// Each message is serialized to protobuf wire format, then decoded directly
+/// into Arrow arrays.
+pub fn messages_to_record_batch(
+    messages: &[prost_reflect::DynamicMessage],
+    message_descriptor: &MessageDescriptor,
+) -> RecordBatch {
+    messages_to_record_batch_with_config(messages, message_descriptor, &PtarsConfig::default())
+}
+
+/// Convert DynamicMessage instances to a RecordBatch using the specified configuration.
+///
+/// Each message is serialized to protobuf wire format, then decoded directly
+/// into Arrow arrays.
+pub fn messages_to_record_batch_with_config(
+    messages: &[prost_reflect::DynamicMessage],
+    message_descriptor: &MessageDescriptor,
+    config: &PtarsConfig,
+) -> RecordBatch {
+    use arrow_array::builder::BinaryBuilder;
+    use prost::Message;
+
+    let mut bin_builder = BinaryBuilder::new();
+    for msg in messages {
+        bin_builder.append_value(msg.encode_to_vec());
+    }
+    let binary_array = bin_builder.finish();
+    binary_array_to_record_batch_direct(&binary_array, message_descriptor, config)
+        .expect("failed to decode messages")
+}
+
+/// Decode a BinaryArray into a vector of DynamicMessage.
+///
+/// Each element in the binary array is expected to be a serialized protobuf message.
+/// Null values in the array result in default (empty) messages.
+pub fn binary_array_to_messages(
+    array: &BinaryArray,
+    message_descriptor: &MessageDescriptor,
+) -> Result<Vec<prost_reflect::DynamicMessage>, prost::DecodeError> {
+    let mut messages = Vec::with_capacity(array.len());
+    for i in 0..array.len() {
+        let message = if array.is_null(i) {
+            prost_reflect::DynamicMessage::new(message_descriptor.clone())
+        } else {
+            prost_reflect::DynamicMessage::decode(message_descriptor.clone(), array.value(i))?
+        };
+        messages.push(message);
+    }
+    Ok(messages)
 }

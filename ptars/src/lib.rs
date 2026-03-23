@@ -32,7 +32,6 @@
 
 pub mod arrow_to_proto_direct;
 pub mod config;
-pub mod proto_to_arrow;
 pub mod proto_to_arrow_direct;
 
 #[cfg(test)]
@@ -41,7 +40,7 @@ mod converter;
 // Re-export commonly used items
 pub use arrow_to_proto_direct::record_batch_to_array;
 pub use config::{EnumRepr, PtarsConfig};
-pub use proto_to_arrow::{
-    binary_array_to_messages, messages_to_record_batch, messages_to_record_batch_with_config,
+pub use proto_to_arrow_direct::{
+    binary_array_to_messages, binary_array_to_record_batch_direct, messages_to_record_batch,
+    messages_to_record_batch_with_config,
 };
-pub use proto_to_arrow_direct::binary_array_to_record_batch_direct;
