@@ -100,17 +100,33 @@ where this conversion happens in the wild:
 - [arroyo](https://github.com/ArroyoSystems/arroyo) converts proto to arrow
   to leverage the columnar format.
 
-## Why prost over other Rust protobuf libraries?
+## Why don't I need to compile my .proto files to Rust?
 
-ptars uses [prost](https://github.com/tokio-rs/prost)
-for protobuf handling in Rust.
-We chose prost over alternatives like
-[rust-protobuf](https://github.com/stepancheg/rust-protobuf) because:
+Most Rust protobuf libraries (prost, rust-protobuf) work by generating
+Rust structs from `.proto` files at build time.
+ptars does **not** need this. It only needs the protobuf **descriptor** —
+the schema metadata that describes field names, numbers, types, and nesting.
 
-- **Performance**: prost is faster for both serialization and deserialization.
-- **Maintenance**: prost is actively maintained by the Tokio team, ensuring
-  long-term support and compatibility with the Rust ecosystem.
-- **Descriptor Support**: prost-reflect provides protobuf descriptors
-  at runtime, which ptars uses to build field decoders and encoders
-  that operate directly on wire format bytes without needing
-  the schema at compile time.
+The Python protobuf library already embeds these descriptors in the
+generated `_pb2.py` modules (accessible via `MyMessage.DESCRIPTOR`).
+ptars reads these descriptors at runtime and uses them to build
+field-specific decoders and encoders that operate directly on the
+protobuf wire format. No Rust code generation, no `build.rs`, no `protoc`
+plugin for Rust — just pass your existing Python descriptors and go.
+
+This is possible because protobuf's wire format is fully described by the
+descriptor: each field's number, wire type, and nesting structure is
+all ptars needs to parse bytes into Arrow columns or encode Arrow columns
+back to bytes.
+
+## Why prost-reflect?
+
+ptars uses [prost-reflect](https://github.com/andrewhickman/prost-reflect)
+for runtime access to protobuf descriptors in Rust.
+It provides `MessageDescriptor`, `FieldDescriptor`, and `Kind` types
+that ptars uses to build field decoders and encoders at construction time.
+
+Note that ptars does **not** use prost-reflect's `DynamicMessage` for the
+core conversion paths. The descriptors are only used once to set up the
+encoder/decoder pipeline — after that, all data flows directly between
+protobuf wire bytes and Arrow arrays with no intermediate message objects.
