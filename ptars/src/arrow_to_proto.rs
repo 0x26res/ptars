@@ -23,7 +23,7 @@ use std::collections::HashMap;
 const CE_OFFSET: i32 = 719163;
 
 /// Look up enum number by name, returning 0 (proto3 default) for unknown names.
-fn enum_number_from_name(name: &str, enum_descriptor: &EnumDescriptor) -> i32 {
+pub(crate) fn enum_number_from_name(name: &str, enum_descriptor: &EnumDescriptor) -> i32 {
     enum_descriptor
         .get_value_by_name(name)
         .map(|v| v.number())
