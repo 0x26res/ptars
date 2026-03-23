@@ -2094,23 +2094,29 @@ fn build_field_encoder<'a>(
 }
 
 fn make_string_col_ref(array: &dyn Array) -> Option<StringColumnRef<'_>> {
-    if let Some(a) = array.as_any().downcast_ref::<StringArray>() {
-        Some(StringColumnRef::Regular(a))
-    } else if let Some(a) = array.as_any().downcast_ref::<LargeStringArray>() {
-        Some(StringColumnRef::Large(a))
-    } else {
-        None
-    }
+    array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .map(StringColumnRef::Regular)
+        .or_else(|| {
+            array
+                .as_any()
+                .downcast_ref::<LargeStringArray>()
+                .map(StringColumnRef::Large)
+        })
 }
 
 fn make_binary_col_ref(array: &dyn Array) -> Option<BinaryColumnRef<'_>> {
-    if let Some(a) = array.as_any().downcast_ref::<BinaryArray>() {
-        Some(BinaryColumnRef::Regular(a))
-    } else if let Some(a) = array.as_any().downcast_ref::<LargeBinaryArray>() {
-        Some(BinaryColumnRef::Large(a))
-    } else {
-        None
-    }
+    array
+        .as_any()
+        .downcast_ref::<BinaryArray>()
+        .map(BinaryColumnRef::Regular)
+        .or_else(|| {
+            array
+                .as_any()
+                .downcast_ref::<LargeBinaryArray>()
+                .map(BinaryColumnRef::Large)
+        })
 }
 
 fn build_enum_encoder<'a>(
