@@ -16,16 +16,18 @@
 //! ## Example
 //!
 //! ```ignore
-//! use ptars::{messages_to_record_batch, binary_array_to_record_batch};
-//! use prost_reflect::{DescriptorPool, DynamicMessage};
+//! use ptars::{binary_array_to_record_batch_direct, PtarsConfig};
+//! use arrow_array::BinaryArray;
+//! use prost_reflect::DescriptorPool;
 //!
 //! // Load your protobuf descriptor
 //! let pool = DescriptorPool::decode(descriptor_bytes).unwrap();
 //! let message_descriptor = pool.get_message_by_name("my.Message").unwrap();
 //!
-//! // Convert messages to Arrow
-//! let messages: Vec<DynamicMessage> = /* your messages */;
-//! let record_batch = messages_to_record_batch(&messages, &message_descriptor);
+//! // Decode serialized protobuf messages directly to Arrow
+//! let binary_array: BinaryArray = /* your serialized messages */;
+//! let config = PtarsConfig::default();
+//! let record_batch = binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config).unwrap();
 //! ```
 
 pub mod arrow_to_proto_direct;
@@ -40,8 +42,6 @@ mod converter;
 pub use arrow_to_proto_direct::record_batch_to_array;
 pub use config::{EnumRepr, PtarsConfig};
 pub use proto_to_arrow::{
-    binary_array_to_messages, binary_array_to_record_batch,
-    binary_array_to_record_batch_with_config, messages_to_record_batch,
-    messages_to_record_batch_with_config,
+    binary_array_to_messages, messages_to_record_batch, messages_to_record_batch_with_config,
 };
 pub use proto_to_arrow_direct::binary_array_to_record_batch_direct;

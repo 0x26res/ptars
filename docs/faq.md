@@ -77,10 +77,16 @@ a properly typed Arrow schema.
 ptars is a Rust implementation of
 [protarrow](https://github.com/tradewelltech/protarrow).
 While protarrow is implemented in pure Python, ptars uses Rust for the core
-conversion logic, resulting in significant performance improvements:
+conversion logic and converts directly between the protobuf wire format and
+Arrow columnar arrays — no intermediate message objects are created.
+Serialized bytes are parsed straight into Arrow builders, and Arrow arrays
+are encoded directly to protobuf wire format, skipping per-row object
+allocation entirely.
 
-- **2.5x faster** when converting from proto to arrow
-- **3x faster** when converting from arrow to proto
+This results in significant performance improvements:
+
+- **7x+ faster** when converting from proto to Arrow
+- **30x+ faster** when converting from Arrow to proto
 
 If performance is critical for your use case, ptars is the better choice.
 
@@ -104,6 +110,7 @@ We chose prost over alternatives like
 - **Performance**: prost is faster for both serialization and deserialization.
 - **Maintenance**: prost is actively maintained by the Tokio team, ensuring
   long-term support and compatibility with the Rust ecosystem.
-- **Dynamic Message Support**: prost-reflect provides runtime reflection
-  capabilities, allowing ptars to handle protobuf messages
-  without knowing the schema at compile time.
+- **Descriptor Support**: prost-reflect provides protobuf descriptors
+  at runtime, which ptars uses to build field decoders and encoders
+  that operate directly on wire format bytes without needing
+  the schema at compile time.

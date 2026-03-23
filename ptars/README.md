@@ -6,10 +6,15 @@
 
 Fast conversion between Protocol Buffers and Apache Arrow in Rust.
 
+ptars converts directly between the protobuf wire format and Arrow columnar arrays.
+No intermediate `DynamicMessage` objects are created.
+Serialized bytes are parsed straight into Arrow builders, and Arrow arrays are encoded directly to protobuf wire format.
+
 ## Features
 
-- Convert protobuf messages to Arrow `RecordBatch`
+- Convert serialized protobuf messages to Arrow `RecordBatch`
 - Convert Arrow `RecordBatch` back to serialized protobuf messages
+- Direct wire format encoding/decoding — no per-row object allocation
 - Support for nested messages, repeated fields, and maps
 - Special handling for well-known types:
   - `google.protobuf.Timestamp` → `timestamp[ns]`
@@ -53,11 +58,13 @@ let record_batch = messages_to_record_batch(&messages, &message_descriptor);
 If you have serialized protobuf messages in an Arrow `BinaryArray`:
 
 ```rust
-use ptars::binary_array_to_record_batch;
+use ptars::binary_array_to_record_batch_direct;
+use ptars::PtarsConfig;
 use arrow_array::BinaryArray;
 
 let binary_array: BinaryArray = /* your serialized messages */;
-let record_batch = binary_array_to_record_batch(&binary_array, &message_descriptor).unwrap();
+let config = PtarsConfig::default();
+let record_batch = binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config).unwrap();
 ```
 
 ### Converting Arrow back to Protobuf
