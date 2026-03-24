@@ -10,10 +10,16 @@ ptars is a high-performance library for converting Protocol Buffer messages
 to Apache Arrow format and back.
 It's implemented in Rust with Python bindings via PyO3.
 
+Ptars converts directly between the protobuf wire format and Arrow columnar arrays.
+No intermediate message objects (like `DynamicMessage`) are created.
+Serialized protobuf bytes are parsed straight into Arrow builders.
+And Arrow arrays are encoded directly to protobuf wire format, avoiding per-row object allocation entirely.
+
 ## Features
 
 - Convert serialized protobuf messages directly to `pyarrow.RecordBatch`
 - Convert `pyarrow.RecordBatch` back to serialized protobuf messages
+- Direct wire format encoding/decoding — no intermediate message objects
 - Support for nested messages, repeated fields, and maps
 - Configurable type mappings (timestamp precision, timezone, nullability)
 - High performance through Rust implementation
@@ -57,23 +63,24 @@ See the [Getting Started](getting-started.md) guide for more details.
 
 ptars is a Rust implementation of
 [protarrow](https://github.com/tradewelltech/protarrow),
-which is implemented in plain Python. Benchmarks show:
+which is implemented in plain Python.
+By encoding and decoding directly between protobuf wire format and Arrow arrays, ptars is:
 
-- **2.5x faster** when converting from proto to arrow
-- **3x faster** when converting from arrow to proto
+- **7x+ faster** when converting from proto to Arrow
+- **30x+ faster** when converting from Arrow to proto
 
 ```text
 ---- benchmark 'to_arrow': 2 tests ----
-Name (time in ms)        Mean
+Name (time in us)        Mean
 ---------------------------------------
-protarrow_to_arrow     9.4863 (2.63)
-ptars_to_arrow         3.6009 (1.0)
+ptars_to_arrow          659 (1.0)
+protarrow_to_arrow    5,037 (7.65)
 ---------------------------------------
 
 ---- benchmark 'to_proto': 2 tests -----
-Name (time in ms)         Mean
+Name (time in us)         Mean
 ----------------------------------------
-protarrow_to_proto     20.8297 (3.20)
-ptars_to_proto          6.5013 (1.0)
+ptars_to_proto           397 (1.0)
+protarrow_to_proto    12,534 (31.61)
 ----------------------------------------
 ```

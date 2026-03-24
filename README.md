@@ -36,7 +36,13 @@
 [Rust Crate](https://crates.io/crates/ptars) |
 [Rust Documentation](https://docs.rs/ptars)
 
-Fast convertion from Protocol Buffers to Arrow, and back, using Rust, with Python bindings.
+Fast conversion between Protocol Buffers and Apache Arrow, using Rust, with Python bindings.
+
+ptars converts directly between the protobuf wire format and Arrow columnar arrays.
+No intermediate message objects are created.
+Serialized protobuf bytes are parsed straight into Arrow builders.
+And Arrow arrays are encoded directly to protobuf wire format,
+skipping the overhead of `DynamicMessage` or any per-row object allocation.
 
 ## Example
 
@@ -106,27 +112,27 @@ pool = HandlerPool([SearchRequest.DESCRIPTOR.file], config=config)
 
 ## Benchmark against protarrow
 
-[Ptars](https://github.com/0x26res/ptars) is a rust implementation of
+[Ptars](https://github.com/0x26res/ptars) is a Rust implementation of
 [protarrow](https://github.com/tradewelltech/protarrow),
-which is implemented in plain python.
-It is:
+which is implemented in plain Python.
+By encoding and decoding directly between protobuf wire format and Arrow arrays, ptars is:
 
-- 2.5+ times faster when converting from proto to arrow.
-- 30+ times faster when converting from arrow to proto.
+- **7x+ faster** when converting from proto to Arrow.
+- **30x+ faster** when converting from Arrow to proto.
 
 ```benchmark
 ---- benchmark 'to_arrow': 2 tests ----
-Name (time in ms)        Mean
+Name (time in us)        Mean
 ---------------------------------------
-protarrow_to_arrow     5.0710 (2.90)
-ptars_to_arrow         1.7458 (1.0)
+ptars_to_arrow          659 (1.0)
+protarrow_to_arrow    5,037 (7.65)
 ---------------------------------------
 
 ---- benchmark 'to_proto': 2 tests -----
-Name (time in ms)         Mean
+Name (time in us)         Mean
 ----------------------------------------
-protarrow_to_proto     13.2916 (34.96)
-ptars_to_proto          0.3802 (1.0)
+ptars_to_proto           397 (1.0)
+protarrow_to_proto    12,534 (31.61)
 ----------------------------------------
 ```
 

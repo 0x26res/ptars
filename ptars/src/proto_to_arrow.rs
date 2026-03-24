@@ -1,1713 +1,130 @@
+use std::sync::Arc;
+
 use arrow::array::ArrayData;
-use arrow::array::MapArray;
 use arrow::buffer::Buffer;
+use arrow_array::builder::ArrayBuilder;
 use arrow_array::builder::{
-    ArrayBuilder, BinaryBuilder, LargeBinaryBuilder, LargeStringBuilder, StringBuilder,
+    BinaryBuilder, BooleanBuilder, LargeBinaryBuilder, LargeStringBuilder, PrimitiveBuilder,
+    StringBuilder,
 };
-use arrow_array::types::Date32Type;
-use arrow_array::{Array, LargeListArray, ListArray, RecordBatch, StructArray};
+use arrow_array::types::{
+    Date32Type, Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type,
+};
+use arrow_array::{Array, ArrowPrimitiveType, BinaryArray, MapArray, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field, TimeUnit};
 use chrono::Datelike;
-use prost_reflect::{
-    DynamicMessage, EnumDescriptor, FieldDescriptor, Kind, MessageDescriptor, Value,
-};
-use std::sync::Arc;
+
+use prost_reflect::{EnumDescriptor, FieldDescriptor, Kind, MessageDescriptor};
 
 use crate::config::{EnumRepr, PtarsConfig};
 
-enum StringBuilderInner {
-    Regular(StringBuilder),
-    Large(LargeStringBuilder),
+// ---------------------------------------------------------------------------
+// Wire format decoding primitives
+// ---------------------------------------------------------------------------
+
+#[allow(deprecated)]
+fn decode_error(msg: &str) -> prost::DecodeError {
+    prost::DecodeError::new(msg.to_string())
 }
 
-enum BinaryBuilderInner {
-    Regular(BinaryBuilder),
-    Large(LargeBinaryBuilder),
+fn decode_varint(buf: &[u8]) -> Result<(u64, usize), prost::DecodeError> {
+    let mut result: u64 = 0;
+    let mut shift = 0u32;
+    for (i, &byte) in buf.iter().enumerate() {
+        result |= ((byte & 0x7F) as u64) << shift;
+        if byte & 0x80 == 0 {
+            return Ok((result, i + 1));
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err(decode_error("varint too large"));
+        }
+    }
+    Err(decode_error("unexpected EOF in varint"))
 }
 
-/// Helper enum to handle both regular (i32) and large (i64) list offsets
-enum ListOffsets {
-    Regular(Vec<i32>),
-    Large(Vec<i64>),
+fn decode_tag(buf: &[u8]) -> Result<(u32, u8, usize), prost::DecodeError> {
+    let (key, n) = decode_varint(buf)?;
+    let wire_type = (key & 0x07) as u8;
+    let field_number = (key >> 3) as u32;
+    if field_number == 0 {
+        return Err(decode_error("invalid field number 0"));
+    }
+    Ok((field_number, wire_type, n))
 }
 
-impl ListOffsets {
-    fn new(use_large_list: bool) -> Self {
-        if use_large_list {
-            ListOffsets::Large(vec![0])
-        } else {
-            ListOffsets::Regular(vec![0])
+fn skip_field(wire_type: u8, buf: &[u8]) -> Result<usize, prost::DecodeError> {
+    match wire_type {
+        0 => {
+            let (_, n) = decode_varint(buf)?;
+            Ok(n)
         }
-    }
-
-    fn push(&mut self, value: usize) {
-        match self {
-            ListOffsets::Regular(v) => v.push(value as i32),
-            ListOffsets::Large(v) => v.push(value as i64),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            ListOffsets::Regular(v) => v.len(),
-            ListOffsets::Large(v) => v.len(),
-        }
-    }
-
-    fn finish(
-        self,
-        values: Arc<dyn Array>,
-        list_value_name: &str,
-        list_value_nullable: bool,
-    ) -> Arc<dyn Array> {
-        let field = Arc::new(Field::new(
-            list_value_name,
-            values.data_type().clone(),
-            list_value_nullable,
-        ));
-
-        match self {
-            ListOffsets::Regular(offsets) => {
-                let offsets_buffer = Buffer::from_vec(offsets);
-                let list_data_type = DataType::List(field);
-                let list_data = ArrayData::builder(list_data_type)
-                    .len(offsets_buffer.len() / 4 - 1)
-                    .add_buffer(offsets_buffer)
-                    .add_child_data(values.to_data())
-                    .build()
-                    .unwrap();
-                Arc::new(ListArray::from(list_data))
+        1 => {
+            if buf.len() < 8 {
+                return Err(decode_error("unexpected EOF"));
             }
-            ListOffsets::Large(offsets) => {
-                let offsets_buffer = Buffer::from_vec(offsets);
-                let list_data_type = DataType::LargeList(field);
-                let list_data = ArrayData::builder(list_data_type)
-                    .len(offsets_buffer.len() / 8 - 1)
-                    .add_buffer(offsets_buffer)
-                    .add_child_data(values.to_data())
-                    .build()
-                    .unwrap();
-                Arc::new(LargeListArray::from(list_data))
+            Ok(8)
+        }
+        2 => {
+            let (len, n) = decode_varint(buf)?;
+            let total = n + len as usize;
+            if buf.len() < total {
+                return Err(decode_error("unexpected EOF"));
             }
+            Ok(total)
         }
-    }
-}
-
-pub trait ProtoArrayBuilder {
-    fn append(&mut self, value: &Value);
-    fn append_null(&mut self);
-    /// Append the protobuf default value for this field type.
-    /// For primitives: 0, false, "", b""
-    /// For messages: null (messages don't have a non-null default)
-    /// For repeated: empty list
-    fn append_default(&mut self);
-    fn finish(&mut self) -> Arc<dyn Array>;
-    fn len(&self) -> usize;
-    fn is_empty(&self) -> bool;
-}
-
-pub static CE_OFFSET: i32 = 719163;
-
-use arrow_array::types::{Float32Type, Float64Type, Int32Type, Int64Type, UInt32Type, UInt64Type};
-
-pub fn get_message_array_builder(
-    message_descriptor: &MessageDescriptor,
-    config: &PtarsConfig,
-) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
-    match message_descriptor.full_name() {
-        "google.protobuf.Timestamp" => Ok(Box::new(TimestampArrayBuilder::new(
-            message_descriptor,
-            config.timestamp_tz.clone(),
-            config.timestamp_unit,
-        ))),
-        "google.type.Date" => Ok(Box::new(DateArrayBuilder::new(message_descriptor))),
-        "google.type.TimeOfDay" => Ok(Box::new(TimeOfDayArrayBuilder::new(
-            message_descriptor,
-            config.time_unit,
-        ))),
-        "google.protobuf.Duration" => Ok(Box::new(DurationArrayBuilder::new(
-            message_descriptor,
-            config.duration_unit,
-        ))),
-        // Wrapper types - stored as nullable primitives
-        "google.protobuf.DoubleValue" => Ok(Box::new(WrapperBuilderWrapper::<Float64Type>::new(
-            message_descriptor,
-            Value::as_f64,
-        ))),
-        "google.protobuf.FloatValue" => Ok(Box::new(WrapperBuilderWrapper::<Float32Type>::new(
-            message_descriptor,
-            Value::as_f32,
-        ))),
-        "google.protobuf.Int64Value" => Ok(Box::new(WrapperBuilderWrapper::<Int64Type>::new(
-            message_descriptor,
-            Value::as_i64,
-        ))),
-        "google.protobuf.UInt64Value" => Ok(Box::new(WrapperBuilderWrapper::<UInt64Type>::new(
-            message_descriptor,
-            Value::as_u64,
-        ))),
-        "google.protobuf.Int32Value" => Ok(Box::new(WrapperBuilderWrapper::<Int32Type>::new(
-            message_descriptor,
-            Value::as_i32,
-        ))),
-        "google.protobuf.UInt32Value" => Ok(Box::new(WrapperBuilderWrapper::<UInt32Type>::new(
-            message_descriptor,
-            Value::as_u32,
-        ))),
-        "google.protobuf.BoolValue" => {
-            Ok(Box::new(BoolWrapperBuilderWrapper::new(message_descriptor)))
-        }
-        "google.protobuf.StringValue" => Ok(Box::new(StringWrapperBuilderWrapper::new(
-            message_descriptor,
-            config,
-        ))),
-        "google.protobuf.BytesValue" => Ok(Box::new(BytesWrapperBuilderWrapper::new(
-            message_descriptor,
-            config,
-        ))),
-        _ => Ok(Box::new(MessageArrayBuilder::new(
-            message_descriptor,
-            config,
-        ))),
-    }
-}
-
-pub fn get_singular_array_builder(
-    field_descriptor: &FieldDescriptor,
-    config: &PtarsConfig,
-) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
-    match field_descriptor.kind() {
-        Kind::Double => Ok(Box::new(PrimitiveBuilderWrapper::<Float64Type>::new(
-            Value::as_f64,
-        ))),
-        Kind::Float => Ok(Box::new(PrimitiveBuilderWrapper::<Float32Type>::new(
-            Value::as_f32,
-        ))),
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(PrimitiveBuilderWrapper::<
-            Int32Type,
-        >::new(Value::as_i32))),
-        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(Box::new(PrimitiveBuilderWrapper::<
-            Int64Type,
-        >::new(Value::as_i64))),
-        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(PrimitiveBuilderWrapper::<UInt32Type>::new(
-            Value::as_u32,
-        ))),
-        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(PrimitiveBuilderWrapper::<UInt64Type>::new(
-            Value::as_u64,
-        ))),
-        Kind::Bool => Ok(Box::new(BooleanBuilderWrapper::new())),
-        Kind::Enum(enum_desc) => match config.enum_repr {
-            EnumRepr::Int32 => Ok(Box::new(PrimitiveBuilderWrapper::<Int32Type>::new(
-                Value::as_enum_number,
-            ))),
-            EnumRepr::String => Ok(Box::new(EnumStringBuilderWrapper::new(&enum_desc, config))),
-            EnumRepr::Binary => Ok(Box::new(EnumBinaryBuilderWrapper::new(&enum_desc, config))),
-        },
-        Kind::String => Ok(Box::new(StringBuilderWrapper::new(config))),
-        Kind::Bytes => Ok(Box::new(BinaryBuilderWrapper::new(config))),
-        Kind::Message(message_descriptor) => get_message_array_builder(&message_descriptor, config),
-    }
-}
-
-pub fn get_repeated_array_builder(
-    field_descriptor: &FieldDescriptor,
-    config: &PtarsConfig,
-) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
-    match field_descriptor.kind() {
-        Kind::Double => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Float64Type>::new(Value::as_f64, config),
-        )),
-        Kind::Float => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Float32Type>::new(Value::as_f32, config),
-        )),
-        Kind::Sfixed32 | Kind::Sint32 | Kind::Int32 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(Value::as_i32, config),
-        )),
-        Kind::Sfixed64 | Kind::Sint64 | Kind::Int64 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<Int64Type>::new(Value::as_i64, config),
-        )),
-        Kind::Fixed32 | Kind::Uint32 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<UInt32Type>::new(Value::as_u32, config),
-        )),
-        Kind::Fixed64 | Kind::Uint64 => Ok(Box::new(
-            RepeatedPrimitiveBuilderWrapper::<UInt64Type>::new(Value::as_u64, config),
-        )),
-        Kind::Bool => Ok(Box::new(RepeatedBooleanBuilderWrapper::new(config))),
-        Kind::Enum(enum_desc) => match config.enum_repr {
-            EnumRepr::Int32 => Ok(Box::new(RepeatedPrimitiveBuilderWrapper::<Int32Type>::new(
-                Value::as_enum_number,
-                config,
-            ))),
-            EnumRepr::String => Ok(Box::new(RepeatedEnumStringBuilderWrapper::new(
-                &enum_desc, config,
-            ))),
-            EnumRepr::Binary => Ok(Box::new(RepeatedEnumBinaryBuilderWrapper::new(
-                &enum_desc, config,
-            ))),
-        },
-        Kind::String => Ok(Box::new(RepeatedStringBuilderWrapper::new(config))),
-        Kind::Bytes => Ok(Box::new(RepeatedBinaryBuilderWrapper::new(config))),
-        Kind::Message(message_descriptor) => {
-            let message_builder = get_message_array_builder(&message_descriptor, config)?;
-            Ok(Box::new(RepeatedMessageBuilderWrapper::new(
-                message_builder,
-                config,
-            )))
-        }
-    }
-}
-
-pub fn get_array_builder(
-    field_descriptor: &FieldDescriptor,
-    config: &PtarsConfig,
-) -> Result<Box<dyn ProtoArrayBuilder>, &'static str> {
-    if field_descriptor.is_map() {
-        if let Kind::Message(message_descriptor) = field_descriptor.kind() {
-            Ok(Box::new(MapArrayBuilder::new(&message_descriptor, config)))
-        } else {
-            Err("map field is not a message")
-        }
-    } else if field_descriptor.is_list() {
-        get_repeated_array_builder(field_descriptor, config)
-    } else {
-        get_singular_array_builder(field_descriptor, config)
-    }
-}
-
-pub fn field_to_array(
-    field_descriptor: &FieldDescriptor,
-    messages: &[DynamicMessage],
-    config: &PtarsConfig,
-) -> Result<Arc<dyn Array>, &'static str> {
-    let mut builder = get_array_builder(field_descriptor, config)?;
-    for message in messages {
-        if field_descriptor.supports_presence() && !message.has_field(field_descriptor) {
-            builder.append_null();
-        } else {
-            builder.append(&message.get_field(field_descriptor));
-        }
-    }
-    Ok(builder.finish())
-}
-
-pub fn is_nullable(field: &FieldDescriptor) -> bool {
-    field.supports_presence()
-}
-
-/// Determine nullability for a field, taking config into account for lists and maps.
-fn is_nullable_with_config(field: &FieldDescriptor, config: &PtarsConfig) -> bool {
-    if field.is_list() {
-        config.list_nullable
-    } else if field.is_map() {
-        config.map_nullable
-    } else {
-        field.supports_presence()
-    }
-}
-
-pub fn field_to_tuple(
-    field: &FieldDescriptor,
-    messages: &[DynamicMessage],
-    config: &PtarsConfig,
-) -> Result<(Arc<Field>, Arc<dyn Array>), &'static str> {
-    let results = field_to_array(field, messages, config);
-    match results {
-        Ok(array) => Ok((
-            Arc::new(Field::new(
-                field.name(),
-                array.data_type().clone(),
-                is_nullable_with_config(field, config),
-            )),
-            array,
-        )),
-        Err(x) => Err(x),
-    }
-}
-
-pub fn fields_to_arrays(
-    messages: &[DynamicMessage],
-    message_descriptor: &MessageDescriptor,
-    config: &PtarsConfig,
-) -> Vec<(Arc<Field>, Arc<dyn Array>)> {
-    message_descriptor
-        .fields()
-        .map(|x| field_to_tuple(&x, messages, config).unwrap())
-        .collect()
-}
-
-use arrow_array::builder::BooleanBuilder;
-
-use arrow_array::builder::PrimitiveBuilder;
-use arrow_array::ArrowPrimitiveType;
-
-struct MapArrayBuilder {
-    key_builder: Box<dyn ProtoArrayBuilder>,
-    value_builder: Box<dyn ProtoArrayBuilder>,
-    key_field_descriptor: FieldDescriptor,
-    value_field_descriptor: FieldDescriptor,
-    offsets: Vec<i32>,
-    map_value_name: Arc<str>,
-    map_value_nullable: bool,
-}
-
-impl MapArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
-        let key_field_descriptor = message_descriptor.get_field_by_name("key").unwrap();
-        let value_field_descriptor = message_descriptor.get_field_by_name("value").unwrap();
-        let key_builder = get_singular_array_builder(&key_field_descriptor, config).unwrap();
-        let value_builder = get_singular_array_builder(&value_field_descriptor, config).unwrap();
-        Self {
-            key_builder,
-            value_builder,
-            key_field_descriptor,
-            value_field_descriptor,
-            offsets: vec![0],
-            map_value_name: config.map_value_name.clone(),
-            map_value_nullable: config.map_value_nullable,
-        }
-    }
-}
-
-impl ProtoArrayBuilder for MapArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        let entry_count = if let Some(map) = value.as_map() {
-            // Handle Value::Map (when map is set directly)
-            for (key, val) in map {
-                let key_value = match key {
-                    prost_reflect::MapKey::Bool(b) => Value::Bool(*b),
-                    prost_reflect::MapKey::I32(i) => Value::I32(*i),
-                    prost_reflect::MapKey::I64(i) => Value::I64(*i),
-                    prost_reflect::MapKey::U32(u) => Value::U32(*u),
-                    prost_reflect::MapKey::U64(u) => Value::U64(*u),
-                    prost_reflect::MapKey::String(s) => Value::String(s.clone()),
-                };
-                self.key_builder.append(&key_value);
-                self.value_builder.append(val);
+        5 => {
+            if buf.len() < 4 {
+                return Err(decode_error("unexpected EOF"));
             }
-            map.len() as i32
-        } else if let Some(values) = value.as_list() {
-            // Handle Value::List of entry messages (when map comes as repeated message entries)
-            for each_value in values {
-                let message = each_value.as_message().unwrap();
-                self.key_builder
-                    .append(&message.get_field(&self.key_field_descriptor));
-                self.value_builder
-                    .append(&message.get_field(&self.value_field_descriptor));
-            }
-            values.len() as i32
-        } else {
-            0
-        };
-        let last_offset = *self.offsets.last().unwrap();
-        self.offsets.push(last_offset + entry_count);
-    }
-
-    fn append_null(&mut self) {
-        let last_offset = *self.offsets.last().unwrap();
-        self.offsets.push(last_offset);
-    }
-
-    fn append_default(&mut self) {
-        // Default for map is empty map
-        let last_offset = *self.offsets.last().unwrap();
-        self.offsets.push(last_offset);
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let key_array = self.key_builder.finish();
-        let value_array = self.value_builder.finish();
-
-        let key_field = Arc::new(Field::new(
-            "key",
-            key_array.data_type().clone(),
-            false, // map keys are not nullable in protobuf
-        ));
-        let value_field = Arc::new(Field::new(
-            &*self.map_value_name,
-            value_array.data_type().clone(),
-            self.map_value_nullable,
-        ));
-
-        // Build the struct type explicitly to preserve field names
-        let entries_struct_type =
-            DataType::Struct(vec![key_field.as_ref().clone(), value_field.as_ref().clone()].into());
-
-        let entry_struct =
-            StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
-
-        let map_data_type = DataType::Map(
-            Arc::new(Field::new("entries", entries_struct_type, false)),
-            false,
-        );
-
-        let len = self.offsets.len() - 1;
-        let offsets_buffer = Buffer::from_vec(std::mem::take(&mut self.offsets));
-
-        let map_data = ArrayData::builder(map_data_type)
-            .len(len)
-            .add_buffer(offsets_buffer)
-            .add_child_data(entry_struct.into_data())
-            .build()
-            .unwrap();
-
-        Arc::new(MapArray::from(map_data))
-    }
-
-    fn len(&self) -> usize {
-        self.key_builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.key_builder.is_empty()
-    }
-}
-
-struct MessageArrayBuilder {
-    /// Cached field descriptors and their builders, avoiding repeated iteration
-    fields: Vec<(FieldDescriptor, Box<dyn ProtoArrayBuilder>)>,
-    is_valid: BooleanBuilder,
-    list_nullable: bool,
-    map_nullable: bool,
-}
-
-impl MessageArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
-        let fields: Vec<_> = message_descriptor
-            .fields()
-            .map(|field_descriptor| {
-                let builder = get_array_builder(&field_descriptor, config).unwrap();
-                (field_descriptor, builder)
-            })
-            .collect();
-
-        Self {
-            fields,
-            is_valid: BooleanBuilder::new(),
-            list_nullable: config.list_nullable,
-            map_nullable: config.map_nullable,
+            Ok(4)
         }
-    }
-
-    fn append(&mut self, message: &DynamicMessage) {
-        self.is_valid.append_value(true);
-        for (field_descriptor, builder) in &mut self.fields {
-            if field_descriptor.supports_presence() && !message.has_field(field_descriptor) {
-                builder.append_null();
-            } else {
-                builder.append(&message.get_field(field_descriptor));
-            }
-        }
-    }
-
-    fn build_struct_array(&mut self) -> StructArray {
-        let is_valid = std::mem::take(&mut self.is_valid).finish();
-        if self.fields.is_empty() {
-            return StructArray::new_empty_fields(
-                is_valid.len(),
-                Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
-            );
-        }
-
-        let (fields, columns): (Vec<_>, Vec<_>) = self
-            .fields
-            .iter_mut()
-            .map(|(field_descriptor, builder)| {
-                let array = builder.finish();
-                let nullable = if field_descriptor.is_list() {
-                    self.list_nullable
-                } else if field_descriptor.is_map() {
-                    self.map_nullable
-                } else {
-                    field_descriptor.supports_presence()
-                };
-                let field =
-                    Field::new(field_descriptor.name(), array.data_type().clone(), nullable);
-                (field, array)
-            })
-            .unzip();
-
-        StructArray::new(
-            arrow_schema::Fields::from(fields),
-            columns,
-            Some(arrow::buffer::NullBuffer::new(is_valid.values().clone())),
-        )
+        _ => Err(decode_error("unsupported wire type")),
     }
 }
 
-impl ProtoArrayBuilder for MessageArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            self.append(message);
-        } else {
-            self.append_null();
-        }
+/// Read a length-delimited field, returning (data_slice, bytes_consumed).
+fn read_length_delimited(buf: &[u8]) -> Result<(&[u8], usize), prost::DecodeError> {
+    let (len, n) = decode_varint(buf)?;
+    let len = len as usize;
+    let total = n + len;
+    if buf.len() < total {
+        return Err(decode_error("unexpected EOF"));
     }
-
-    fn append_null(&mut self) {
-        self.is_valid.append_value(false);
-        // Use append_default for child fields to be consistent with protobuf semantics:
-        // when a message is absent, its fields have their default values
-        for (_, builder) in &mut self.fields {
-            builder.append_default();
-        }
-    }
-
-    fn append_default(&mut self) {
-        // Default for message is null (absent)
-        self.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(self.build_struct_array())
-    }
-
-    fn len(&self) -> usize {
-        self.is_valid.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.is_valid.is_empty()
-    }
+    Ok((&buf[n..total], total))
 }
 
-struct PrimitiveBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    builder: PrimitiveBuilder<T>,
-    extractor: fn(&Value) -> Option<T::Native>,
+#[inline]
+fn decode_zigzag32(v: u64) -> i32 {
+    let v = v as u32;
+    ((v >> 1) as i32) ^ (-((v & 1) as i32))
 }
 
-impl<T> PrimitiveBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    fn new(extractor: fn(&Value) -> Option<T::Native>) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<T>::new(),
-            extractor,
-        }
-    }
+#[inline]
+fn decode_zigzag64(v: u64) -> i64 {
+    ((v >> 1) as i64) ^ (-((v & 1) as i64))
 }
 
-impl<T> ProtoArrayBuilder for PrimitiveBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-    T::Native: Default,
-{
-    fn append(&mut self, value: &Value) {
-        let v = (self.extractor)(value).unwrap();
-        self.builder.append_value(v);
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        self.builder.append_value(T::Native::default());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct RepeatedPrimitiveBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    builder: PrimitiveBuilder<T>,
-    offsets: ListOffsets,
-    extractor: fn(&Value) -> Option<T::Native>,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-}
-
-impl<T> RepeatedPrimitiveBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    fn new(extractor: fn(&Value) -> Option<T::Native>, config: &PtarsConfig) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<T>::new(),
-            offsets: ListOffsets::new(config.use_large_list),
-            extractor,
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-        }
-    }
-}
-
-impl<T> ProtoArrayBuilder for RepeatedPrimitiveBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                self.builder
-                    .append_value((self.extractor)(each_value).unwrap());
-            }
-        }
-        self.offsets.push(self.builder.len());
-    }
-
-    fn append_null(&mut self) {
-        // For repeated fields, a null value is an empty list.
-        self.offsets.push(self.builder.len());
-    }
-
-    fn append_default(&mut self) {
-        // Default for repeated field is empty list
-        self.offsets.push(self.builder.len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values = Arc::new(std::mem::take(&mut self.builder).finish());
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
-    }
-}
-
-struct RepeatedMessageBuilderWrapper {
-    builder: Box<dyn ProtoArrayBuilder>,
-    offsets: ListOffsets,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-}
-
-impl RepeatedMessageBuilderWrapper {
-    fn new(builder: Box<dyn ProtoArrayBuilder>, config: &PtarsConfig) -> Self {
-        Self {
-            builder,
-            offsets: ListOffsets::new(config.use_large_list),
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-        }
-    }
-}
-
-impl ProtoArrayBuilder for RepeatedMessageBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                self.builder.append(each_value);
-            }
-        }
-        self.offsets.push(self.builder.len());
-    }
-
-    fn append_null(&mut self) {
-        self.offsets.push(self.builder.len());
-    }
-
-    fn append_default(&mut self) {
-        // Default for repeated field is empty list
-        self.offsets.push(self.builder.len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values = self.builder.finish();
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
-    }
-}
-
-struct RepeatedBooleanBuilderWrapper {
-    builder: BooleanBuilder,
-    offsets: ListOffsets,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-}
-
-impl RepeatedBooleanBuilderWrapper {
-    fn new(config: &PtarsConfig) -> Self {
-        Self {
-            builder: BooleanBuilder::new(),
-            offsets: ListOffsets::new(config.use_large_list),
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-        }
-    }
-}
-
-impl ProtoArrayBuilder for RepeatedBooleanBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                self.builder.append_value(each_value.as_bool().unwrap());
-            }
-        }
-        self.offsets.push(self.builder.len());
-    }
-
-    fn append_null(&mut self) {
-        self.offsets.push(self.builder.len());
-    }
-
-    fn append_default(&mut self) {
-        // Default for repeated field is empty list
-        self.offsets.push(self.builder.len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values = Arc::new(std::mem::take(&mut self.builder).finish());
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
-    }
-}
-
-struct RepeatedBinaryBuilderWrapper {
-    builder: BinaryBuilderInner,
-    offsets: ListOffsets,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-}
-
-impl RepeatedBinaryBuilderWrapper {
-    fn new(config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_binary {
-            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
-        } else {
-            BinaryBuilderInner::Regular(BinaryBuilder::new())
-        };
-        Self {
-            builder,
-            offsets: ListOffsets::new(config.use_large_list),
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-        }
-    }
-
-    fn builder_len(&self) -> usize {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for RepeatedBinaryBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                match &mut self.builder {
-                    BinaryBuilderInner::Regular(b) => {
-                        b.append_value(each_value.as_bytes().unwrap())
-                    }
-                    BinaryBuilderInner::Large(b) => b.append_value(each_value.as_bytes().unwrap()),
-                }
-            }
-        }
-        self.offsets.push(self.builder_len());
-    }
-
-    fn append_null(&mut self) {
-        self.offsets.push(self.builder_len());
-    }
-
-    fn append_default(&mut self) {
-        // Default for repeated field is empty list
-        self.offsets.push(self.builder_len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values: Arc<dyn Array> = match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        };
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
-    }
-}
-
-struct RepeatedStringBuilderWrapper {
-    builder: StringBuilderInner,
-    offsets: ListOffsets,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-}
-
-impl RepeatedStringBuilderWrapper {
-    fn new(config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_string {
-            StringBuilderInner::Large(LargeStringBuilder::new())
-        } else {
-            StringBuilderInner::Regular(StringBuilder::new())
-        };
-        Self {
-            builder,
-            offsets: ListOffsets::new(config.use_large_list),
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-        }
-    }
-
-    fn builder_len(&self) -> usize {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for RepeatedStringBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                match &mut self.builder {
-                    StringBuilderInner::Regular(b) => b.append_value(each_value.as_str().unwrap()),
-                    StringBuilderInner::Large(b) => b.append_value(each_value.as_str().unwrap()),
-                }
-            }
-        }
-        self.offsets.push(self.builder_len());
-    }
-
-    fn append_null(&mut self) {
-        self.offsets.push(self.builder_len());
-    }
-
-    fn append_default(&mut self) {
-        // Default for repeated field is empty list
-        self.offsets.push(self.builder_len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values: Arc<dyn Array> = match &mut self.builder {
-            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        };
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
-    }
-}
-
-struct BooleanBuilderWrapper {
-    builder: BooleanBuilder,
-}
-
-impl BooleanBuilderWrapper {
-    fn new() -> Self {
-        Self {
-            builder: BooleanBuilder::new(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for BooleanBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        self.builder.append_value(value.as_bool().unwrap());
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        self.builder.append_value(false);
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct TimestampArrayBuilder {
-    builder: PrimitiveBuilder<Int64Type>,
-    seconds_descriptor: FieldDescriptor,
-    nanos_descriptor: FieldDescriptor,
-    timezone: Option<Arc<str>>,
-    time_unit: TimeUnit,
-}
-
-impl TimestampArrayBuilder {
-    fn new(
-        message_descriptor: &MessageDescriptor,
-        timezone: Option<Arc<str>>,
-        time_unit: TimeUnit,
-    ) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<Int64Type>::new(),
-            seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
-            nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
-            timezone,
-            time_unit,
-        }
-    }
-
-    fn convert_to_unit(&self, seconds: i64, nanos: i32) -> i64 {
-        convert_seconds_nanos_to_unit(seconds, nanos, self.time_unit, "Timestamp")
-    }
-}
-
-/// Convert seconds and nanos to a value in the specified time unit with overflow checking.
-/// Panics if the conversion would overflow i64.
 fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit, type_name: &str) -> i64 {
     match unit {
         TimeUnit::Second => seconds,
-        TimeUnit::Millisecond => {
-            let scaled = seconds.checked_mul(1_000).unwrap_or_else(|| {
-                panic!(
-                    "{type_name} overflow: {seconds} seconds cannot be represented in milliseconds"
-                )
-            });
-            scaled
-                .checked_add(i64::from(nanos) / 1_000_000)
-                .unwrap_or_else(|| {
-                    panic!("{type_name} overflow: value cannot be represented in milliseconds")
-                })
-        }
-        TimeUnit::Microsecond => {
-            let scaled = seconds.checked_mul(1_000_000).unwrap_or_else(|| {
-                panic!(
-                    "{type_name} overflow: {seconds} seconds cannot be represented in microseconds"
-                )
-            });
-            scaled
-                .checked_add(i64::from(nanos) / 1_000)
-                .unwrap_or_else(|| {
-                    panic!("{type_name} overflow: value cannot be represented in microseconds")
-                })
-        }
-        TimeUnit::Nanosecond => {
-            let scaled = seconds.checked_mul(1_000_000_000).unwrap_or_else(|| {
-                panic!(
-                    "{type_name} overflow: {seconds} seconds cannot be represented in nanoseconds"
-                )
-            });
-            scaled.checked_add(i64::from(nanos)).unwrap_or_else(|| {
-                panic!("{type_name} overflow: value cannot be represented in nanoseconds")
-            })
-        }
+        TimeUnit::Millisecond => seconds
+            .checked_mul(1_000)
+            .and_then(|s| s.checked_add(i64::from(nanos) / 1_000_000))
+            .unwrap_or_else(|| panic!("{type_name} overflow")),
+        TimeUnit::Microsecond => seconds
+            .checked_mul(1_000_000)
+            .and_then(|s| s.checked_add(i64::from(nanos) / 1_000))
+            .unwrap_or_else(|| panic!("{type_name} overflow")),
+        TimeUnit::Nanosecond => seconds
+            .checked_mul(1_000_000_000)
+            .and_then(|s| s.checked_add(i64::from(nanos)))
+            .unwrap_or_else(|| panic!("{type_name} overflow")),
     }
 }
 
-impl ProtoArrayBuilder for TimestampArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let seconds = message
-                .get_field(&self.seconds_descriptor)
-                .as_i64()
-                .unwrap();
-            let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap();
-            self.builder
-                .append_value(self.convert_to_unit(seconds, nanos));
-        } else {
-            self.append_null();
-        }
-    }
+static CE_OFFSET: i32 = 719163;
 
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        // Timestamp is a message type, default is null
-        self.builder.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
-        let data_type = DataType::Timestamp(self.time_unit, self.timezone.clone());
-
-        let array_data = ArrayData::builder(data_type)
-            .len(values.len())
-            .add_buffer(values.values().inner().clone())
-            .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
-            .build()
-            .unwrap();
-
-        arrow_array::make_array(array_data)
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct DateArrayBuilder {
-    builder: PrimitiveBuilder<Date32Type>,
-    year_descriptor: FieldDescriptor,
-    month_descriptor: FieldDescriptor,
-    day_descriptor: FieldDescriptor,
-}
-
-impl DateArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<Date32Type>::new(),
-            year_descriptor: message_descriptor.get_field_by_name("year").unwrap(),
-            month_descriptor: message_descriptor.get_field_by_name("month").unwrap(),
-            day_descriptor: message_descriptor.get_field_by_name("day").unwrap(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for DateArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let year = message.get_field(&self.year_descriptor).as_i32().unwrap();
-            let month = message.get_field(&self.month_descriptor).as_i32().unwrap();
-            let day = message.get_field(&self.day_descriptor).as_i32().unwrap();
-
-            if year == 0 && month == 0 && day == 0 {
-                self.builder.append_value(0);
-            } else {
-                self.builder.append_value(
-                    chrono::NaiveDate::from_ymd_opt(year, month as u32, day as u32)
-                        .unwrap()
-                        .num_days_from_ce()
-                        - CE_OFFSET,
-                );
-            }
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        // Date is a message type, default is null
-        self.builder.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct TimeOfDayArrayBuilder {
-    builder: PrimitiveBuilder<Int64Type>,
-    hours_descriptor: FieldDescriptor,
-    minutes_descriptor: FieldDescriptor,
-    seconds_descriptor: FieldDescriptor,
-    nanos_descriptor: FieldDescriptor,
-    time_unit: TimeUnit,
-}
-
-impl TimeOfDayArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor, time_unit: TimeUnit) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<Int64Type>::new(),
-            hours_descriptor: message_descriptor.get_field_by_name("hours").unwrap(),
-            minutes_descriptor: message_descriptor.get_field_by_name("minutes").unwrap(),
-            seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
-            nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
-            time_unit,
-        }
-    }
-
-    fn convert_to_unit(&self, hours: i64, minutes: i64, seconds: i64, nanos: i64) -> i64 {
-        // TimeOfDay is bounded (max 23:59:59.999999999), so total_seconds <= 86399
-        // which fits easily in i64 for all time units. Still use checked arithmetic
-        // for consistency and to catch any malformed input.
-        let total_seconds = hours * 3600 + minutes * 60 + seconds;
-        convert_seconds_nanos_to_unit(total_seconds, nanos as i32, self.time_unit, "TimeOfDay")
-    }
-}
-
-impl ProtoArrayBuilder for TimeOfDayArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let hours = message.get_field(&self.hours_descriptor).as_i32().unwrap() as i64;
-            let minutes = message
-                .get_field(&self.minutes_descriptor)
-                .as_i32()
-                .unwrap() as i64;
-            let seconds = message
-                .get_field(&self.seconds_descriptor)
-                .as_i32()
-                .unwrap() as i64;
-            let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap() as i64;
-
-            self.builder
-                .append_value(self.convert_to_unit(hours, minutes, seconds, nanos));
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        // TimeOfDay is a message type, default is null
-        self.builder.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
-
-        // Time32 for Second/Millisecond, Time64 for Microsecond/Nanosecond
-        let data_type = match self.time_unit {
-            TimeUnit::Second => DataType::Time32(TimeUnit::Second),
-            TimeUnit::Millisecond => DataType::Time32(TimeUnit::Millisecond),
-            TimeUnit::Microsecond => DataType::Time64(TimeUnit::Microsecond),
-            TimeUnit::Nanosecond => DataType::Time64(TimeUnit::Nanosecond),
-        };
-
-        // For Time32, we need to cast from i64 to i32
-        // Time of day values should always fit in i32:
-        // - Seconds: max 86400 (24*60*60)
-        // - Milliseconds: max 86400000 (24*60*60*1000)
-        // Both fit well within i32::MAX (2147483647)
-        if matches!(self.time_unit, TimeUnit::Second | TimeUnit::Millisecond) {
-            let i32_values: Vec<Option<i32>> = (0..values.len())
-                .map(|i| {
-                    if values.is_null(i) {
-                        None
-                    } else {
-                        let val = values.value(i);
-                        // Use try_from to safely convert, clamping out-of-range values
-                        // Valid time-of-day values will always fit, but malformed proto
-                        // inputs might not
-                        Some(i32::try_from(val).unwrap_or(if val > 0 {
-                            i32::MAX
-                        } else {
-                            i32::MIN
-                        }))
-                    }
-                })
-                .collect();
-            let i32_array = arrow_array::Int32Array::from(i32_values);
-
-            let array_data = ArrayData::builder(data_type)
-                .len(i32_array.len())
-                .add_buffer(i32_array.values().inner().clone())
-                .null_bit_buffer(i32_array.nulls().map(|n| n.buffer().clone()))
-                .build()
-                .unwrap();
-
-            arrow_array::make_array(array_data)
-        } else {
-            let array_data = ArrayData::builder(data_type)
-                .len(values.len())
-                .add_buffer(values.values().inner().clone())
-                .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
-                .build()
-                .unwrap();
-
-            arrow_array::make_array(array_data)
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct DurationArrayBuilder {
-    builder: PrimitiveBuilder<Int64Type>,
-    seconds_descriptor: FieldDescriptor,
-    nanos_descriptor: FieldDescriptor,
-    time_unit: TimeUnit,
-}
-
-impl DurationArrayBuilder {
-    fn new(message_descriptor: &MessageDescriptor, time_unit: TimeUnit) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<Int64Type>::new(),
-            seconds_descriptor: message_descriptor.get_field_by_name("seconds").unwrap(),
-            nanos_descriptor: message_descriptor.get_field_by_name("nanos").unwrap(),
-            time_unit,
-        }
-    }
-
-    fn convert_to_unit(&self, seconds: i64, nanos: i32) -> i64 {
-        convert_seconds_nanos_to_unit(seconds, nanos, self.time_unit, "Duration")
-    }
-}
-
-impl ProtoArrayBuilder for DurationArrayBuilder {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let seconds = message
-                .get_field(&self.seconds_descriptor)
-                .as_i64()
-                .unwrap();
-            let nanos = message.get_field(&self.nanos_descriptor).as_i32().unwrap();
-            self.builder
-                .append_value(self.convert_to_unit(seconds, nanos));
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        // Duration is a message type, default is null
-        self.builder.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values = std::mem::take(&mut self.builder).finish();
-        let data_type = DataType::Duration(self.time_unit);
-
-        let array_data = ArrayData::builder(data_type)
-            .len(values.len())
-            .add_buffer(values.values().inner().clone())
-            .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
-            .build()
-            .unwrap();
-
-        arrow_array::make_array(array_data)
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-// Wrapper type builders for google.protobuf wrapper types (DoubleValue, Int32Value, etc.)
-
-struct WrapperBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    builder: PrimitiveBuilder<T>,
-    value_descriptor: FieldDescriptor,
-    extractor: fn(&Value) -> Option<T::Native>,
-}
-
-impl<T> WrapperBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    fn new(
-        message_descriptor: &MessageDescriptor,
-        extractor: fn(&Value) -> Option<T::Native>,
-    ) -> Self {
-        Self {
-            builder: PrimitiveBuilder::<T>::new(),
-            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
-            extractor,
-        }
-    }
-}
-
-impl<T> ProtoArrayBuilder for WrapperBuilderWrapper<T>
-where
-    T: ArrowPrimitiveType,
-{
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let v = message.get_field(&self.value_descriptor);
-            self.builder.append_value((self.extractor)(&v).unwrap());
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        // Wrapper types are message types, default is null
-        self.builder.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct BoolWrapperBuilderWrapper {
-    builder: BooleanBuilder,
-    value_descriptor: FieldDescriptor,
-}
-
-impl BoolWrapperBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor) -> Self {
-        Self {
-            builder: BooleanBuilder::new(),
-            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for BoolWrapperBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let v = message.get_field(&self.value_descriptor);
-            self.builder.append_value(v.as_bool().unwrap());
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
-
-    fn append_default(&mut self) {
-        // Wrapper types are message types, default is null
-        self.builder.append_null();
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        Arc::new(std::mem::take(&mut self.builder).finish())
-    }
-
-    fn len(&self) -> usize {
-        self.builder.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.builder.is_empty()
-    }
-}
-
-struct StringWrapperBuilderWrapper {
-    builder: StringBuilderInner,
-    value_descriptor: FieldDescriptor,
-}
-
-impl StringWrapperBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_string {
-            StringBuilderInner::Large(LargeStringBuilder::new())
-        } else {
-            StringBuilderInner::Regular(StringBuilder::new())
-        };
-        Self {
-            builder,
-            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for StringWrapperBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let v = message.get_field(&self.value_descriptor);
-            match &mut self.builder {
-                StringBuilderInner::Regular(b) => b.append_value(v.as_str().unwrap()),
-                StringBuilderInner::Large(b) => b.append_value(v.as_str().unwrap()),
-            }
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_null(),
-            StringBuilderInner::Large(b) => b.append_null(),
-        }
-    }
-
-    fn append_default(&mut self) {
-        // Wrapper types are message types, default is null
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_null(),
-            StringBuilderInner::Large(b) => b.append_null(),
-        }
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.is_empty(),
-            StringBuilderInner::Large(b) => b.is_empty(),
-        }
-    }
-}
-
-struct BytesWrapperBuilderWrapper {
-    builder: BinaryBuilderInner,
-    value_descriptor: FieldDescriptor,
-}
-
-impl BytesWrapperBuilderWrapper {
-    fn new(message_descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_binary {
-            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
-        } else {
-            BinaryBuilderInner::Regular(BinaryBuilder::new())
-        };
-        Self {
-            builder,
-            value_descriptor: message_descriptor.get_field_by_name("value").unwrap(),
-        }
-    }
-}
-
-impl ProtoArrayBuilder for BytesWrapperBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(message) = value.as_message() {
-            let v = message.get_field(&self.value_descriptor);
-            match &mut self.builder {
-                BinaryBuilderInner::Regular(b) => b.append_value(v.as_bytes().unwrap()),
-                BinaryBuilderInner::Large(b) => b.append_value(v.as_bytes().unwrap()),
-            }
-        } else {
-            self.append_null();
-        }
-    }
-
-    fn append_null(&mut self) {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_null(),
-            BinaryBuilderInner::Large(b) => b.append_null(),
-        }
-    }
-
-    fn append_default(&mut self) {
-        // Wrapper types are message types, default is null
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_null(),
-            BinaryBuilderInner::Large(b) => b.append_null(),
-        }
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.is_empty(),
-            BinaryBuilderInner::Large(b) => b.is_empty(),
-        }
-    }
-}
-
-struct StringBuilderWrapper {
-    builder: StringBuilderInner,
-}
-
-impl StringBuilderWrapper {
-    fn new(config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_string {
-            StringBuilderInner::Large(LargeStringBuilder::new())
-        } else {
-            StringBuilderInner::Regular(StringBuilder::new())
-        };
-        Self { builder }
-    }
-}
-
-impl ProtoArrayBuilder for StringBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_value(value.as_str().unwrap()),
-            StringBuilderInner::Large(b) => b.append_value(value.as_str().unwrap()),
-        }
-    }
-
-    fn append_null(&mut self) {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_null(),
-            StringBuilderInner::Large(b) => b.append_null(),
-        }
-    }
-
-    fn append_default(&mut self) {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_value(""),
-            StringBuilderInner::Large(b) => b.append_value(""),
-        }
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.is_empty(),
-            StringBuilderInner::Large(b) => b.is_empty(),
-        }
-    }
-}
-
-struct BinaryBuilderWrapper {
-    builder: BinaryBuilderInner,
-}
-
-impl BinaryBuilderWrapper {
-    fn new(config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_binary {
-            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
-        } else {
-            BinaryBuilderInner::Regular(BinaryBuilder::new())
-        };
-        Self { builder }
-    }
-}
-
-impl ProtoArrayBuilder for BinaryBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_value(value.as_bytes().unwrap()),
-            BinaryBuilderInner::Large(b) => b.append_value(value.as_bytes().unwrap()),
-        }
-    }
-
-    fn append_null(&mut self) {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_null(),
-            BinaryBuilderInner::Large(b) => b.append_null(),
-        }
-    }
-
-    fn append_default(&mut self) {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_value(b""),
-            BinaryBuilderInner::Large(b) => b.append_value(b""),
-        }
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.is_empty(),
-            BinaryBuilderInner::Large(b) => b.is_empty(),
-        }
-    }
-}
-
-/// Get the enum value name for a given number, falling back to the number as a string.
 fn enum_name(enum_descriptor: &EnumDescriptor, number: i32) -> String {
     match enum_descriptor.get_value(number) {
         Some(v) => v.name().to_string(),
@@ -1715,532 +132,3579 @@ fn enum_name(enum_descriptor: &EnumDescriptor, number: i32) -> String {
     }
 }
 
-/// Get the default enum name (value 0).
-fn enum_default_name(enum_descriptor: &EnumDescriptor) -> String {
-    enum_name(enum_descriptor, 0)
+// ---------------------------------------------------------------------------
+// String/Binary builder inner enums
+// ---------------------------------------------------------------------------
+
+enum StringBuilderInner {
+    Regular(StringBuilder),
+    Large(LargeStringBuilder),
 }
 
-struct EnumStringBuilderWrapper {
-    builder: StringBuilderInner,
-    enum_descriptor: EnumDescriptor,
-}
-
-impl EnumStringBuilderWrapper {
-    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_string {
-            StringBuilderInner::Large(LargeStringBuilder::new())
+impl StringBuilderInner {
+    fn new(use_large: bool) -> Self {
+        if use_large {
+            Self::Large(LargeStringBuilder::new())
         } else {
-            StringBuilderInner::Regular(StringBuilder::new())
-        };
-        Self {
-            builder,
-            enum_descriptor: enum_descriptor.clone(),
+            Self::Regular(StringBuilder::new())
         }
     }
-}
-
-impl ProtoArrayBuilder for EnumStringBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        let name = enum_name(&self.enum_descriptor, value.as_enum_number().unwrap());
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_value(&name),
-            StringBuilderInner::Large(b) => b.append_value(&name),
+    fn append_value(&mut self, v: &str) {
+        match self {
+            Self::Regular(b) => b.append_value(v),
+            Self::Large(b) => b.append_value(v),
         }
     }
-
     fn append_null(&mut self) {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_null(),
-            StringBuilderInner::Large(b) => b.append_null(),
+        match self {
+            Self::Regular(b) => b.append_null(),
+            Self::Large(b) => b.append_null(),
         }
     }
-
     fn append_default(&mut self) {
-        let name = enum_default_name(&self.enum_descriptor);
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => b.append_value(&name),
-            StringBuilderInner::Large(b) => b.append_value(&name),
-        }
+        self.append_value("");
     }
-
     fn finish(&mut self) -> Arc<dyn Array> {
-        match &mut self.builder {
-            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        match self {
+            Self::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            Self::Large(b) => Arc::new(std::mem::take(b).finish()),
         }
     }
-
     fn len(&self) -> usize {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.is_empty(),
-            StringBuilderInner::Large(b) => b.is_empty(),
+        match self {
+            Self::Regular(b) => ArrayBuilder::len(b),
+            Self::Large(b) => ArrayBuilder::len(b),
         }
     }
 }
 
-struct EnumBinaryBuilderWrapper {
-    builder: BinaryBuilderInner,
-    enum_descriptor: EnumDescriptor,
+enum BinaryBuilderInner {
+    Regular(BinaryBuilder),
+    Large(LargeBinaryBuilder),
 }
 
-impl EnumBinaryBuilderWrapper {
-    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_binary {
-            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+impl BinaryBuilderInner {
+    fn new(use_large: bool) -> Self {
+        if use_large {
+            Self::Large(LargeBinaryBuilder::new())
         } else {
-            BinaryBuilderInner::Regular(BinaryBuilder::new())
-        };
-        Self {
-            builder,
-            enum_descriptor: enum_descriptor.clone(),
+            Self::Regular(BinaryBuilder::new())
         }
     }
-}
-
-impl ProtoArrayBuilder for EnumBinaryBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        let name = enum_name(&self.enum_descriptor, value.as_enum_number().unwrap());
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_value(name.as_bytes()),
-            BinaryBuilderInner::Large(b) => b.append_value(name.as_bytes()),
+    fn append_value(&mut self, v: &[u8]) {
+        match self {
+            Self::Regular(b) => b.append_value(v),
+            Self::Large(b) => b.append_value(v),
         }
     }
-
     fn append_null(&mut self) {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_null(),
-            BinaryBuilderInner::Large(b) => b.append_null(),
+        match self {
+            Self::Regular(b) => b.append_null(),
+            Self::Large(b) => b.append_null(),
         }
     }
-
     fn append_default(&mut self) {
-        let name = enum_default_name(&self.enum_descriptor);
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => b.append_value(name.as_bytes()),
-            BinaryBuilderInner::Large(b) => b.append_value(name.as_bytes()),
-        }
+        self.append_value(b"");
     }
-
     fn finish(&mut self) -> Arc<dyn Array> {
-        match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+        match self {
+            Self::Regular(b) => Arc::new(std::mem::take(b).finish()),
+            Self::Large(b) => Arc::new(std::mem::take(b).finish()),
         }
     }
-
     fn len(&self) -> usize {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.is_empty(),
-            BinaryBuilderInner::Large(b) => b.is_empty(),
+        match self {
+            Self::Regular(b) => ArrayBuilder::len(b),
+            Self::Large(b) => ArrayBuilder::len(b),
         }
     }
 }
 
-struct RepeatedEnumStringBuilderWrapper {
-    builder: StringBuilderInner,
-    offsets: ListOffsets,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-    enum_descriptor: EnumDescriptor,
+// ---------------------------------------------------------------------------
+// ListOffsets
+// ---------------------------------------------------------------------------
+
+enum ListOffsets {
+    Regular(Vec<i32>),
+    Large(Vec<i64>),
 }
 
-impl RepeatedEnumStringBuilderWrapper {
-    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_string {
-            StringBuilderInner::Large(LargeStringBuilder::new())
+impl ListOffsets {
+    fn new(use_large: bool) -> Self {
+        if use_large {
+            Self::Large(vec![0])
         } else {
-            StringBuilderInner::Regular(StringBuilder::new())
-        };
-        Self {
-            builder,
-            offsets: ListOffsets::new(config.use_large_list),
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-            enum_descriptor: enum_descriptor.clone(),
+            Self::Regular(vec![0])
         }
     }
-
-    fn builder_len(&self) -> usize {
-        match &self.builder {
-            StringBuilderInner::Regular(b) => b.len(),
-            StringBuilderInner::Large(b) => b.len(),
+    fn push(&mut self, value: usize) {
+        match self {
+            Self::Regular(v) => v.push(value as i32),
+            Self::Large(v) => v.push(value as i64),
         }
     }
-}
-
-impl ProtoArrayBuilder for RepeatedEnumStringBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                let name = enum_name(&self.enum_descriptor, each_value.as_enum_number().unwrap());
-                match &mut self.builder {
-                    StringBuilderInner::Regular(b) => b.append_value(&name),
-                    StringBuilderInner::Large(b) => b.append_value(&name),
-                }
+    fn finish(self, values: Arc<dyn Array>, name: &str, nullable: bool) -> Arc<dyn Array> {
+        let field = Arc::new(Field::new(name, values.data_type().clone(), nullable));
+        match self {
+            Self::Regular(offsets) => {
+                let buf = Buffer::from_vec(offsets);
+                let data = ArrayData::builder(DataType::List(field))
+                    .len(buf.len() / 4 - 1)
+                    .add_buffer(buf)
+                    .add_child_data(values.to_data())
+                    .build()
+                    .unwrap();
+                Arc::new(arrow_array::ListArray::from(data))
+            }
+            Self::Large(offsets) => {
+                let buf = Buffer::from_vec(offsets);
+                let data = ArrayData::builder(DataType::LargeList(field))
+                    .len(buf.len() / 8 - 1)
+                    .add_buffer(buf)
+                    .add_child_data(values.to_data())
+                    .build()
+                    .unwrap();
+                Arc::new(arrow_array::LargeListArray::from(data))
             }
         }
-        self.offsets.push(self.builder_len());
-    }
-
-    fn append_null(&mut self) {
-        self.offsets.push(self.builder_len());
-    }
-
-    fn append_default(&mut self) {
-        self.offsets.push(self.builder_len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values: Arc<dyn Array> = match &mut self.builder {
-            StringBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            StringBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
-        };
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
     }
 }
 
-struct RepeatedEnumBinaryBuilderWrapper {
-    builder: BinaryBuilderInner,
-    offsets: ListOffsets,
-    list_value_name: Arc<str>,
-    list_value_nullable: bool,
-    enum_descriptor: EnumDescriptor,
+// ---------------------------------------------------------------------------
+// FieldDecoder enum — all types
+// ---------------------------------------------------------------------------
+
+enum FieldDecoder {
+    // --- Singular scalars (buffered) ---
+    Int32 {
+        value: i32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int32Type>,
+    },
+    Int64 {
+        value: i64,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+    },
+    UInt32 {
+        value: u32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<UInt32Type>,
+    },
+    UInt64 {
+        value: u64,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<UInt64Type>,
+    },
+    Sint32 {
+        value: i32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int32Type>,
+    },
+    Sint64 {
+        value: i64,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+    },
+    Sfixed32 {
+        value: i32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int32Type>,
+    },
+    Sfixed64 {
+        value: i64,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+    },
+    Fixed32 {
+        value: u32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<UInt32Type>,
+    },
+    Fixed64 {
+        value: u64,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<UInt64Type>,
+    },
+    Float {
+        value: f32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Float32Type>,
+    },
+    Double {
+        value: f64,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Float64Type>,
+    },
+    Bool {
+        value: bool,
+        has_value: bool,
+        has_presence: bool,
+        builder: BooleanBuilder,
+    },
+    String {
+        value: Vec<u8>,
+        has_value: bool,
+        has_presence: bool,
+        builder: StringBuilderInner,
+    },
+    Bytes {
+        value: Vec<u8>,
+        has_value: bool,
+        has_presence: bool,
+        builder: BinaryBuilderInner,
+    },
+    EnumInt32 {
+        value: i32,
+        has_value: bool,
+        has_presence: bool,
+        builder: PrimitiveBuilder<Int32Type>,
+    },
+    EnumString {
+        value: i32,
+        has_value: bool,
+        has_presence: bool,
+        builder: StringBuilderInner,
+        enum_descriptor: EnumDescriptor,
+    },
+    EnumBinary {
+        value: i32,
+        has_value: bool,
+        has_presence: bool,
+        builder: BinaryBuilderInner,
+        enum_descriptor: EnumDescriptor,
+    },
+
+    // --- Well-known types (singular, buffered) ---
+    Timestamp {
+        seconds: i64,
+        nanos: i32,
+        has_value: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+        unit: TimeUnit,
+        tz: Option<Arc<str>>,
+    },
+    Duration {
+        seconds: i64,
+        nanos: i32,
+        has_value: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+        unit: TimeUnit,
+    },
+    Date {
+        year: i32,
+        month: i32,
+        day: i32,
+        has_value: bool,
+        builder: PrimitiveBuilder<Date32Type>,
+    },
+    TimeOfDay {
+        hours: i32,
+        minutes: i32,
+        seconds_val: i32,
+        nanos: i32,
+        has_value: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+        unit: TimeUnit,
+    },
+
+    // --- Wrapper types (singular) ---
+    WrapperDouble {
+        value: f64,
+        has_value: bool,
+        builder: PrimitiveBuilder<Float64Type>,
+    },
+    WrapperFloat {
+        value: f32,
+        has_value: bool,
+        builder: PrimitiveBuilder<Float32Type>,
+    },
+    WrapperInt64 {
+        value: i64,
+        has_value: bool,
+        builder: PrimitiveBuilder<Int64Type>,
+    },
+    WrapperUInt64 {
+        value: u64,
+        has_value: bool,
+        builder: PrimitiveBuilder<UInt64Type>,
+    },
+    WrapperInt32 {
+        value: i32,
+        has_value: bool,
+        builder: PrimitiveBuilder<Int32Type>,
+    },
+    WrapperUInt32 {
+        value: u32,
+        has_value: bool,
+        builder: PrimitiveBuilder<UInt32Type>,
+    },
+    WrapperBool {
+        value: bool,
+        has_value: bool,
+        builder: BooleanBuilder,
+    },
+    WrapperString {
+        value: Vec<u8>,
+        has_value: bool,
+        builder: StringBuilderInner,
+    },
+    WrapperBytes {
+        value: Vec<u8>,
+        has_value: bool,
+        builder: BinaryBuilderInner,
+    },
+
+    // --- Nested message ---
+    Message {
+        sub_decoder: MessageDecoder,
+        has_value: bool,
+        is_valid: BooleanBuilder,
+    },
+
+    // --- Repeated fields ---
+    RepeatedInt32 {
+        values_builder: PrimitiveBuilder<Int32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedInt64 {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedUInt32 {
+        values_builder: PrimitiveBuilder<UInt32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedUInt64 {
+        values_builder: PrimitiveBuilder<UInt64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedFloat {
+        values_builder: PrimitiveBuilder<Float32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedDouble {
+        values_builder: PrimitiveBuilder<Float64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedBool {
+        values_builder: BooleanBuilder,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedString {
+        values_builder: StringBuilderInner,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedBytes {
+        values_builder: BinaryBuilderInner,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedSint32 {
+        values_builder: PrimitiveBuilder<Int32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedSint64 {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedSfixed32 {
+        values_builder: PrimitiveBuilder<Int32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedSfixed64 {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedFixed32 {
+        values_builder: PrimitiveBuilder<UInt32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedFixed64 {
+        values_builder: PrimitiveBuilder<UInt64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedEnumInt32 {
+        values_builder: PrimitiveBuilder<Int32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedEnumString {
+        values_builder: StringBuilderInner,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+        enum_descriptor: EnumDescriptor,
+    },
+    RepeatedEnumBinary {
+        values_builder: BinaryBuilderInner,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+        enum_descriptor: EnumDescriptor,
+    },
+    RepeatedMessage {
+        sub_decoder: MessageDecoder,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    // Repeated well-known/wrapper types: decoded as repeated messages via sub_decoder
+    RepeatedTimestamp {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+        unit: TimeUnit,
+        tz: Option<Arc<str>>,
+    },
+    RepeatedDuration {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+        unit: TimeUnit,
+    },
+    RepeatedDate {
+        values_builder: PrimitiveBuilder<Date32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedTimeOfDay {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+        unit: TimeUnit,
+    },
+    RepeatedWrapperDouble {
+        values_builder: PrimitiveBuilder<Float64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperFloat {
+        values_builder: PrimitiveBuilder<Float32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperInt64 {
+        values_builder: PrimitiveBuilder<Int64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperUInt64 {
+        values_builder: PrimitiveBuilder<UInt64Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperInt32 {
+        values_builder: PrimitiveBuilder<Int32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperUInt32 {
+        values_builder: PrimitiveBuilder<UInt32Type>,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperBool {
+        values_builder: BooleanBuilder,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperString {
+        values_builder: StringBuilderInner,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+    RepeatedWrapperBytes {
+        values_builder: BinaryBuilderInner,
+        offsets: ListOffsets,
+        list_name: Arc<str>,
+        list_nullable: bool,
+    },
+
+    // --- Map fields ---
+    Map {
+        key_decoder: Box<FieldDecoder>,
+        value_decoder: Box<FieldDecoder>,
+        offsets: Vec<i32>,
+        map_value_name: Arc<str>,
+        map_value_nullable: bool,
+    },
 }
 
-impl RepeatedEnumBinaryBuilderWrapper {
-    fn new(enum_descriptor: &EnumDescriptor, config: &PtarsConfig) -> Self {
-        let builder = if config.use_large_binary {
-            BinaryBuilderInner::Large(LargeBinaryBuilder::new())
+// ---------------------------------------------------------------------------
+// Helpers for decoding wire values inline
+// ---------------------------------------------------------------------------
+
+/// Decode fields of a well-known submessage with up to 4 int fields.
+/// Returns (field1, field2, field3, field4) initialized to 0, scanning for field numbers 1..=max_field.
+fn decode_wkt_submessage(buf: &[u8], max_field: u32) -> Result<[i64; 4], prost::DecodeError> {
+    let mut vals = [0i64; 4];
+    let mut pos = 0;
+    while pos < buf.len() {
+        let (fnum, wt, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if fnum >= 1 && fnum <= max_field && wt == 0 {
+            let (v, n) = decode_varint(&buf[pos..])?;
+            vals[(fnum - 1) as usize] = v as i64;
+            pos += n;
         } else {
-            BinaryBuilderInner::Regular(BinaryBuilder::new())
-        };
-        Self {
-            builder,
-            offsets: ListOffsets::new(config.use_large_list),
-            list_value_name: config.list_value_name.clone(),
-            list_value_nullable: config.list_value_nullable,
-            enum_descriptor: enum_descriptor.clone(),
+            pos += skip_field(wt, &buf[pos..])?;
         }
     }
+    Ok(vals)
+}
 
-    fn builder_len(&self) -> usize {
-        match &self.builder {
-            BinaryBuilderInner::Regular(b) => b.len(),
-            BinaryBuilderInner::Large(b) => b.len(),
+/// Decode a wrapper submessage: field 1 with the given wire type.
+/// For varint wrapper types.
+fn decode_wrapper_varint(buf: &[u8]) -> Result<(u64, bool), prost::DecodeError> {
+    let mut val = 0u64;
+    let mut found = false;
+    let mut pos = 0;
+    while pos < buf.len() {
+        let (fnum, wt, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if fnum == 1 && wt == 0 {
+            let (v, n) = decode_varint(&buf[pos..])?;
+            val = v;
+            found = true;
+            pos += n;
+        } else {
+            pos += skip_field(wt, &buf[pos..])?;
         }
+    }
+    Ok((val, found))
+}
+
+fn decode_wrapper_fixed32(buf: &[u8]) -> Result<([u8; 4], bool), prost::DecodeError> {
+    let mut val = [0u8; 4];
+    let mut found = false;
+    let mut pos = 0;
+    while pos < buf.len() {
+        let (fnum, wt, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if fnum == 1 && wt == 5 {
+            if buf.len() < pos + 4 {
+                return Err(decode_error("unexpected EOF"));
+            }
+            val.copy_from_slice(&buf[pos..pos + 4]);
+            found = true;
+            pos += 4;
+        } else {
+            pos += skip_field(wt, &buf[pos..])?;
+        }
+    }
+    Ok((val, found))
+}
+
+fn decode_wrapper_fixed64(buf: &[u8]) -> Result<([u8; 8], bool), prost::DecodeError> {
+    let mut val = [0u8; 8];
+    let mut found = false;
+    let mut pos = 0;
+    while pos < buf.len() {
+        let (fnum, wt, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if fnum == 1 && wt == 1 {
+            if buf.len() < pos + 8 {
+                return Err(decode_error("unexpected EOF"));
+            }
+            val.copy_from_slice(&buf[pos..pos + 8]);
+            found = true;
+            pos += 8;
+        } else {
+            pos += skip_field(wt, &buf[pos..])?;
+        }
+    }
+    Ok((val, found))
+}
+
+fn decode_wrapper_string(buf: &[u8]) -> Result<(Vec<u8>, bool), prost::DecodeError> {
+    let mut val = Vec::new();
+    let mut found = false;
+    let mut pos = 0;
+    while pos < buf.len() {
+        let (fnum, wt, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if fnum == 1 && wt == 2 {
+            let (data, consumed) = read_length_delimited(&buf[pos..])?;
+            std::str::from_utf8(data).map_err(|_| decode_error("invalid UTF-8"))?;
+            val.clear();
+            val.extend_from_slice(data);
+            found = true;
+            pos += consumed;
+        } else {
+            pos += skip_field(wt, &buf[pos..])?;
+        }
+    }
+    Ok((val, found))
+}
+
+fn decode_wrapper_bytes(buf: &[u8]) -> Result<(Vec<u8>, bool), prost::DecodeError> {
+    let mut val = Vec::new();
+    let mut found = false;
+    let mut pos = 0;
+    while pos < buf.len() {
+        let (fnum, wt, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if fnum == 1 && wt == 2 {
+            let (data, consumed) = read_length_delimited(&buf[pos..])?;
+            val.clear();
+            val.extend_from_slice(data);
+            found = true;
+            pos += consumed;
+        } else {
+            pos += skip_field(wt, &buf[pos..])?;
+        }
+    }
+    Ok((val, found))
+}
+
+// ---------------------------------------------------------------------------
+// Macro for flush/finish boilerplate
+// ---------------------------------------------------------------------------
+
+macro_rules! flush_primitive {
+    ($value:expr, $has_value:expr, $has_presence:expr, $builder:expr, $default:expr) => {
+        if *$has_value {
+            $builder.append_value(*$value);
+        } else if *$has_presence {
+            $builder.append_null();
+        } else {
+            $builder.append_value($default);
+        }
+        *$has_value = false;
+        *$value = $default;
+    };
+}
+
+fn finish_primitive<T: ArrowPrimitiveType>(builder: &mut PrimitiveBuilder<T>) -> Arc<dyn Array> {
+    Arc::new(std::mem::take(builder).finish())
+}
+
+fn finish_timestamp(
+    builder: &mut PrimitiveBuilder<Int64Type>,
+    unit: TimeUnit,
+    tz: &Option<Arc<str>>,
+) -> Arc<dyn Array> {
+    let values = std::mem::take(builder).finish();
+    let dt = DataType::Timestamp(unit, tz.clone());
+    let data = ArrayData::builder(dt)
+        .len(values.len())
+        .add_buffer(values.values().inner().clone())
+        .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
+        .build()
+        .unwrap();
+    arrow_array::make_array(data)
+}
+
+fn finish_duration(builder: &mut PrimitiveBuilder<Int64Type>, unit: TimeUnit) -> Arc<dyn Array> {
+    let values = std::mem::take(builder).finish();
+    let dt = DataType::Duration(unit);
+    let data = ArrayData::builder(dt)
+        .len(values.len())
+        .add_buffer(values.values().inner().clone())
+        .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
+        .build()
+        .unwrap();
+    arrow_array::make_array(data)
+}
+
+fn finish_time_of_day(builder: &mut PrimitiveBuilder<Int64Type>, unit: TimeUnit) -> Arc<dyn Array> {
+    let values = std::mem::take(builder).finish();
+    let dt = match unit {
+        TimeUnit::Second => DataType::Time32(TimeUnit::Second),
+        TimeUnit::Millisecond => DataType::Time32(TimeUnit::Millisecond),
+        TimeUnit::Microsecond => DataType::Time64(TimeUnit::Microsecond),
+        TimeUnit::Nanosecond => DataType::Time64(TimeUnit::Nanosecond),
+    };
+    if matches!(unit, TimeUnit::Second | TimeUnit::Millisecond) {
+        let i32_values: Vec<Option<i32>> = (0..values.len())
+            .map(|i| {
+                if values.is_null(i) {
+                    None
+                } else {
+                    let v = values.value(i);
+                    Some(i32::try_from(v).unwrap_or(if v > 0 { i32::MAX } else { i32::MIN }))
+                }
+            })
+            .collect();
+        let i32_array = arrow_array::Int32Array::from(i32_values);
+        let data = ArrayData::builder(dt)
+            .len(i32_array.len())
+            .add_buffer(i32_array.values().inner().clone())
+            .null_bit_buffer(i32_array.nulls().map(|n| n.buffer().clone()))
+            .build()
+            .unwrap();
+        arrow_array::make_array(data)
+    } else {
+        let data = ArrayData::builder(dt)
+            .len(values.len())
+            .add_buffer(values.values().inner().clone())
+            .null_bit_buffer(values.nulls().map(|n| n.buffer().clone()))
+            .build()
+            .unwrap();
+        arrow_array::make_array(data)
     }
 }
 
-impl ProtoArrayBuilder for RepeatedEnumBinaryBuilderWrapper {
-    fn append(&mut self, value: &Value) {
-        if let Some(values) = value.as_list() {
-            for each_value in values {
-                let name = enum_name(&self.enum_descriptor, each_value.as_enum_number().unwrap());
-                match &mut self.builder {
-                    BinaryBuilderInner::Regular(b) => b.append_value(name.as_bytes()),
-                    BinaryBuilderInner::Large(b) => b.append_value(name.as_bytes()),
+// ---------------------------------------------------------------------------
+// FieldDecoder: decode + flush + finish
+// ---------------------------------------------------------------------------
+
+impl FieldDecoder {
+    fn decode(&mut self, wire_type: u8, buf: &[u8]) -> Result<usize, prost::DecodeError> {
+        match self {
+            Self::Int32 {
+                value, has_value, ..
+            }
+            | Self::EnumInt32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = v as i32;
+                *has_value = true;
+                Ok(n)
+            }
+            Self::EnumString {
+                value, has_value, ..
+            }
+            | Self::EnumBinary {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = v as i32;
+                *has_value = true;
+                Ok(n)
+            }
+            Self::Int64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = v as i64;
+                *has_value = true;
+                Ok(n)
+            }
+            Self::UInt32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = v as u32;
+                *has_value = true;
+                Ok(n)
+            }
+            Self::UInt64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = v;
+                *has_value = true;
+                Ok(n)
+            }
+            Self::Sint32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = decode_zigzag32(v);
+                *has_value = true;
+                Ok(n)
+            }
+            Self::Sint64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = decode_zigzag64(v);
+                *has_value = true;
+                Ok(n)
+            }
+            Self::Sfixed32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 5 {
+                    return skip_field(wire_type, buf);
+                }
+                if buf.len() < 4 {
+                    return Err(decode_error("unexpected EOF"));
+                }
+                *value = i32::from_le_bytes(buf[..4].try_into().unwrap());
+                *has_value = true;
+                Ok(4)
+            }
+            Self::Sfixed64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 1 {
+                    return skip_field(wire_type, buf);
+                }
+                if buf.len() < 8 {
+                    return Err(decode_error("unexpected EOF"));
+                }
+                *value = i64::from_le_bytes(buf[..8].try_into().unwrap());
+                *has_value = true;
+                Ok(8)
+            }
+            Self::Fixed32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 5 {
+                    return skip_field(wire_type, buf);
+                }
+                if buf.len() < 4 {
+                    return Err(decode_error("unexpected EOF"));
+                }
+                *value = u32::from_le_bytes(buf[..4].try_into().unwrap());
+                *has_value = true;
+                Ok(4)
+            }
+            Self::Fixed64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 1 {
+                    return skip_field(wire_type, buf);
+                }
+                if buf.len() < 8 {
+                    return Err(decode_error("unexpected EOF"));
+                }
+                *value = u64::from_le_bytes(buf[..8].try_into().unwrap());
+                *has_value = true;
+                Ok(8)
+            }
+            Self::Float {
+                value, has_value, ..
+            } => {
+                if wire_type != 5 {
+                    return skip_field(wire_type, buf);
+                }
+                if buf.len() < 4 {
+                    return Err(decode_error("unexpected EOF"));
+                }
+                *value = f32::from_le_bytes(buf[..4].try_into().unwrap());
+                *has_value = true;
+                Ok(4)
+            }
+            Self::Double {
+                value, has_value, ..
+            } => {
+                if wire_type != 1 {
+                    return skip_field(wire_type, buf);
+                }
+                if buf.len() < 8 {
+                    return Err(decode_error("unexpected EOF"));
+                }
+                *value = f64::from_le_bytes(buf[..8].try_into().unwrap());
+                *has_value = true;
+                Ok(8)
+            }
+            Self::Bool {
+                value, has_value, ..
+            } => {
+                if wire_type != 0 {
+                    return skip_field(wire_type, buf);
+                }
+                let (v, n) = decode_varint(buf)?;
+                *value = v != 0;
+                *has_value = true;
+                Ok(n)
+            }
+            Self::String {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                std::str::from_utf8(data).map_err(|_| decode_error("invalid UTF-8"))?;
+                value.clear();
+                value.extend_from_slice(data);
+                *has_value = true;
+                Ok(total)
+            }
+            Self::Bytes {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                value.clear();
+                value.extend_from_slice(data);
+                *has_value = true;
+                Ok(total)
+            }
+            // Well-known types: decode submessage
+            Self::Timestamp {
+                seconds,
+                nanos,
+                has_value,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 2)?;
+                *seconds = vals[0];
+                *nanos = vals[1] as i32;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::Duration {
+                seconds,
+                nanos,
+                has_value,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 2)?;
+                *seconds = vals[0];
+                *nanos = vals[1] as i32;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::Date {
+                year,
+                month,
+                day,
+                has_value,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 3)?;
+                *year = vals[0] as i32;
+                *month = vals[1] as i32;
+                *day = vals[2] as i32;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::TimeOfDay {
+                hours,
+                minutes,
+                seconds_val,
+                nanos,
+                has_value,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 4)?;
+                *hours = vals[0] as i32;
+                *minutes = vals[1] as i32;
+                *seconds_val = vals[2] as i32;
+                *nanos = vals[3] as i32;
+                *has_value = true;
+                Ok(total)
+            }
+            // Wrapper types
+            Self::WrapperDouble {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (bytes, found) = decode_wrapper_fixed64(data)?;
+                if found {
+                    *value = f64::from_le_bytes(bytes);
+                }
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperFloat {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (bytes, found) = decode_wrapper_fixed32(data)?;
+                if found {
+                    *value = f32::from_le_bytes(bytes);
+                }
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperInt64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_varint(data)?;
+                *value = v as i64;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperUInt64 {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_varint(data)?;
+                *value = v;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperInt32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_varint(data)?;
+                *value = v as i32;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperUInt32 {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_varint(data)?;
+                *value = v as u32;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperBool {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_varint(data)?;
+                *value = v != 0;
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperString {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_string(data)?;
+                value.clear();
+                value.extend_from_slice(&v);
+                *has_value = true;
+                Ok(total)
+            }
+            Self::WrapperBytes {
+                value, has_value, ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_bytes(data)?;
+                value.clear();
+                value.extend_from_slice(&v);
+                *has_value = true;
+                Ok(total)
+            }
+            // Nested message
+            Self::Message {
+                sub_decoder,
+                has_value,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                // For singular messages, if seen multiple times, the spec says merge.
+                // For simplicity (and matching DynamicMessage behavior), we decode fresh each time.
+                // Reset sub_decoder if already decoded this row.
+                if !*has_value {
+                    *has_value = true;
+                }
+                sub_decoder.decode_message_bytes(data)?;
+                Ok(total)
+            }
+            // Repeated fields
+            Self::RepeatedInt32 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, |v| v as i32)
+            }
+            Self::RepeatedInt64 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, |v| v as i64)
+            }
+            Self::RepeatedUInt32 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, |v| v as u32)
+            }
+            Self::RepeatedUInt64 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, |v| v)
+            }
+            Self::RepeatedEnumInt32 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, |v| v as i32)
+            }
+            Self::RepeatedSint32 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, decode_zigzag32)
+            }
+            Self::RepeatedSint64 { values_builder, .. } => {
+                decode_repeated_varint(wire_type, buf, values_builder, decode_zigzag64)
+            }
+            Self::RepeatedSfixed32 { values_builder, .. } => decode_repeated_fixed::<Int32Type, 4>(
+                wire_type,
+                5,
+                buf,
+                values_builder,
+                i32::from_le_bytes,
+            ),
+            Self::RepeatedSfixed64 { values_builder, .. } => decode_repeated_fixed::<Int64Type, 8>(
+                wire_type,
+                1,
+                buf,
+                values_builder,
+                i64::from_le_bytes,
+            ),
+            Self::RepeatedFixed32 { values_builder, .. } => decode_repeated_fixed::<UInt32Type, 4>(
+                wire_type,
+                5,
+                buf,
+                values_builder,
+                u32::from_le_bytes,
+            ),
+            Self::RepeatedFixed64 { values_builder, .. } => decode_repeated_fixed::<UInt64Type, 8>(
+                wire_type,
+                1,
+                buf,
+                values_builder,
+                u64::from_le_bytes,
+            ),
+            Self::RepeatedFloat { values_builder, .. } => decode_repeated_fixed::<Float32Type, 4>(
+                wire_type,
+                5,
+                buf,
+                values_builder,
+                f32::from_le_bytes,
+            ),
+            Self::RepeatedDouble { values_builder, .. } => decode_repeated_fixed::<Float64Type, 8>(
+                wire_type,
+                1,
+                buf,
+                values_builder,
+                f64::from_le_bytes,
+            ),
+            Self::RepeatedBool { values_builder, .. } => {
+                if wire_type == 2 {
+                    let (data, total) = read_length_delimited(buf)?;
+                    let mut p = 0;
+                    while p < data.len() {
+                        let (v, n) = decode_varint(&data[p..])?;
+                        values_builder.append_value(v != 0);
+                        p += n;
+                    }
+                    Ok(total)
+                } else if wire_type == 0 {
+                    let (v, n) = decode_varint(buf)?;
+                    values_builder.append_value(v != 0);
+                    Ok(n)
+                } else {
+                    skip_field(wire_type, buf)
                 }
             }
+            Self::RepeatedString { values_builder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let s = std::str::from_utf8(data).map_err(|_| decode_error("invalid UTF-8"))?;
+                values_builder.append_value(s);
+                Ok(total)
+            }
+            Self::RepeatedBytes { values_builder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                values_builder.append_value(data);
+                Ok(total)
+            }
+            Self::RepeatedEnumString {
+                values_builder,
+                enum_descriptor,
+                ..
+            } => {
+                if wire_type == 2 {
+                    let (data, total) = read_length_delimited(buf)?;
+                    let mut p = 0;
+                    while p < data.len() {
+                        let (v, n) = decode_varint(&data[p..])?;
+                        values_builder.append_value(&enum_name(enum_descriptor, v as i32));
+                        p += n;
+                    }
+                    Ok(total)
+                } else if wire_type == 0 {
+                    let (v, n) = decode_varint(buf)?;
+                    values_builder.append_value(&enum_name(enum_descriptor, v as i32));
+                    Ok(n)
+                } else {
+                    skip_field(wire_type, buf)
+                }
+            }
+            Self::RepeatedEnumBinary {
+                values_builder,
+                enum_descriptor,
+                ..
+            } => {
+                if wire_type == 2 {
+                    let (data, total) = read_length_delimited(buf)?;
+                    let mut p = 0;
+                    while p < data.len() {
+                        let (v, n) = decode_varint(&data[p..])?;
+                        values_builder
+                            .append_value(enum_name(enum_descriptor, v as i32).as_bytes());
+                        p += n;
+                    }
+                    Ok(total)
+                } else if wire_type == 0 {
+                    let (v, n) = decode_varint(buf)?;
+                    values_builder.append_value(enum_name(enum_descriptor, v as i32).as_bytes());
+                    Ok(n)
+                } else {
+                    skip_field(wire_type, buf)
+                }
+            }
+            Self::RepeatedMessage { sub_decoder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                sub_decoder.decode_row(data)?;
+                Ok(total)
+            }
+            Self::RepeatedTimestamp {
+                values_builder,
+                unit,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 2)?;
+                values_builder.append_value(convert_seconds_nanos_to_unit(
+                    vals[0],
+                    vals[1] as i32,
+                    *unit,
+                    "Timestamp",
+                ));
+                Ok(total)
+            }
+            Self::RepeatedDuration {
+                values_builder,
+                unit,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 2)?;
+                values_builder.append_value(convert_seconds_nanos_to_unit(
+                    vals[0],
+                    vals[1] as i32,
+                    *unit,
+                    "Duration",
+                ));
+                Ok(total)
+            }
+            Self::RepeatedDate { values_builder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 3)?;
+                let (y, m, d) = (vals[0] as i32, vals[1] as i32, vals[2] as i32);
+                if y == 0 && m == 0 && d == 0 {
+                    values_builder.append_value(0);
+                } else {
+                    values_builder.append_value(
+                        chrono::NaiveDate::from_ymd_opt(y, m as u32, d as u32)
+                            .unwrap()
+                            .num_days_from_ce()
+                            - CE_OFFSET,
+                    );
+                }
+                Ok(total)
+            }
+            Self::RepeatedTimeOfDay {
+                values_builder,
+                unit,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let vals = decode_wkt_submessage(data, 4)?;
+                let total_seconds = vals[0] * 3600 + vals[1] * 60 + vals[2];
+                values_builder.append_value(convert_seconds_nanos_to_unit(
+                    total_seconds,
+                    vals[3] as i32,
+                    *unit,
+                    "TimeOfDay",
+                ));
+                Ok(total)
+            }
+            Self::RepeatedWrapperDouble { values_builder, .. } => {
+                decode_repeated_wrapper_fixed64(wire_type, buf, values_builder, f64::from_le_bytes)
+            }
+            Self::RepeatedWrapperFloat { values_builder, .. } => {
+                decode_repeated_wrapper_fixed32(wire_type, buf, values_builder, f32::from_le_bytes)
+            }
+            Self::RepeatedWrapperInt64 { values_builder, .. } => {
+                decode_repeated_wrapper_varint(wire_type, buf, values_builder, |v| v as i64)
+            }
+            Self::RepeatedWrapperUInt64 { values_builder, .. } => {
+                decode_repeated_wrapper_varint(wire_type, buf, values_builder, |v| v)
+            }
+            Self::RepeatedWrapperInt32 { values_builder, .. } => {
+                decode_repeated_wrapper_varint(wire_type, buf, values_builder, |v| v as i32)
+            }
+            Self::RepeatedWrapperUInt32 { values_builder, .. } => {
+                decode_repeated_wrapper_varint(wire_type, buf, values_builder, |v| v as u32)
+            }
+            Self::RepeatedWrapperBool { values_builder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, _) = decode_wrapper_varint(data)?;
+                values_builder.append_value(v != 0);
+                Ok(total)
+            }
+            Self::RepeatedWrapperString { values_builder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, found) = decode_wrapper_string(data)?;
+                if found {
+                    values_builder.append_value(unsafe { std::str::from_utf8_unchecked(&v) });
+                } else {
+                    values_builder.append_value("");
+                }
+                Ok(total)
+            }
+            Self::RepeatedWrapperBytes { values_builder, .. } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                let (v, found) = decode_wrapper_bytes(data)?;
+                if found {
+                    values_builder.append_value(&v);
+                } else {
+                    values_builder.append_value(b"");
+                }
+                Ok(total)
+            }
+            // Map: each occurrence is a length-delimited entry submessage
+            Self::Map {
+                key_decoder,
+                value_decoder,
+                ..
+            } => {
+                if wire_type != 2 {
+                    return skip_field(wire_type, buf);
+                }
+                let (data, total) = read_length_delimited(buf)?;
+                // Parse entry submessage: field 1 = key, field 2 = value
+                let mut pos = 0;
+                while pos < data.len() {
+                    let (fnum, wt, n) = decode_tag(&data[pos..])?;
+                    pos += n;
+                    if fnum == 1 {
+                        pos += key_decoder.decode(wt, &data[pos..])?;
+                    } else if fnum == 2 {
+                        pos += value_decoder.decode(wt, &data[pos..])?;
+                    } else {
+                        pos += skip_field(wt, &data[pos..])?;
+                    }
+                }
+                // Flush key and value (they're buffered singular decoders)
+                key_decoder.flush();
+                value_decoder.flush();
+                Ok(total)
+            }
         }
-        self.offsets.push(self.builder_len());
     }
 
-    fn append_null(&mut self) {
-        self.offsets.push(self.builder_len());
+    fn flush(&mut self) {
+        match self {
+            Self::Int32 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i32);
+            }
+            Self::Int64 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i64);
+            }
+            Self::UInt32 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0u32);
+            }
+            Self::UInt64 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0u64);
+            }
+            Self::Sint32 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i32);
+            }
+            Self::Sint64 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i64);
+            }
+            Self::Sfixed32 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i32);
+            }
+            Self::Sfixed64 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i64);
+            }
+            Self::Fixed32 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0u32);
+            }
+            Self::Fixed64 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0u64);
+            }
+            Self::Float {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0.0f32);
+            }
+            Self::Double {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0.0f64);
+            }
+            Self::EnumInt32 {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                flush_primitive!(value, has_value, has_presence, builder, 0i32);
+            }
+            Self::EnumString {
+                value,
+                has_value,
+                has_presence,
+                builder,
+                enum_descriptor,
+            } => {
+                if *has_value {
+                    builder.append_value(&enum_name(enum_descriptor, *value));
+                } else if *has_presence {
+                    builder.append_null();
+                } else {
+                    builder.append_value(&enum_name(enum_descriptor, 0));
+                }
+                *has_value = false;
+                *value = 0;
+            }
+            Self::EnumBinary {
+                value,
+                has_value,
+                has_presence,
+                builder,
+                enum_descriptor,
+            } => {
+                if *has_value {
+                    builder.append_value(enum_name(enum_descriptor, *value).as_bytes());
+                } else if *has_presence {
+                    builder.append_null();
+                } else {
+                    builder.append_value(enum_name(enum_descriptor, 0).as_bytes());
+                }
+                *has_value = false;
+                *value = 0;
+            }
+            Self::Bool {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else if *has_presence {
+                    builder.append_null();
+                } else {
+                    builder.append_value(false);
+                }
+                *has_value = false;
+                *value = false;
+            }
+            Self::String {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(unsafe { std::str::from_utf8_unchecked(value) });
+                } else if *has_presence {
+                    builder.append_null();
+                } else {
+                    builder.append_default();
+                }
+                *has_value = false;
+                value.clear();
+            }
+            Self::Bytes {
+                value,
+                has_value,
+                has_presence,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(value.as_slice());
+                } else if *has_presence {
+                    builder.append_null();
+                } else {
+                    builder.append_default();
+                }
+                *has_value = false;
+                value.clear();
+            }
+            // Well-known types
+            Self::Timestamp {
+                seconds,
+                nanos,
+                has_value,
+                builder,
+                unit,
+                ..
+            } => {
+                if *has_value {
+                    builder.append_value(convert_seconds_nanos_to_unit(
+                        *seconds,
+                        *nanos,
+                        *unit,
+                        "Timestamp",
+                    ));
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *seconds = 0;
+                *nanos = 0;
+            }
+            Self::Duration {
+                seconds,
+                nanos,
+                has_value,
+                builder,
+                unit,
+                ..
+            } => {
+                if *has_value {
+                    builder.append_value(convert_seconds_nanos_to_unit(
+                        *seconds, *nanos, *unit, "Duration",
+                    ));
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *seconds = 0;
+                *nanos = 0;
+            }
+            Self::Date {
+                year,
+                month,
+                day,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    if *year == 0 && *month == 0 && *day == 0 {
+                        builder.append_value(0);
+                    } else {
+                        builder.append_value(
+                            chrono::NaiveDate::from_ymd_opt(*year, *month as u32, *day as u32)
+                                .unwrap()
+                                .num_days_from_ce()
+                                - CE_OFFSET,
+                        );
+                    }
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *year = 0;
+                *month = 0;
+                *day = 0;
+            }
+            Self::TimeOfDay {
+                hours,
+                minutes,
+                seconds_val,
+                nanos,
+                has_value,
+                builder,
+                unit,
+            } => {
+                if *has_value {
+                    let total_seconds = i64::from(*hours) * 3600
+                        + i64::from(*minutes) * 60
+                        + i64::from(*seconds_val);
+                    builder.append_value(convert_seconds_nanos_to_unit(
+                        total_seconds,
+                        *nanos,
+                        *unit,
+                        "TimeOfDay",
+                    ));
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *hours = 0;
+                *minutes = 0;
+                *seconds_val = 0;
+                *nanos = 0;
+            }
+            // Wrapper types: present → value, absent → null
+            Self::WrapperDouble {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = 0.0;
+            }
+            Self::WrapperFloat {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = 0.0;
+            }
+            Self::WrapperInt64 {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = 0;
+            }
+            Self::WrapperUInt64 {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = 0;
+            }
+            Self::WrapperInt32 {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = 0;
+            }
+            Self::WrapperUInt32 {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = 0;
+            }
+            Self::WrapperBool {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(*value);
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                *value = false;
+            }
+            Self::WrapperString {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(unsafe { std::str::from_utf8_unchecked(value) });
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                value.clear();
+            }
+            Self::WrapperBytes {
+                value,
+                has_value,
+                builder,
+            } => {
+                if *has_value {
+                    builder.append_value(value.as_slice());
+                } else {
+                    builder.append_null();
+                }
+                *has_value = false;
+                value.clear();
+            }
+            // Nested message
+            Self::Message {
+                sub_decoder,
+                has_value,
+                is_valid,
+            } => {
+                if *has_value {
+                    is_valid.append_value(true);
+                    sub_decoder.flush_row();
+                } else {
+                    is_valid.append_value(false);
+                    sub_decoder.flush_defaults();
+                }
+                *has_value = false;
+            }
+            // Repeated fields: push offset
+            Self::RepeatedInt32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedInt64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedUInt32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedUInt64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedFloat {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedDouble {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedBool {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedString {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedBytes {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedSint32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(ArrayBuilder::len(values_builder));
+            }
+            Self::RepeatedSint64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(ArrayBuilder::len(values_builder));
+            }
+            Self::RepeatedSfixed32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(ArrayBuilder::len(values_builder));
+            }
+            Self::RepeatedSfixed64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(ArrayBuilder::len(values_builder));
+            }
+            Self::RepeatedFixed32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(ArrayBuilder::len(values_builder));
+            }
+            Self::RepeatedFixed64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(ArrayBuilder::len(values_builder));
+            }
+            Self::RepeatedEnumInt32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedEnumString {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedEnumBinary {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedMessage {
+                sub_decoder,
+                offsets,
+                ..
+            } => {
+                offsets.push(sub_decoder.row_count());
+            }
+            Self::RepeatedTimestamp {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedDuration {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedDate {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedTimeOfDay {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperDouble {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperFloat {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperInt64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperUInt64 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperInt32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperUInt32 {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperBool {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperString {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            Self::RepeatedWrapperBytes {
+                values_builder,
+                offsets,
+                ..
+            } => {
+                offsets.push(values_builder.len());
+            }
+            // Map: push offset based on key builder length
+            Self::Map {
+                key_decoder,
+                offsets,
+                ..
+            } => {
+                let count = match key_decoder.as_ref() {
+                    FieldDecoder::Int32 { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::Int64 { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::UInt32 { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::UInt64 { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::Sint32 { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::Sint64 { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::Bool { builder, .. } => ArrayBuilder::len(builder),
+                    FieldDecoder::String { builder, .. } => builder.len(),
+                    _ => *offsets.last().unwrap() as usize,
+                };
+                offsets.push(count as i32);
+            }
+        }
     }
 
-    fn append_default(&mut self) {
-        self.offsets.push(self.builder_len());
-    }
-
-    fn finish(&mut self) -> Arc<dyn Array> {
-        let values: Arc<dyn Array> = match &mut self.builder {
-            BinaryBuilderInner::Regular(b) => Arc::new(std::mem::take(b).finish()),
-            BinaryBuilderInner::Large(b) => Arc::new(std::mem::take(b).finish()),
+    fn finish(&mut self, nullable: bool) -> (Field, Arc<dyn Array>) {
+        // This is called by MessageDecoder::finish, which provides the field name separately
+        // We return a dummy field name here; the caller replaces it.
+        let array: Arc<dyn Array> = match self {
+            Self::Int32 { builder, .. } | Self::EnumInt32 { builder, .. } => {
+                finish_primitive(builder)
+            }
+            Self::Int64 { builder, .. } => finish_primitive(builder),
+            Self::UInt32 { builder, .. } => finish_primitive(builder),
+            Self::UInt64 { builder, .. } => finish_primitive(builder),
+            Self::Sint32 { builder, .. } | Self::Sfixed32 { builder, .. } => {
+                finish_primitive(builder)
+            }
+            Self::Sint64 { builder, .. } | Self::Sfixed64 { builder, .. } => {
+                finish_primitive(builder)
+            }
+            Self::Fixed32 { builder, .. } => finish_primitive(builder),
+            Self::Fixed64 { builder, .. } => finish_primitive(builder),
+            Self::Float { builder, .. } => finish_primitive(builder),
+            Self::Double { builder, .. } => finish_primitive(builder),
+            Self::Bool { builder, .. } => Arc::new(std::mem::take(builder).finish()),
+            Self::String { builder, .. } | Self::EnumString { builder, .. } => builder.finish(),
+            Self::Bytes { builder, .. } | Self::EnumBinary { builder, .. } => builder.finish(),
+            Self::Timestamp {
+                builder, unit, tz, ..
+            } => finish_timestamp(builder, *unit, tz),
+            Self::Duration { builder, unit, .. } => finish_duration(builder, *unit),
+            Self::Date { builder, .. } => finish_primitive(builder),
+            Self::TimeOfDay { builder, unit, .. } => finish_time_of_day(builder, *unit),
+            Self::WrapperDouble { builder, .. } => finish_primitive(builder),
+            Self::WrapperFloat { builder, .. } => finish_primitive(builder),
+            Self::WrapperInt64 { builder, .. } => finish_primitive(builder),
+            Self::WrapperUInt64 { builder, .. } => finish_primitive(builder),
+            Self::WrapperInt32 { builder, .. } => finish_primitive(builder),
+            Self::WrapperUInt32 { builder, .. } => finish_primitive(builder),
+            Self::WrapperBool { builder, .. } => Arc::new(std::mem::take(builder).finish()),
+            Self::WrapperString { builder, .. } => builder.finish(),
+            Self::WrapperBytes { builder, .. } => builder.finish(),
+            Self::Message {
+                sub_decoder,
+                is_valid,
+                ..
+            } => Arc::new(sub_decoder.build_struct_array(Some(std::mem::take(is_valid).finish()))),
+            Self::RepeatedInt32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedInt64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedUInt32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedUInt64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedFloat {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedDouble {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedBool {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals: Arc<dyn Array> = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedString {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = values_builder.finish();
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedBytes {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = values_builder.finish();
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedSint32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            }
+            | Self::RepeatedSfixed32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedSint64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            }
+            | Self::RepeatedSfixed64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedFixed32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedFixed64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedEnumInt32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedEnumString {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+                ..
+            } => {
+                let vals = values_builder.finish();
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedEnumBinary {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+                ..
+            } => {
+                let vals = values_builder.finish();
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedMessage {
+                sub_decoder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals: Arc<dyn Array> = Arc::new(sub_decoder.build_struct_array(None));
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedTimestamp {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+                unit,
+                tz,
+            } => {
+                let vals = finish_timestamp(values_builder, *unit, tz);
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedDuration {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+                unit,
+            } => {
+                let vals = finish_duration(values_builder, *unit);
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedDate {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedTimeOfDay {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+                unit,
+            } => {
+                let vals = finish_time_of_day(values_builder, *unit);
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperDouble {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperFloat {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperInt64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperUInt64 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperInt32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperUInt32 {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperBool {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals: Arc<dyn Array> = Arc::new(std::mem::take(values_builder).finish());
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperString {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = values_builder.finish();
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::RepeatedWrapperBytes {
+                values_builder,
+                offsets,
+                list_name,
+                list_nullable,
+            } => {
+                let vals = values_builder.finish();
+                std::mem::replace(offsets, ListOffsets::new(false)).finish(
+                    vals,
+                    list_name,
+                    *list_nullable,
+                )
+            }
+            Self::Map {
+                key_decoder,
+                value_decoder,
+                offsets,
+                map_value_name,
+                map_value_nullable,
+            } => {
+                let (_, key_array) = key_decoder.finish(false);
+                let (_, value_array) = value_decoder.finish(*map_value_nullable);
+                let key_field = Arc::new(Field::new("key", key_array.data_type().clone(), false));
+                let value_field = Arc::new(Field::new(
+                    &**map_value_name,
+                    value_array.data_type().clone(),
+                    *map_value_nullable,
+                ));
+                let entries_struct_type = DataType::Struct(
+                    vec![key_field.as_ref().clone(), value_field.as_ref().clone()].into(),
+                );
+                let entry_struct =
+                    StructArray::from(vec![(key_field, key_array), (value_field, value_array)]);
+                let map_dt = DataType::Map(
+                    Arc::new(Field::new("entries", entries_struct_type, false)),
+                    false,
+                );
+                let len = offsets.len() - 1;
+                let offsets_buf = Buffer::from_vec(std::mem::take(offsets));
+                let map_data = ArrayData::builder(map_dt)
+                    .len(len)
+                    .add_buffer(offsets_buf)
+                    .add_child_data(entry_struct.into_data())
+                    .build()
+                    .unwrap();
+                Arc::new(MapArray::from(map_data))
+            }
         };
-        let offsets = std::mem::replace(&mut self.offsets, ListOffsets::new(false));
-        offsets.finish(values, &self.list_value_name, self.list_value_nullable)
-    }
-
-    fn len(&self) -> usize {
-        self.offsets.len() - 1
-    }
-
-    fn is_empty(&self) -> bool {
-        self.offsets.len() == 1
+        let field = Field::new("", array.data_type().clone(), nullable);
+        (field, array)
     }
 }
 
-/// Convert messages to a RecordBatch using the default configuration.
+// ---------------------------------------------------------------------------
+// Helpers for repeated varint/fixed decoding
+// ---------------------------------------------------------------------------
+
+fn decode_repeated_varint<T: ArrowPrimitiveType>(
+    wire_type: u8,
+    buf: &[u8],
+    builder: &mut PrimitiveBuilder<T>,
+    convert: fn(u64) -> T::Native,
+) -> Result<usize, prost::DecodeError> {
+    if wire_type == 2 {
+        // packed
+        let (data, total) = read_length_delimited(buf)?;
+        let mut p = 0;
+        while p < data.len() {
+            let (v, n) = decode_varint(&data[p..])?;
+            builder.append_value(convert(v));
+            p += n;
+        }
+        Ok(total)
+    } else if wire_type == 0 {
+        let (v, n) = decode_varint(buf)?;
+        builder.append_value(convert(v));
+        Ok(n)
+    } else {
+        skip_field(wire_type, buf)
+    }
+}
+
+fn decode_repeated_fixed<T: ArrowPrimitiveType, const WIDTH: usize>(
+    wire_type: u8,
+    expected_wt: u8,
+    buf: &[u8],
+    builder: &mut PrimitiveBuilder<T>,
+    convert: fn([u8; WIDTH]) -> T::Native,
+) -> Result<usize, prost::DecodeError> {
+    if wire_type == 2 {
+        let (data, total) = read_length_delimited(buf)?;
+        let mut p = 0;
+        while p + WIDTH <= data.len() {
+            let mut bytes = [0u8; WIDTH];
+            bytes.copy_from_slice(&data[p..p + WIDTH]);
+            builder.append_value(convert(bytes));
+            p += WIDTH;
+        }
+        Ok(total)
+    } else if wire_type == expected_wt {
+        if buf.len() < WIDTH {
+            return Err(decode_error("unexpected EOF"));
+        }
+        let mut bytes = [0u8; WIDTH];
+        bytes.copy_from_slice(&buf[..WIDTH]);
+        builder.append_value(convert(bytes));
+        Ok(WIDTH)
+    } else {
+        skip_field(wire_type, buf)
+    }
+}
+
+fn decode_repeated_wrapper_varint<T: ArrowPrimitiveType>(
+    wire_type: u8,
+    buf: &[u8],
+    builder: &mut PrimitiveBuilder<T>,
+    convert: fn(u64) -> T::Native,
+) -> Result<usize, prost::DecodeError> {
+    if wire_type != 2 {
+        return skip_field(wire_type, buf);
+    }
+    let (data, total) = read_length_delimited(buf)?;
+    let (v, _) = decode_wrapper_varint(data)?;
+    builder.append_value(convert(v));
+    Ok(total)
+}
+
+fn decode_repeated_wrapper_fixed32<T: ArrowPrimitiveType>(
+    wire_type: u8,
+    buf: &[u8],
+    builder: &mut PrimitiveBuilder<T>,
+    convert: fn([u8; 4]) -> T::Native,
+) -> Result<usize, prost::DecodeError> {
+    if wire_type != 2 {
+        return skip_field(wire_type, buf);
+    }
+    let (data, total) = read_length_delimited(buf)?;
+    let (bytes, _) = decode_wrapper_fixed32(data)?;
+    builder.append_value(convert(bytes));
+    Ok(total)
+}
+
+fn decode_repeated_wrapper_fixed64<T: ArrowPrimitiveType>(
+    wire_type: u8,
+    buf: &[u8],
+    builder: &mut PrimitiveBuilder<T>,
+    convert: fn([u8; 8]) -> T::Native,
+) -> Result<usize, prost::DecodeError> {
+    if wire_type != 2 {
+        return skip_field(wire_type, buf);
+    }
+    let (data, total) = read_length_delimited(buf)?;
+    let (bytes, _) = decode_wrapper_fixed64(data)?;
+    builder.append_value(convert(bytes));
+    Ok(total)
+}
+
+// ---------------------------------------------------------------------------
+// MessageDecoder
+// ---------------------------------------------------------------------------
+
+pub struct MessageDecoder {
+    decoders: Vec<(FieldDecoder, FieldDescriptor)>,
+    tag_map: Vec<Option<usize>>,
+    list_nullable: bool,
+    map_nullable: bool,
+    num_rows: usize,
+}
+
+impl MessageDecoder {
+    pub fn new(descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
+        let mut decoders = Vec::new();
+        let mut max_field_number: u32 = 0;
+
+        for field in descriptor.fields() {
+            if let Some(decoder) = build_field_decoder(&field, config) {
+                if field.number() > max_field_number {
+                    max_field_number = field.number();
+                }
+                decoders.push((decoder, field));
+            }
+        }
+
+        let mut tag_map = vec![
+            None;
+            if max_field_number == 0 {
+                0
+            } else {
+                max_field_number as usize + 1
+            }
+        ];
+        for (idx, (_, field)) in decoders.iter().enumerate() {
+            let num = field.number() as usize;
+            tag_map[num] = Some(idx);
+        }
+
+        Self {
+            decoders,
+            tag_map,
+            list_nullable: config.list_nullable,
+            map_nullable: config.map_nullable,
+            num_rows: 0,
+        }
+    }
+
+    fn decode_row(&mut self, buf: &[u8]) -> Result<(), prost::DecodeError> {
+        let mut pos = 0;
+        while pos < buf.len() {
+            let (field_num, wire_type, n) = decode_tag(&buf[pos..])?;
+            pos += n;
+            let idx = if (field_num as usize) < self.tag_map.len() {
+                self.tag_map[field_num as usize]
+            } else {
+                None
+            };
+            if let Some(idx) = idx {
+                pos += self.decoders[idx].0.decode(wire_type, &buf[pos..])?;
+            } else {
+                pos += skip_field(wire_type, &buf[pos..])?;
+            }
+        }
+        for (decoder, _) in &mut self.decoders {
+            decoder.flush();
+        }
+        self.num_rows += 1;
+        Ok(())
+    }
+
+    /// Decode a submessage's bytes without flushing — used for singular message fields
+    /// where the parent will call flush.
+    fn decode_message_bytes(&mut self, buf: &[u8]) -> Result<(), prost::DecodeError> {
+        let mut pos = 0;
+        while pos < buf.len() {
+            let (field_num, wire_type, n) = decode_tag(&buf[pos..])?;
+            pos += n;
+            let idx = if (field_num as usize) < self.tag_map.len() {
+                self.tag_map[field_num as usize]
+            } else {
+                None
+            };
+            if let Some(idx) = idx {
+                pos += self.decoders[idx].0.decode(wire_type, &buf[pos..])?;
+            } else {
+                pos += skip_field(wire_type, &buf[pos..])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_row(&mut self) {
+        for (decoder, _) in &mut self.decoders {
+            decoder.flush();
+        }
+    }
+
+    fn flush_defaults(&mut self) {
+        for (decoder, _) in &mut self.decoders {
+            decoder.flush(); // all absent → defaults
+        }
+    }
+
+    fn decode_null_row(&mut self) {
+        for (decoder, _) in &mut self.decoders {
+            decoder.flush();
+        }
+        self.num_rows += 1;
+    }
+
+    fn row_count(&self) -> usize {
+        self.num_rows
+    }
+
+    fn build_struct_array(&mut self, validity: Option<arrow_array::BooleanArray>) -> StructArray {
+        if self.decoders.is_empty() {
+            let len = validity.as_ref().map_or(self.num_rows, |v| v.len());
+            return StructArray::new_empty_fields(
+                len,
+                validity.map(|v| arrow::buffer::NullBuffer::new(v.values().clone())),
+            );
+        }
+
+        let (fields, columns): (Vec<_>, Vec<_>) = self
+            .decoders
+            .iter_mut()
+            .map(|(decoder, field_desc)| {
+                let nullable = if field_desc.is_list() {
+                    self.list_nullable
+                } else if field_desc.is_map() {
+                    self.map_nullable
+                } else {
+                    field_desc.supports_presence()
+                };
+                let (_, array) = decoder.finish(nullable);
+                let field = Field::new(field_desc.name(), array.data_type().clone(), nullable);
+                (field, array)
+            })
+            .unzip();
+
+        StructArray::new(
+            arrow_schema::Fields::from(fields),
+            columns,
+            validity.map(|v| arrow::buffer::NullBuffer::new(v.values().clone())),
+        )
+    }
+
+    pub fn finish(mut self) -> RecordBatch {
+        if self.decoders.is_empty() {
+            let schema = Arc::new(arrow_schema::Schema::empty());
+            return RecordBatch::try_new_with_options(
+                schema,
+                vec![],
+                &arrow_array::RecordBatchOptions::new().with_row_count(Some(self.num_rows)),
+            )
+            .unwrap();
+        }
+        let struct_array = self.build_struct_array(None);
+        RecordBatch::from(struct_array)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// build_field_decoder
+// ---------------------------------------------------------------------------
+
+fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+    if field.is_map() {
+        return build_map_decoder(field, config);
+    }
+    if field.is_list() {
+        return build_repeated_decoder(field, config);
+    }
+
+    let has_presence = field.supports_presence();
+    match field.kind() {
+        Kind::Int32 => Some(FieldDecoder::Int32 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Int64 => Some(FieldDecoder::Int64 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Uint32 => Some(FieldDecoder::UInt32 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Uint64 => Some(FieldDecoder::UInt64 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sint32 => Some(FieldDecoder::Sint32 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sint64 => Some(FieldDecoder::Sint64 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sfixed32 => Some(FieldDecoder::Sfixed32 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sfixed64 => Some(FieldDecoder::Sfixed64 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Fixed32 => Some(FieldDecoder::Fixed32 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Fixed64 => Some(FieldDecoder::Fixed64 {
+            value: 0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Float => Some(FieldDecoder::Float {
+            value: 0.0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Double => Some(FieldDecoder::Double {
+            value: 0.0,
+            has_value: false,
+            has_presence,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Bool => Some(FieldDecoder::Bool {
+            value: false,
+            has_value: false,
+            has_presence,
+            builder: BooleanBuilder::new(),
+        }),
+        Kind::String => Some(FieldDecoder::String {
+            value: Vec::new(),
+            has_value: false,
+            has_presence,
+            builder: StringBuilderInner::new(config.use_large_string),
+        }),
+        Kind::Bytes => Some(FieldDecoder::Bytes {
+            value: Vec::new(),
+            has_value: false,
+            has_presence,
+            builder: BinaryBuilderInner::new(config.use_large_binary),
+        }),
+        Kind::Enum(enum_desc) => match config.enum_repr {
+            EnumRepr::Int32 => Some(FieldDecoder::EnumInt32 {
+                value: 0,
+                has_value: false,
+                has_presence,
+                builder: PrimitiveBuilder::new(),
+            }),
+            EnumRepr::String => Some(FieldDecoder::EnumString {
+                value: 0,
+                has_value: false,
+                has_presence,
+                builder: StringBuilderInner::new(config.use_large_string),
+                enum_descriptor: enum_desc,
+            }),
+            EnumRepr::Binary => Some(FieldDecoder::EnumBinary {
+                value: 0,
+                has_value: false,
+                has_presence,
+                builder: BinaryBuilderInner::new(config.use_large_binary),
+                enum_descriptor: enum_desc,
+            }),
+        },
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+    }
+}
+
+fn build_message_field_decoder(
+    msg_desc: MessageDescriptor,
+    config: &PtarsConfig,
+) -> Option<FieldDecoder> {
+    match msg_desc.full_name() {
+        "google.protobuf.Timestamp" => Some(FieldDecoder::Timestamp {
+            seconds: 0,
+            nanos: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+            unit: config.timestamp_unit,
+            tz: config.timestamp_tz.clone(),
+        }),
+        "google.protobuf.Duration" => Some(FieldDecoder::Duration {
+            seconds: 0,
+            nanos: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+            unit: config.duration_unit,
+        }),
+        "google.type.Date" => Some(FieldDecoder::Date {
+            year: 0,
+            month: 0,
+            day: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.type.TimeOfDay" => Some(FieldDecoder::TimeOfDay {
+            hours: 0,
+            minutes: 0,
+            seconds_val: 0,
+            nanos: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+            unit: config.time_unit,
+        }),
+        "google.protobuf.DoubleValue" => Some(FieldDecoder::WrapperDouble {
+            value: 0.0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.protobuf.FloatValue" => Some(FieldDecoder::WrapperFloat {
+            value: 0.0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.protobuf.Int64Value" => Some(FieldDecoder::WrapperInt64 {
+            value: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.protobuf.UInt64Value" => Some(FieldDecoder::WrapperUInt64 {
+            value: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.protobuf.Int32Value" => Some(FieldDecoder::WrapperInt32 {
+            value: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.protobuf.UInt32Value" => Some(FieldDecoder::WrapperUInt32 {
+            value: 0,
+            has_value: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        "google.protobuf.BoolValue" => Some(FieldDecoder::WrapperBool {
+            value: false,
+            has_value: false,
+            builder: BooleanBuilder::new(),
+        }),
+        "google.protobuf.StringValue" => Some(FieldDecoder::WrapperString {
+            value: Vec::new(),
+            has_value: false,
+            builder: StringBuilderInner::new(config.use_large_string),
+        }),
+        "google.protobuf.BytesValue" => Some(FieldDecoder::WrapperBytes {
+            value: Vec::new(),
+            has_value: false,
+            builder: BinaryBuilderInner::new(config.use_large_binary),
+        }),
+        _ => {
+            let sub_decoder = MessageDecoder::new(&msg_desc, config);
+            Some(FieldDecoder::Message {
+                sub_decoder,
+                has_value: false,
+                is_valid: BooleanBuilder::new(),
+            })
+        }
+    }
+}
+
+fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+    let ln = config.list_value_name.clone();
+    let lnb = config.list_value_nullable;
+    let offsets = || ListOffsets::new(config.use_large_list);
+
+    match field.kind() {
+        Kind::Int32 => Some(FieldDecoder::RepeatedInt32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Sint32 => Some(FieldDecoder::RepeatedSint32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Sfixed32 => Some(FieldDecoder::RepeatedSfixed32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Int64 => Some(FieldDecoder::RepeatedInt64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Sint64 => Some(FieldDecoder::RepeatedSint64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Sfixed64 => Some(FieldDecoder::RepeatedSfixed64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Uint32 => Some(FieldDecoder::RepeatedUInt32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Fixed32 => Some(FieldDecoder::RepeatedFixed32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Uint64 => Some(FieldDecoder::RepeatedUInt64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Fixed64 => Some(FieldDecoder::RepeatedFixed64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Float => Some(FieldDecoder::RepeatedFloat {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Double => Some(FieldDecoder::RepeatedDouble {
+            values_builder: PrimitiveBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Bool => Some(FieldDecoder::RepeatedBool {
+            values_builder: BooleanBuilder::new(),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::String => Some(FieldDecoder::RepeatedString {
+            values_builder: StringBuilderInner::new(config.use_large_string),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Bytes => Some(FieldDecoder::RepeatedBytes {
+            values_builder: BinaryBuilderInner::new(config.use_large_binary),
+            offsets: offsets(),
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        Kind::Enum(enum_desc) => match config.enum_repr {
+            EnumRepr::Int32 => Some(FieldDecoder::RepeatedEnumInt32 {
+                values_builder: PrimitiveBuilder::new(),
+                offsets: offsets(),
+                list_name: ln,
+                list_nullable: lnb,
+            }),
+            EnumRepr::String => Some(FieldDecoder::RepeatedEnumString {
+                values_builder: StringBuilderInner::new(config.use_large_string),
+                offsets: offsets(),
+                list_name: ln,
+                list_nullable: lnb,
+                enum_descriptor: enum_desc,
+            }),
+            EnumRepr::Binary => Some(FieldDecoder::RepeatedEnumBinary {
+                values_builder: BinaryBuilderInner::new(config.use_large_binary),
+                offsets: offsets(),
+                list_name: ln,
+                list_nullable: lnb,
+                enum_descriptor: enum_desc,
+            }),
+        },
+        Kind::Message(msg_desc) => {
+            build_repeated_message_decoder(&msg_desc, config, offsets(), ln, lnb)
+        }
+    }
+}
+
+fn build_repeated_message_decoder(
+    msg_desc: &MessageDescriptor,
+    config: &PtarsConfig,
+    offsets: ListOffsets,
+    ln: Arc<str>,
+    lnb: bool,
+) -> Option<FieldDecoder> {
+    match msg_desc.full_name() {
+        "google.protobuf.Timestamp" => Some(FieldDecoder::RepeatedTimestamp {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+            unit: config.timestamp_unit,
+            tz: config.timestamp_tz.clone(),
+        }),
+        "google.protobuf.Duration" => Some(FieldDecoder::RepeatedDuration {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+            unit: config.duration_unit,
+        }),
+        "google.type.Date" => Some(FieldDecoder::RepeatedDate {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.type.TimeOfDay" => Some(FieldDecoder::RepeatedTimeOfDay {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+            unit: config.time_unit,
+        }),
+        "google.protobuf.DoubleValue" => Some(FieldDecoder::RepeatedWrapperDouble {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.FloatValue" => Some(FieldDecoder::RepeatedWrapperFloat {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.Int64Value" => Some(FieldDecoder::RepeatedWrapperInt64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.UInt64Value" => Some(FieldDecoder::RepeatedWrapperUInt64 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.Int32Value" => Some(FieldDecoder::RepeatedWrapperInt32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.UInt32Value" => Some(FieldDecoder::RepeatedWrapperUInt32 {
+            values_builder: PrimitiveBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.BoolValue" => Some(FieldDecoder::RepeatedWrapperBool {
+            values_builder: BooleanBuilder::new(),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.StringValue" => Some(FieldDecoder::RepeatedWrapperString {
+            values_builder: StringBuilderInner::new(config.use_large_string),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        "google.protobuf.BytesValue" => Some(FieldDecoder::RepeatedWrapperBytes {
+            values_builder: BinaryBuilderInner::new(config.use_large_binary),
+            offsets,
+            list_name: ln,
+            list_nullable: lnb,
+        }),
+        _ => {
+            let sub_decoder = MessageDecoder::new(msg_desc, config);
+            Some(FieldDecoder::RepeatedMessage {
+                sub_decoder,
+                offsets,
+                list_name: ln,
+                list_nullable: lnb,
+            })
+        }
+    }
+}
+
+fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+    let map_entry = match field.kind() {
+        Kind::Message(desc) => desc,
+        _ => return None,
+    };
+    let key_field = map_entry.get_field_by_name("key")?;
+    let value_field = map_entry.get_field_by_name("value")?;
+
+    // Build singular decoders for key and value (they buffer per-entry, not per-row)
+    let key_decoder = build_singular_decoder_for_map(&key_field, config)?;
+    let value_decoder = build_singular_decoder_for_map(&value_field, config)?;
+
+    Some(FieldDecoder::Map {
+        key_decoder: Box::new(key_decoder),
+        value_decoder: Box::new(value_decoder),
+        offsets: vec![0],
+        map_value_name: config.map_value_name.clone(),
+        map_value_nullable: config.map_value_nullable,
+    })
+}
+
+/// Build a singular decoder for use inside a map entry (no presence tracking).
+fn build_singular_decoder_for_map(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+) -> Option<FieldDecoder> {
+    // Map keys/values are never "optional" in protobuf sense — they use proto3 defaults
+    match field.kind() {
+        Kind::Int32 => Some(FieldDecoder::Int32 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Int64 => Some(FieldDecoder::Int64 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Uint32 => Some(FieldDecoder::UInt32 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Uint64 => Some(FieldDecoder::UInt64 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sint32 => Some(FieldDecoder::Sint32 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sint64 => Some(FieldDecoder::Sint64 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sfixed32 => Some(FieldDecoder::Sfixed32 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Sfixed64 => Some(FieldDecoder::Sfixed64 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Fixed32 => Some(FieldDecoder::Fixed32 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Fixed64 => Some(FieldDecoder::Fixed64 {
+            value: 0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Float => Some(FieldDecoder::Float {
+            value: 0.0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Double => Some(FieldDecoder::Double {
+            value: 0.0,
+            has_value: false,
+            has_presence: false,
+            builder: PrimitiveBuilder::new(),
+        }),
+        Kind::Bool => Some(FieldDecoder::Bool {
+            value: false,
+            has_value: false,
+            has_presence: false,
+            builder: BooleanBuilder::new(),
+        }),
+        Kind::String => Some(FieldDecoder::String {
+            value: Vec::new(),
+            has_value: false,
+            has_presence: false,
+            builder: StringBuilderInner::new(config.use_large_string),
+        }),
+        Kind::Bytes => Some(FieldDecoder::Bytes {
+            value: Vec::new(),
+            has_value: false,
+            has_presence: false,
+            builder: BinaryBuilderInner::new(config.use_large_binary),
+        }),
+        Kind::Enum(enum_desc) => match config.enum_repr {
+            EnumRepr::Int32 => Some(FieldDecoder::EnumInt32 {
+                value: 0,
+                has_value: false,
+                has_presence: false,
+                builder: PrimitiveBuilder::new(),
+            }),
+            EnumRepr::String => Some(FieldDecoder::EnumString {
+                value: 0,
+                has_value: false,
+                has_presence: false,
+                builder: StringBuilderInner::new(config.use_large_string),
+                enum_descriptor: enum_desc,
+            }),
+            EnumRepr::Binary => Some(FieldDecoder::EnumBinary {
+                value: 0,
+                has_value: false,
+                has_presence: false,
+                builder: BinaryBuilderInner::new(config.use_large_binary),
+                enum_descriptor: enum_desc,
+            }),
+        },
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Decode a BinaryArray of serialized protobuf messages directly into a RecordBatch.
+///
+/// Parses protobuf wire format directly into Arrow builders — no intermediate
+/// message objects are created.
+pub fn binary_array_to_record_batch_direct(
+    array: &BinaryArray,
+    descriptor: &MessageDescriptor,
+    config: &PtarsConfig,
+) -> Result<RecordBatch, prost::DecodeError> {
+    let mut decoder = MessageDecoder::new(descriptor, config);
+    for i in 0..array.len() {
+        if array.is_null(i) {
+            decoder.decode_null_row();
+        } else {
+            decoder.decode_row(array.value(i))?;
+        }
+    }
+    Ok(decoder.finish())
+}
+
+/// Convert DynamicMessage instances to a RecordBatch using the default configuration.
+///
+/// Each message is serialized to protobuf wire format, then decoded directly
+/// into Arrow arrays.
 pub fn messages_to_record_batch(
-    messages: &[DynamicMessage],
+    messages: &[prost_reflect::DynamicMessage],
     message_descriptor: &MessageDescriptor,
 ) -> RecordBatch {
     messages_to_record_batch_with_config(messages, message_descriptor, &PtarsConfig::default())
 }
 
-/// Convert messages to a RecordBatch using the specified configuration.
+/// Convert DynamicMessage instances to a RecordBatch using the specified configuration.
+///
+/// Each message is serialized to protobuf wire format, then decoded directly
+/// into Arrow arrays.
 pub fn messages_to_record_batch_with_config(
-    messages: &[DynamicMessage],
+    messages: &[prost_reflect::DynamicMessage],
     message_descriptor: &MessageDescriptor,
     config: &PtarsConfig,
 ) -> RecordBatch {
-    let mut builder = MessageArrayBuilder::new(message_descriptor, config);
-    messages.iter().for_each(|message| {
-        builder.append(message);
-    });
-    RecordBatch::from(builder.build_struct_array())
+    use arrow_array::builder::BinaryBuilder;
+    use prost::Message;
+
+    let mut bin_builder = BinaryBuilder::new();
+    for msg in messages {
+        bin_builder.append_value(msg.encode_to_vec());
+    }
+    let binary_array = bin_builder.finish();
+    binary_array_to_record_batch_direct(&binary_array, message_descriptor, config)
+        .expect("failed to decode messages")
 }
 
-use arrow_array::BinaryArray;
-
-/// Convert a binary array to a vector of DynamicMessage.
+/// Decode a BinaryArray into a vector of DynamicMessage.
 ///
 /// Each element in the binary array is expected to be a serialized protobuf message.
-/// Null values in the array will result in default (empty) messages.
+/// Null values in the array result in default (empty) messages.
 pub fn binary_array_to_messages(
     array: &BinaryArray,
     message_descriptor: &MessageDescriptor,
-) -> Result<Vec<DynamicMessage>, prost::DecodeError> {
+) -> Result<Vec<prost_reflect::DynamicMessage>, prost::DecodeError> {
     let mut messages = Vec::with_capacity(array.len());
     for i in 0..array.len() {
         let message = if array.is_null(i) {
-            DynamicMessage::new(message_descriptor.clone())
+            prost_reflect::DynamicMessage::new(message_descriptor.clone())
         } else {
-            let bytes = array.value(i);
-            DynamicMessage::decode(message_descriptor.clone(), bytes)?
+            prost_reflect::DynamicMessage::decode(message_descriptor.clone(), array.value(i))?
         };
         messages.push(message);
     }
     Ok(messages)
-}
-
-/// Convert a binary array to a record batch using the default configuration.
-///
-/// Each element in the binary array is expected to be a serialized protobuf message.
-/// The resulting record batch will have one column per field in the message descriptor.
-pub fn binary_array_to_record_batch(
-    array: &BinaryArray,
-    message_descriptor: &MessageDescriptor,
-) -> Result<RecordBatch, prost::DecodeError> {
-    binary_array_to_record_batch_with_config(array, message_descriptor, &PtarsConfig::default())
-}
-
-/// Convert a binary array to a record batch using the specified configuration.
-///
-/// Each element in the binary array is expected to be a serialized protobuf message.
-/// The resulting record batch will have one column per field in the message descriptor.
-pub fn binary_array_to_record_batch_with_config(
-    array: &BinaryArray,
-    message_descriptor: &MessageDescriptor,
-    config: &PtarsConfig,
-) -> Result<RecordBatch, prost::DecodeError> {
-    let mut builder = MessageArrayBuilder::new(message_descriptor, config);
-    for i in 0..array.len() {
-        let message = if array.is_null(i) {
-            DynamicMessage::new(message_descriptor.clone())
-        } else {
-            let bytes = array.value(i);
-            DynamicMessage::decode(message_descriptor.clone(), bytes)?
-        };
-        builder.append(&message);
-    }
-    Ok(RecordBatch::from(builder.build_struct_array()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_seconds_nanos_to_unit_second() {
-        // Second unit just returns seconds, ignoring nanos
-        assert_eq!(
-            convert_seconds_nanos_to_unit(100, 500_000_000, TimeUnit::Second, "Test"),
-            100
-        );
-        assert_eq!(
-            convert_seconds_nanos_to_unit(-100, 500_000_000, TimeUnit::Second, "Test"),
-            -100
-        );
-        assert_eq!(
-            convert_seconds_nanos_to_unit(0, 999_999_999, TimeUnit::Second, "Test"),
-            0
-        );
-    }
-
-    #[test]
-    fn test_convert_seconds_nanos_to_unit_millisecond() {
-        // 1 second + 500ms = 1500ms
-        assert_eq!(
-            convert_seconds_nanos_to_unit(1, 500_000_000, TimeUnit::Millisecond, "Test"),
-            1500
-        );
-        // 0 seconds + 123ms
-        assert_eq!(
-            convert_seconds_nanos_to_unit(0, 123_000_000, TimeUnit::Millisecond, "Test"),
-            123
-        );
-        // Negative seconds
-        assert_eq!(
-            convert_seconds_nanos_to_unit(-1, 0, TimeUnit::Millisecond, "Test"),
-            -1000
-        );
-    }
-
-    #[test]
-    fn test_convert_seconds_nanos_to_unit_microsecond() {
-        // 1 second + 500us = 1_000_500us
-        assert_eq!(
-            convert_seconds_nanos_to_unit(1, 500_000, TimeUnit::Microsecond, "Test"),
-            1_000_500
-        );
-        // 0 seconds + 123us
-        assert_eq!(
-            convert_seconds_nanos_to_unit(0, 123_000, TimeUnit::Microsecond, "Test"),
-            123
-        );
-    }
-
-    #[test]
-    fn test_convert_seconds_nanos_to_unit_nanosecond() {
-        // 1 second + 500ns = 1_000_000_500ns
-        assert_eq!(
-            convert_seconds_nanos_to_unit(1, 500, TimeUnit::Nanosecond, "Test"),
-            1_000_000_500
-        );
-        // 0 seconds + 123ns
-        assert_eq!(
-            convert_seconds_nanos_to_unit(0, 123, TimeUnit::Nanosecond, "Test"),
-            123
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "Timestamp overflow")]
-    fn test_convert_seconds_nanos_to_unit_overflow_millisecond() {
-        // i64::MAX seconds would overflow when converted to milliseconds
-        convert_seconds_nanos_to_unit(i64::MAX, 0, TimeUnit::Millisecond, "Timestamp");
-    }
-
-    #[test]
-    #[should_panic(expected = "Duration overflow")]
-    fn test_convert_seconds_nanos_to_unit_overflow_microsecond() {
-        // i64::MAX seconds would overflow when converted to microseconds
-        convert_seconds_nanos_to_unit(i64::MAX, 0, TimeUnit::Microsecond, "Duration");
-    }
-
-    #[test]
-    #[should_panic(expected = "Test overflow")]
-    fn test_convert_seconds_nanos_to_unit_overflow_nanosecond() {
-        // i64::MAX seconds would overflow when converted to nanoseconds
-        convert_seconds_nanos_to_unit(i64::MAX, 0, TimeUnit::Nanosecond, "Test");
-    }
-
-    #[test]
-    #[should_panic(expected = "overflow: value cannot be represented in milliseconds")]
-    fn test_convert_seconds_nanos_to_unit_overflow_addition_millisecond() {
-        // i64::MAX / 1000 is the max seconds that can be scaled to milliseconds without overflow
-        // Add nanos that would push it over after successful multiplication
-        let max_safe_seconds = i64::MAX / 1000;
-        // This value plus (nanos / 1_000_000) should overflow
-        convert_seconds_nanos_to_unit(max_safe_seconds, 808_000_000, TimeUnit::Millisecond, "Test");
-    }
-
-    #[test]
-    #[should_panic(expected = "overflow: value cannot be represented in microseconds")]
-    fn test_convert_seconds_nanos_to_unit_overflow_addition_microsecond() {
-        // i64::MAX / 1_000_000 = 9223372036854
-        // 9223372036854 * 1_000_000 = 9223372036854000000
-        // i64::MAX - 9223372036854000000 = 775807
-        // We need (nanos / 1_000) > 775807, so nanos > 775_807_000
-        let max_safe_seconds = i64::MAX / 1_000_000;
-        convert_seconds_nanos_to_unit(max_safe_seconds, 776_000_000, TimeUnit::Microsecond, "Test");
-    }
-
-    #[test]
-    #[should_panic(expected = "overflow: value cannot be represented in nanoseconds")]
-    fn test_convert_seconds_nanos_to_unit_overflow_addition_nanosecond() {
-        // i64::MAX / 1_000_000_000 = 9223372036
-        // 9223372036 * 1_000_000_000 = 9223372036000000000
-        // i64::MAX - 9223372036000000000 = 854775807
-        // We need nanos > 854775807
-        let max_safe_seconds = i64::MAX / 1_000_000_000;
-        convert_seconds_nanos_to_unit(max_safe_seconds, 855_000_000, TimeUnit::Nanosecond, "Test");
-    }
-
-    #[test]
-    fn test_string_builder_wrapper_len_and_is_empty() {
-        let config = PtarsConfig::default();
-        let mut builder = StringBuilderWrapper::new(&config);
-
-        assert!(builder.is_empty());
-        assert_eq!(builder.len(), 0);
-
-        builder.append(&Value::String("hello".to_string()));
-        assert!(!builder.is_empty());
-        assert_eq!(builder.len(), 1);
-    }
-
-    #[test]
-    fn test_string_builder_wrapper_large_len_and_is_empty() {
-        let config = PtarsConfig::new().with_use_large_string(true);
-        let mut builder = StringBuilderWrapper::new(&config);
-
-        assert!(builder.is_empty());
-        assert_eq!(builder.len(), 0);
-
-        builder.append(&Value::String("hello".to_string()));
-        assert!(!builder.is_empty());
-        assert_eq!(builder.len(), 1);
-    }
-
-    #[test]
-    fn test_binary_builder_wrapper_len_and_is_empty() {
-        let config = PtarsConfig::default();
-        let mut builder = BinaryBuilderWrapper::new(&config);
-
-        assert!(builder.is_empty());
-        assert_eq!(builder.len(), 0);
-
-        builder.append(&Value::Bytes(prost::bytes::Bytes::from_static(&[1, 2, 3])));
-        assert!(!builder.is_empty());
-        assert_eq!(builder.len(), 1);
-    }
-
-    #[test]
-    fn test_binary_builder_wrapper_large_len_and_is_empty() {
-        let config = PtarsConfig::new().with_use_large_binary(true);
-        let mut builder = BinaryBuilderWrapper::new(&config);
-
-        assert!(builder.is_empty());
-        assert_eq!(builder.len(), 0);
-
-        builder.append(&Value::Bytes(prost::bytes::Bytes::from_static(&[1, 2, 3])));
-        assert!(!builder.is_empty());
-        assert_eq!(builder.len(), 1);
-    }
 }
