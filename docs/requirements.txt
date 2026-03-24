@@ -16,7 +16,7 @@ ghp-import==2.1.0
     # via mkdocs
 googleapis-common-protos==1.73.0
     # via ptars
-griffelib==2.0.0
+griffelib==2.0.1
     # via mkdocstrings-python
 idna==3.11
     # via requests
@@ -76,7 +76,7 @@ protobuf==6.33.6
     # via
     #   googleapis-common-protos
     #   ptars
-ptars==0.0.16
+ptars==0.0.17
     # via -r docs/requirements.txt.in
 pyarrow==23.0.1
     # via ptars

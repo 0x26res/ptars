@@ -24,20 +24,23 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: "3.12"
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.7.19"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build docs
         run: |
-          uv run --group=docs mkdocs build --strict
+          uv run --python=${{ env.PYTHON_VERSION }} --group=docs mkdocs build --strict
 
   test:
     strategy:
@@ -47,6 +50,7 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+          - "3.14"
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -58,6 +62,7 @@ jobs:
     - uses: astral-sh/setup-uv@v7
       with:
         version: "0.9.30"
+        python-version: ${{ matrix.python }}
 
 
     - name: Install just and grcov
