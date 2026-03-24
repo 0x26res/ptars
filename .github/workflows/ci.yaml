@@ -60,16 +60,17 @@ jobs:
         version: "0.9.30"
 
 
-    - name: Install grcov
-      run: cargo install grcov
+    - name: Install just and grcov
+      run: |
+        cargo install just grcov
 
     - name: Build
       run: |
-        make develop
-        make protoc
+        just develop
+        just protoc
 
     - name: Run coverage
-      run: make coverage
+      run: just coverage
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
