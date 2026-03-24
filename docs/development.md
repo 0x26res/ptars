@@ -6,17 +6,18 @@ This guide covers how to set up a development environment and contribute to ptar
 
 - Python 3.10+
 - Rust (latest stable)
+- [just](https://github.com/casey/just) as a command runner
 - [uv](https://github.com/astral-sh/uv) for Python dependency management
 - [maturin](https://github.com/PyO3/maturin) for building the Rust/Python package
 
 ## Setting Up the Development Environment
 
-Most development tasks are available via the Makefile.
+Most development tasks are available via the [justfile](https://github.com/casey/just).
 
 ### Create Virtual Environment and Install Dependencies
 
 ```bash
-make develop
+just develop
 ```
 
 This will:
@@ -39,7 +40,7 @@ export CARGO_BUILD_TARGET=aarch64-apple-darwin
 Run both Python and Rust tests:
 
 ```bash
-make test
+just test
 ```
 
 Or run them separately:
@@ -58,13 +59,13 @@ cargo test
 Build the package locally:
 
 ```bash
-make build
+just build
 ```
 
 Build distribution wheels using Docker:
 
 ```bash
-make dist
+just dist
 ```
 
 ## Linting
@@ -72,7 +73,7 @@ make dist
 Run all linters (Rust formatter, clippy, prek):
 
 ```bash
-make lint
+just lint
 ```
 
 ## Code Coverage
@@ -80,13 +81,13 @@ make lint
 First, install coverage tools:
 
 ```bash
-make coverage-env
+just coverage-env
 ```
 
 Then run coverage:
 
 ```bash
-make coverage
+just coverage
 ```
 
 ## Benchmarking
@@ -94,7 +95,7 @@ make coverage
 Run benchmarks comparing ptars to protarrow:
 
 ```bash
-make benchmark
+just benchmark
 ```
 
 !!! note
@@ -110,7 +111,7 @@ Create a release from a new tag in Github. The CI takes care of the rest.
 The CI script for releases is auto-generated, though it had to be customized.
 
 ```bash
-make generate-ci
+just generate-ci
 ```
 
 ## Project Structure
