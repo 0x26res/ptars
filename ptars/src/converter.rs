@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::arrow_to_proto_direct::record_batch_to_array;
+    use crate::arrow_to_proto::record_batch_to_array;
     use crate::config::PtarsConfig;
-    use crate::proto_to_arrow_direct::{
+    use crate::proto_to_arrow::{
         binary_array_to_messages, binary_array_to_record_batch_direct, messages_to_record_batch,
         messages_to_record_batch_with_config,
     };
@@ -3252,7 +3252,7 @@ mod tests {
 
     #[test]
     fn test_binary_array_to_messages() {
-        use crate::proto_to_arrow_direct::binary_array_to_messages;
+        use crate::proto_to_arrow::binary_array_to_messages;
         use arrow_array::BinaryArray;
         use prost::Message;
 
@@ -3308,7 +3308,7 @@ mod tests {
 
     #[test]
     fn test_binary_array_to_messages_with_nulls() {
-        use crate::proto_to_arrow_direct::binary_array_to_messages;
+        use crate::proto_to_arrow::binary_array_to_messages;
         use arrow_array::BinaryArray;
         use prost::Message;
 
@@ -3365,7 +3365,7 @@ mod tests {
 
     #[test]
     fn test_binary_array_to_record_batch() {
-        use crate::proto_to_arrow_direct::binary_array_to_record_batch_direct;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
         use arrow_array::BinaryArray;
         use prost::Message;
 
@@ -3415,7 +3415,7 @@ mod tests {
 
     #[test]
     fn test_binary_array_roundtrip() {
-        use crate::proto_to_arrow_direct::binary_array_to_record_batch_direct;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
         use arrow_array::BinaryArray;
         use prost::Message;
 

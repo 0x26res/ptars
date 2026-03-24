@@ -30,17 +30,17 @@
 //! let record_batch = binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config).unwrap();
 //! ```
 
-pub mod arrow_to_proto_direct;
+pub mod arrow_to_proto;
 pub mod config;
-pub mod proto_to_arrow_direct;
+pub mod proto_to_arrow;
 
 #[cfg(test)]
 mod converter;
 
 // Re-export commonly used items
-pub use arrow_to_proto_direct::record_batch_to_array;
+pub use arrow_to_proto::record_batch_to_array;
 pub use config::{EnumRepr, PtarsConfig};
-pub use proto_to_arrow_direct::{
+pub use proto_to_arrow::{
     binary_array_to_messages, binary_array_to_record_batch_direct, messages_to_record_batch,
     messages_to_record_batch_with_config,
 };
