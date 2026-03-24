@@ -18,3 +18,5 @@ coverage.xml
 lcov.info
 site/
 *.profraw
+*.dylib
+*.dylib**
