@@ -12,7 +12,10 @@ import pyarrow as pa
 from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
-from ptars._lib import MessageHandler, ProtoRegistry  # type: ignore[unresolved-import]
+from ptars._lib import (  # ty:ignore[unresolved-import]
+    MessageHandler,
+    ProtoRegistry,
+)
 
 if TYPE_CHECKING:
     from ptars import PtarsConfig
@@ -177,7 +180,7 @@ class HandlerPool:
         """
         handler = self.get_for_message(descriptor)
         array = handler.record_batch_to_array(record_batch)
-        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]  # type: ignore[unresolved-attribute]
+        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]  # ty:ignore[unresolved-attribute]
 
     def read_size_delimited_file(
         self, path: str | os.PathLike, descriptor: Descriptor

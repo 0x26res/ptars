@@ -35,7 +35,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.7.19"
+          version: "0.11.1"
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build docs
@@ -61,7 +61,7 @@ jobs:
 
     - uses: astral-sh/setup-uv@v7
       with:
-        version: "0.9.30"
+        version: "0.11.1"
         python-version: ${{ matrix.python }}
 
 
