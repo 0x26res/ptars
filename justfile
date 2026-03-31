@@ -64,10 +64,36 @@ coverage: develop coverage-env
 
 # Update dependencies
 update:
-    cargo generate-lockfile && \
-        uv lock --upgrade && \
-        prek autoupdate && prek run --all-files && \
-        uv pip compile docs/requirements.txt.in > docs/requirements.txt
+    cargo generate-lockfile
+    uv lock --upgrade
+    prek autoupdate
+    -prek run --all-files
+    prek run --all-files
+    uv pip compile docs/requirements.txt.in > docs/requirements.txt
+
+# Update dependencies and create a PR branch
+update-e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$branch" != "main" ]; then
+        echo "Error: must be on main branch (currently on '$branch')"
+        exit 1
+    fi
+    if [ -n "$(git diff --stat)" ]; then
+        echo "Error: working directory has uncommitted changes"
+        exit 1
+    fi
+    just update
+    if [ -n "$(git diff --stat)" ]; then
+        date=$(date +%Y-%m-%d)
+        git checkout -b "update-$date"
+        git add -A
+        git commit -m "Update $date"
+        git push -u origin "update-$date"
+    else
+        echo "No changes after update"
+    fi
 
 # Run benchmarks
 benchmark: develop

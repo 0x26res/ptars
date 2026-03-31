@@ -14,9 +14,9 @@ colorama==0.4.6
     # via mkdocs-material
 ghp-import==2.1.0
     # via mkdocs
-googleapis-common-protos==1.73.0
+googleapis-common-protos==1.73.1
     # via ptars
-griffelib==2.0.1
+griffelib==2.0.2
     # via mkdocstrings-python
 idna==3.11
     # via requests
@@ -72,7 +72,7 @@ pathspec==1.0.4
     # via mkdocs
 platformdirs==4.9.4
     # via mkdocs-get-deps
-protobuf==6.33.6
+protobuf==7.34.1
     # via
     #   googleapis-common-protos
     #   ptars
@@ -80,9 +80,9 @@ ptars==0.0.17
     # via -r docs/requirements.txt.in
 pyarrow==23.0.1
     # via ptars
-pygments==2.19.2
+pygments==2.20.0
     # via mkdocs-material
-pymdown-extensions==10.21
+pymdown-extensions==10.21.2
     # via
     #   mkdocs-material
     #   mkdocstrings
@@ -96,7 +96,7 @@ pyyaml==6.0.3
     #   pyyaml-env-tag
 pyyaml-env-tag==1.1
     # via mkdocs
-requests==2.32.5
+requests==2.33.1
     # via mkdocs-material
 six==1.17.0
     # via python-dateutil
