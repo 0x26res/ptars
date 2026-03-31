@@ -2,10 +2,7 @@
 mod tests {
     use crate::arrow_to_proto::record_batch_to_array;
     use crate::config::PtarsConfig;
-    use crate::proto_to_arrow::{
-        binary_array_to_messages, binary_array_to_record_batch_direct, messages_to_record_batch,
-        messages_to_record_batch_with_config,
-    };
+    use crate::proto_to_arrow::{messages_to_record_batch, messages_to_record_batch_with_config};
     use arrow::array::Array;
     use prost_reflect::prost_types::{
         field_descriptor_proto::{Label, Type},
