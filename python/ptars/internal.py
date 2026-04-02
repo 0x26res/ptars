@@ -113,7 +113,7 @@ class HandlerPool:
                 f"Received {google._upb._message.MessageMeta.__class__.__name__}"
                 f" instead of {Descriptor.__class__.__name__}"
             )
-            descriptor = descriptor.DESCRIPTOR
+            descriptor = descriptor.DESCRIPTOR  # ty: ignore[unresolved-attribute]
         if not isinstance(
             descriptor,
             (google.protobuf.descriptor.Descriptor, google._upb._message.Descriptor),

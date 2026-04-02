@@ -30,7 +30,7 @@ def test_with_wrong_types():
 
     assert isinstance(ExampleMessage.DESCRIPTOR.file, FileDescriptor)
     with pytest.raises(TypeError, match="Expecting Descriptor"):
-        pool.get_for_message(ExampleMessage.DESCRIPTOR.file)
+        pool.get_for_message(ExampleMessage.DESCRIPTOR.file)  # ty: ignore[invalid-argument-type]
 
 
 def test_messages_to_record_batch():
