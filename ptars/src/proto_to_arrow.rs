@@ -16,7 +16,7 @@ use chrono::Datelike;
 
 use prost_reflect::{EnumDescriptor, FieldDescriptor, Kind, MessageDescriptor};
 
-use crate::config::{EnumRepr, PtarsConfig};
+use crate::config::{ConfluentWirePolicy, EnumRepr, PtarsConfig};
 
 // ---------------------------------------------------------------------------
 // Wire format decoding primitives
@@ -92,6 +92,40 @@ fn read_length_delimited(buf: &[u8]) -> Result<(&[u8], usize), prost::DecodeErro
         return Err(decode_error("unexpected EOF"));
     }
     Ok((&buf[n..total], total))
+}
+
+/// Strip the Confluent Schema Registry wire format prefix from a message.
+fn strip_confluent_prefix<'a>(
+    buf: &'a [u8],
+    policy: ConfluentWirePolicy,
+) -> Result<&'a [u8], prost::DecodeError> {
+    match policy {
+        ConfluentWirePolicy::Raw => Ok(buf),
+        ConfluentWirePolicy::Standard => {
+            if buf.len() < 5 {
+                return Err(decode_error(
+                    "message too short for Confluent wire format header",
+                ));
+            }
+            Ok(&buf[5..])
+        }
+        ConfluentWirePolicy::Protobuf => {
+            if buf.len() < 5 {
+                return Err(decode_error(
+                    "message too short for Confluent wire format header",
+                ));
+            }
+            let remaining = &buf[5..];
+            // Read varint-encoded count of message indexes
+            let (count, mut offset) = decode_varint(remaining)?;
+            // Skip `count` varints (the message indexes themselves)
+            for _ in 0..count {
+                let (_, n) = decode_varint(&remaining[offset..])?;
+                offset += n;
+            }
+            Ok(&remaining[offset..])
+        }
+    }
 }
 
 #[inline]
@@ -2956,11 +2990,13 @@ pub fn binary_array_to_record_batch_direct(
     config: &PtarsConfig,
 ) -> Result<RecordBatch, prost::DecodeError> {
     let mut decoder = MessageDecoder::new(descriptor, config);
+    let policy = config.confluent_wire_policy;
     for i in 0..array.len() {
         if array.is_null(i) {
             decoder.decode_null_row();
         } else {
-            decoder.decode_row(array.value(i))?;
+            let bytes = strip_confluent_prefix(array.value(i), policy)?;
+            decoder.decode_row(bytes)?;
         }
     }
     Ok(decoder.finish())
@@ -3016,4 +3052,62 @@ pub fn binary_array_to_messages(
         messages.push(message);
     }
     Ok(messages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_confluent_prefix_raw() {
+        let buf = b"\x00\x00\x00\x00\x01\x08\x96\x01";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Raw).unwrap();
+        assert_eq!(result, buf);
+    }
+
+    #[test]
+    fn test_strip_confluent_prefix_standard() {
+        // magic byte + 4-byte schema ID + payload
+        let buf = b"\x00\x00\x00\x00\x01\x08\x96\x01";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Standard).unwrap();
+        assert_eq!(result, b"\x08\x96\x01");
+    }
+
+    #[test]
+    fn test_strip_confluent_prefix_standard_too_short() {
+        let buf = b"\x00\x01\x02";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Standard);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_strip_confluent_prefix_protobuf_zero_indexes() {
+        // magic byte + 4-byte schema ID + varint 0 (count=0) + payload
+        let buf = b"\x00\x00\x00\x00\x01\x00\x08\x96\x01";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Protobuf).unwrap();
+        assert_eq!(result, b"\x08\x96\x01");
+    }
+
+    #[test]
+    fn test_strip_confluent_prefix_protobuf_one_index() {
+        // magic byte + 4-byte schema ID + varint 1 (count=1) + varint 0 (index) + payload
+        let buf = b"\x00\x00\x00\x00\x01\x01\x00\x08\x96\x01";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Protobuf).unwrap();
+        assert_eq!(result, b"\x08\x96\x01");
+    }
+
+    #[test]
+    fn test_strip_confluent_prefix_protobuf_two_indexes() {
+        // magic byte + 4-byte schema ID + varint 2 (count) + varint 4 + varint 2 + payload
+        let buf = b"\x00\x00\x00\x00\x01\x02\x04\x02\x08\x96\x01";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Protobuf).unwrap();
+        assert_eq!(result, b"\x08\x96\x01");
+    }
+
+    #[test]
+    fn test_strip_confluent_prefix_protobuf_too_short() {
+        let buf = b"\x00\x01";
+        let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Protobuf);
+        assert!(result.is_err());
+    }
 }

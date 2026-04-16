@@ -43,6 +43,7 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
     let use_large_binary: bool = config.getattr("use_large_binary")?.extract()?;
     let use_large_list: bool = config.getattr("use_large_list")?.extract()?;
     let enum_repr: String = config.getattr("enum_repr")?.extract()?;
+    let confluent_wire_policy: String = config.getattr("confluent_wire_policy")?.extract()?;
 
     let enum_repr = match enum_repr.as_str() {
         "int32" => ptars::EnumRepr::Int32,
@@ -52,6 +53,18 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Invalid enum_repr '{}', expected one of: int32, string, binary",
                 enum_repr
+            )))
+        }
+    };
+
+    let confluent_wire_policy = match confluent_wire_policy.as_str() {
+        "raw" => ptars::ConfluentWirePolicy::Raw,
+        "standard" => ptars::ConfluentWirePolicy::Standard,
+        "protobuf" => ptars::ConfluentWirePolicy::Protobuf,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid confluent_wire_policy '{}', expected one of: raw, standard, protobuf",
+                confluent_wire_policy
             )))
         }
     };
@@ -69,7 +82,8 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
         .with_use_large_string(use_large_string)
         .with_use_large_binary(use_large_binary)
         .with_use_large_list(use_large_list)
-        .with_enum_repr(enum_repr))
+        .with_enum_repr(enum_repr)
+        .with_confluent_wire_policy(confluent_wire_policy))
 }
 
 /// Read a varint from a reader. Returns None if EOF is reached at the start.

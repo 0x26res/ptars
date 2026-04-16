@@ -1288,3 +1288,202 @@ class TestEnumReprConfig:
     def test_enum_repr_invalid(self):
         with pytest.raises(ValueError, match="enum_repr must be one of"):
             PtarsConfig(enum_repr="invalid")
+
+
+def _confluent_standard(raw: bytes, schema_id: int = 1) -> bytes:
+    """Prepend a 5-byte Confluent standard header (magic byte + schema ID)."""
+    return b"\x00" + schema_id.to_bytes(4, "big") + raw
+
+
+def _confluent_protobuf(
+    raw: bytes, schema_id: int = 1, message_indexes: list[int] | None = None
+) -> bytes:
+    """Prepend a Confluent protobuf header (standard header + message index array)."""
+    header = b"\x00" + schema_id.to_bytes(4, "big")
+    if message_indexes is None:
+        # count=0 means default (first) message
+        header += b"\x00"
+    else:
+        header += _encode_varint(len(message_indexes))
+        for idx in message_indexes:
+            header += _encode_varint(idx)
+    return header + raw
+
+
+def _encode_varint(value: int) -> bytes:
+    """Encode an integer as a protobuf varint."""
+    result = bytearray()
+    while value > 0x7F:
+        result.append((value & 0x7F) | 0x80)
+        value >>= 7
+    result.append(value & 0x7F)
+    return bytes(result)
+
+
+class TestConfluentWirePolicyConfig:
+    """Test Confluent Schema Registry wire format stripping."""
+
+    def test_default_is_raw(self):
+        """Default config uses raw (no stripping)."""
+        config = PtarsConfig()
+        assert config.confluent_wire_policy == "raw"
+
+    def test_invalid_policy(self):
+        """Invalid policy value should raise."""
+        with pytest.raises(ValueError, match="confluent_wire_policy must be one of"):
+            PtarsConfig(confluent_wire_policy="invalid")
+
+    def test_standard_strips_header(self):
+        """Standard policy strips 5-byte header and decodes correctly."""
+        config = PtarsConfig(confluent_wire_policy="standard")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(int32_value=42, string_value="hello")
+        raw = msg.SerializeToString()
+        payload = _confluent_standard(raw)
+
+        batch = handler.list_to_record_batch([payload])
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]
+
+    def test_standard_with_different_schema_ids(self):
+        """Standard policy works regardless of schema ID value."""
+        config = PtarsConfig(confluent_wire_policy="standard")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(double_value=3.14)
+        raw = msg.SerializeToString()
+
+        payloads = [
+            _confluent_standard(raw, schema_id=1),
+            _confluent_standard(raw, schema_id=9999),
+            _confluent_standard(raw, schema_id=0),
+        ]
+
+        batch = handler.list_to_record_batch(payloads)
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg, msg, msg]
+
+    def test_standard_multiple_messages(self):
+        """Standard policy works with multiple distinct messages."""
+        config = PtarsConfig(confluent_wire_policy="standard")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        messages = [
+            TestMessage(int32_value=1, string_value="first"),
+            TestMessage(int32_value=2, string_value="second"),
+            TestMessage(int64_value=999),
+        ]
+        payloads = [_confluent_standard(m.SerializeToString()) for m in messages]
+
+        batch = handler.list_to_record_batch(payloads)
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    def test_protobuf_zero_indexes(self):
+        """Protobuf policy strips header + count=0 (default message)."""
+        config = PtarsConfig(confluent_wire_policy="protobuf")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(int32_value=99, bool_value=True)
+        raw = msg.SerializeToString()
+        payload = _confluent_protobuf(raw)
+
+        batch = handler.list_to_record_batch([payload])
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]
+
+    def test_protobuf_one_index(self):
+        """Protobuf policy strips header + count=1 + one index varint."""
+        config = PtarsConfig(confluent_wire_policy="protobuf")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(int32_value=7, string_value="nested")
+        raw = msg.SerializeToString()
+        payload = _confluent_protobuf(raw, message_indexes=[0])
+
+        batch = handler.list_to_record_batch([payload])
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]
+
+    def test_protobuf_two_indexes(self):
+        """Protobuf policy strips header + count=2 + two index varints."""
+        config = PtarsConfig(confluent_wire_policy="protobuf")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(uint64_value=12345)
+        raw = msg.SerializeToString()
+        payload = _confluent_protobuf(raw, message_indexes=[4, 2])
+
+        batch = handler.list_to_record_batch([payload])
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]
+
+    def test_protobuf_large_index_varint(self):
+        """Protobuf policy handles multi-byte varint indexes."""
+        config = PtarsConfig(confluent_wire_policy="protobuf")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(int32_value=42)
+        raw = msg.SerializeToString()
+        # Use a large index value (200) that requires a 2-byte varint
+        payload = _confluent_protobuf(raw, message_indexes=[200])
+
+        batch = handler.list_to_record_batch([payload])
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]
+
+    def test_protobuf_multiple_messages(self):
+        """Protobuf policy works with multiple distinct messages."""
+        config = PtarsConfig(confluent_wire_policy="protobuf")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        messages = [
+            TestMessage(int32_value=1),
+            TestMessage(string_value="two"),
+            TestMessage(double_value=3.0, bool_value=True),
+        ]
+        payloads = [_confluent_protobuf(m.SerializeToString()) for m in messages]
+
+        batch = handler.list_to_record_batch(payloads)
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == messages
+
+    def test_protobuf_with_repeated_fields(self):
+        """Protobuf policy works with repeated fields."""
+        config = PtarsConfig(confluent_wire_policy="protobuf")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(int32_values=[10, 20, 30], string_value="with list")
+        raw = msg.SerializeToString()
+        payload = _confluent_protobuf(raw)
+
+        batch = handler.list_to_record_batch([payload])
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]
+
+    def test_standard_via_array_to_record_batch(self):
+        """Standard policy works through the array_to_record_batch path."""
+        import pyarrow as pa
+
+        config = PtarsConfig(confluent_wire_policy="standard")
+        pool = HandlerPool([DESCRIPTOR], config=config)
+        handler = pool.get_for_message(TestMessage.DESCRIPTOR)
+
+        msg = TestMessage(int32_value=42)
+        raw = msg.SerializeToString()
+        payload = _confluent_standard(raw)
+        binary_array = pa.array([payload], type=pa.binary())
+
+        batch = handler.array_to_record_batch(binary_array)
+        messages_back = pool.record_batch_to_messages(batch, TestMessage.DESCRIPTOR)
+        assert messages_back == [msg]

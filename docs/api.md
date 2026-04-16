@@ -100,22 +100,24 @@ record_batch = handler.array_to_record_batch(binary_array)
         - map_value_nullable
         - use_large_string
         - use_large_binary
+        - confluent_wire_policy
 
 ### Configuration Options
 
-| Option                | Type                             | Default   | Description                                                              |
-|-----------------------|----------------------------------|-----------|--------------------------------------------------------------------------|
-| `timestamp_tz`        | `str \| None`                    | `"UTC"`   | Timezone for `google.protobuf.Timestamp`. Use `None` for timezone-naive. |
-| `timestamp_unit`      | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for timestamps.                                                |
-| `time_unit`           | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for `google.type.TimeOfDay`.                                   |
-| `duration_unit`       | `Literal["s", "ms", "us", "ns"]` | `"ns"`    | Time unit for `google.protobuf.Duration`.                                |
-| `list_value_name`     | `str`                            | `"item"`  | Field name for list items in Arrow schema.                               |
-| `list_nullable`       | `bool`                           | `False`   | Whether list fields can be null.                                         |
-| `map_nullable`        | `bool`                           | `False`   | Whether map fields can be null.                                          |
-| `list_value_nullable` | `bool`                           | `False`   | Whether list elements can be null.                                       |
-| `map_value_nullable`  | `bool`                           | `False`   | Whether map values can be null.                                          |
-| `use_large_string`    | `bool`                           | `False`   | Use `large_utf8` instead of `utf8` for string fields.                    |
-| `use_large_binary`    | `bool`                           | `False`   | Use `large_binary` instead of `binary` for bytes fields.                 |
+| Option                  | Type                                              | Default   | Description                                                              |
+|-------------------------|---------------------------------------------------|-----------|--------------------------------------------------------------------------|
+| `timestamp_tz`          | `str \| None`                                     | `"UTC"`   | Timezone for `google.protobuf.Timestamp`. Use `None` for timezone-naive. |
+| `timestamp_unit`        | `Literal["s", "ms", "us", "ns"]`                  | `"ns"`    | Time unit for timestamps.                                                |
+| `time_unit`             | `Literal["s", "ms", "us", "ns"]`                  | `"ns"`    | Time unit for `google.type.TimeOfDay`.                                   |
+| `duration_unit`         | `Literal["s", "ms", "us", "ns"]`                  | `"ns"`    | Time unit for `google.protobuf.Duration`.                                |
+| `list_value_name`       | `str`                                             | `"item"`  | Field name for list items in Arrow schema.                               |
+| `list_nullable`         | `bool`                                            | `False`   | Whether list fields can be null.                                         |
+| `map_nullable`          | `bool`                                            | `False`   | Whether map fields can be null.                                          |
+| `list_value_nullable`   | `bool`                                            | `False`   | Whether list elements can be null.                                       |
+| `map_value_nullable`    | `bool`                                            | `False`   | Whether map values can be null.                                          |
+| `use_large_string`      | `bool`                                            | `False`   | Use `large_utf8` instead of `utf8` for string fields.                    |
+| `use_large_binary`      | `bool`                                            | `False`   | Use `large_binary` instead of `binary` for bytes fields.                 |
+| `confluent_wire_policy` | `Literal["raw", "standard", "protobuf"]`          | `"raw"`   | Confluent Schema Registry wire format stripping policy.                  |
 
 !!! note "Map Value Field Name"
     The Rust API supports `map_value_name` for customizing the field name of map values
@@ -131,6 +133,23 @@ record_batch = handler.array_to_record_batch(binary_array)
     - A time of day `01:02:03.500` with `time_unit="s"` becomes `01:02:03`
 
     Choose the appropriate unit based on your precision requirements.
+
+### Confluent Schema Registry Wire Format
+
+The `confluent_wire_policy` option controls how ptars handles the prefix that the
+[Confluent Schema Registry](https://docs.confluent.io/platform/current/schema-registry/)
+adds to Kafka messages. The prefix is stripped before the protobuf payload is decoded.
+
+| Policy       | Prefix stripped                                                        | Use with                   |
+|--------------|------------------------------------------------------------------------|----------------------------|
+| `"raw"`      | None — bytes are raw protobuf wire format                              | Direct protobuf serialization |
+| `"standard"` | 5 bytes: 1 magic byte (`0x00`) + 4-byte schema ID                     | Avro, JSON Schema          |
+| `"protobuf"` | 5 bytes + varint-encoded message index array                           | Protobuf                   |
+
+The Protobuf wire format includes additional bytes after the 5-byte header: a
+varint-encoded count of message indexes followed by the indexes themselves. This
+identifies which message type in the `.proto` file schema is being used. The
+`"protobuf"` policy parses past these varints automatically.
 
 ### Example
 
