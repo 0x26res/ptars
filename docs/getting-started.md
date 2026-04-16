@@ -252,21 +252,21 @@ record_batch = pool.messages_to_record_batch(messages, MyMessage.DESCRIPTOR)
 
 ### Available Options
 
-| Option                | Default   | Description                                             |
-|-----------------------|-----------|---------------------------------------------------------|
-| `timestamp_tz`        | `"UTC"`   | Timezone for timestamps. Use `None` for timezone-naive. |
-| `timestamp_unit`      | `"ns"`    | Time unit for timestamps: `"s"`, `"ms"`, `"us"`, `"ns"` |
-| `time_unit`           | `"ns"`    | Time unit for time of day fields                        |
-| `duration_unit`       | `"ns"`    | Time unit for duration fields                           |
-| `list_value_name`     | `"item"`  | Field name for list items in Arrow schema               |
-| `list_nullable`       | `False`   | Whether list fields can be null                         |
-| `map_nullable`        | `False`   | Whether map fields can be null                          |
-| `list_value_nullable` | `False`   | Whether list elements can be null                       |
-| `map_value_nullable`  | `False`   | Whether map values can be null                          |
-| `use_large_string`    | `False`   | Use `large_utf8` instead of `utf8` for strings          |
-| `use_large_binary`    | `False`   | Use `large_binary` instead of `binary` for bytes        |
-| `use_large_list`      | `False`   | Use `large_list` instead of `list` for repeated fields  |
-| `confluent_wire_policy` | `"raw"` | Confluent wire format stripping: `"raw"`, `"standard"`, `"protobuf"` |
+| Option                  | Default  | Description                                                          |
+|-------------------------|----------|----------------------------------------------------------------------|
+| `timestamp_tz`          | `"UTC"`  | Timezone for timestamps. Use `None` for timezone-naive.              |
+| `timestamp_unit`        | `"ns"`   | Time unit for timestamps: `"s"`, `"ms"`, `"us"`, `"ns"`              |
+| `time_unit`             | `"ns"`   | Time unit for time of day fields                                     |
+| `duration_unit`         | `"ns"`   | Time unit for duration fields                                        |
+| `list_value_name`       | `"item"` | Field name for list items in Arrow schema                            |
+| `list_nullable`         | `False`  | Whether list fields can be null                                      |
+| `map_nullable`          | `False`  | Whether map fields can be null                                       |
+| `list_value_nullable`   | `False`  | Whether list elements can be null                                    |
+| `map_value_nullable`    | `False`  | Whether map values can be null                                       |
+| `use_large_string`      | `False`  | Use `large_utf8` instead of `utf8` for strings                       |
+| `use_large_binary`      | `False`  | Use `large_binary` instead of `binary` for bytes                     |
+| `use_large_list`        | `False`  | Use `large_list` instead of `list` for repeated fields               |
+| `confluent_wire_policy` | `"raw"`  | Confluent wire format stripping: `"raw"`, `"standard"`, `"protobuf"` |
 
 !!! note
     Map values always use "value" as the field name in Python. The Rust API supports
