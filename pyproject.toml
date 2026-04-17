@@ -87,7 +87,8 @@ python-packages = [ "ptars" ]
 python-source = "python"
 
 [tool.ruff]
-lint.select = [ "C", "E", "F", "I", "RET" ]
+target-version = "py310"
+lint.select = [ "B", "C", "E", "F", "I", "RET", "UP" ]
 lint.ignore = [
   "RET505", # Control the flow with if/elif/else, not return/raise/continue/break
   "RET506",
