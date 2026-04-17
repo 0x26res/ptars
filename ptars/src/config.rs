@@ -13,6 +13,20 @@ pub enum EnumRepr {
     Binary,
 }
 
+/// Policy for stripping Confluent Schema Registry wire format prefix from messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfluentWirePolicy {
+    /// No prefix stripping — bytes are raw protobuf wire format. This is the default.
+    #[default]
+    Raw,
+    /// Strip 5-byte Confluent header (1 magic byte + 4-byte schema ID).
+    /// Use with Avro and JSON Schema.
+    Standard,
+    /// Strip 5-byte Confluent header plus varint-encoded message index array.
+    /// Use with Protobuf schemas in Confluent Schema Registry.
+    Protobuf,
+}
+
 /// Configuration for protobuf to Arrow conversions.
 ///
 /// This struct allows customizing how protobuf types are mapped to Arrow types,
@@ -63,6 +77,9 @@ pub struct PtarsConfig {
     /// When String, use_large_string controls Utf8 vs LargeUtf8.
     /// When Binary, use_large_binary controls Binary vs LargeBinary.
     pub enum_repr: EnumRepr,
+
+    /// Policy for stripping Confluent Schema Registry wire format prefix. Default: Raw
+    pub confluent_wire_policy: ConfluentWirePolicy,
 }
 
 impl Default for PtarsConfig {
@@ -82,6 +99,7 @@ impl Default for PtarsConfig {
             use_large_binary: false,
             use_large_list: false,
             enum_repr: EnumRepr::default(),
+            confluent_wire_policy: ConfluentWirePolicy::default(),
         }
     }
 }
@@ -175,6 +193,12 @@ impl PtarsConfig {
         self.enum_repr = repr;
         self
     }
+
+    /// Set the Confluent Schema Registry wire format policy.
+    pub fn with_confluent_wire_policy(mut self, policy: ConfluentWirePolicy) -> Self {
+        self.confluent_wire_policy = policy;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +222,7 @@ mod tests {
         assert!(!config.use_large_binary);
         assert!(!config.use_large_list);
         assert_eq!(config.enum_repr, EnumRepr::Int32);
+        assert_eq!(config.confluent_wire_policy, ConfluentWirePolicy::Raw);
     }
 
     #[test]
@@ -303,7 +328,8 @@ mod tests {
             .with_use_large_string(true)
             .with_use_large_binary(true)
             .with_use_large_list(true)
-            .with_enum_repr(EnumRepr::String);
+            .with_enum_repr(EnumRepr::String)
+            .with_confluent_wire_policy(ConfluentWirePolicy::Protobuf);
 
         assert_eq!(config.timestamp_tz, Some(Arc::from("Europe/London")));
         assert_eq!(config.timestamp_unit, TimeUnit::Millisecond);
@@ -319,5 +345,6 @@ mod tests {
         assert!(config.use_large_binary);
         assert!(config.use_large_list);
         assert_eq!(config.enum_repr, EnumRepr::String);
+        assert_eq!(config.confluent_wire_policy, ConfluentWirePolicy::Protobuf);
     }
 }

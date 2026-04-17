@@ -42,7 +42,7 @@ protoc: env
 
 # Format and lint
 lint:
-    cargo fmt && cargo clippy -- -D warnings && prek run --all-files
+    cargo fmt && cargo clippy --all-targets -- -D warnings && prek run --all-files
 
 # Install coverage tools
 coverage-env:

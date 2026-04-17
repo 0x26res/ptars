@@ -252,20 +252,21 @@ record_batch = pool.messages_to_record_batch(messages, MyMessage.DESCRIPTOR)
 
 ### Available Options
 
-| Option                | Default   | Description                                             |
-|-----------------------|-----------|---------------------------------------------------------|
-| `timestamp_tz`        | `"UTC"`   | Timezone for timestamps. Use `None` for timezone-naive. |
-| `timestamp_unit`      | `"ns"`    | Time unit for timestamps: `"s"`, `"ms"`, `"us"`, `"ns"` |
-| `time_unit`           | `"ns"`    | Time unit for time of day fields                        |
-| `duration_unit`       | `"ns"`    | Time unit for duration fields                           |
-| `list_value_name`     | `"item"`  | Field name for list items in Arrow schema               |
-| `list_nullable`       | `False`   | Whether list fields can be null                         |
-| `map_nullable`        | `False`   | Whether map fields can be null                          |
-| `list_value_nullable` | `False`   | Whether list elements can be null                       |
-| `map_value_nullable`  | `False`   | Whether map values can be null                          |
-| `use_large_string`    | `False`   | Use `large_utf8` instead of `utf8` for strings          |
-| `use_large_binary`    | `False`   | Use `large_binary` instead of `binary` for bytes        |
-| `use_large_list`      | `False`   | Use `large_list` instead of `list` for repeated fields  |
+| Option                  | Default  | Description                                                          |
+|-------------------------|----------|----------------------------------------------------------------------|
+| `timestamp_tz`          | `"UTC"`  | Timezone for timestamps. Use `None` for timezone-naive.              |
+| `timestamp_unit`        | `"ns"`   | Time unit for timestamps: `"s"`, `"ms"`, `"us"`, `"ns"`              |
+| `time_unit`             | `"ns"`   | Time unit for time of day fields                                     |
+| `duration_unit`         | `"ns"`   | Time unit for duration fields                                        |
+| `list_value_name`       | `"item"` | Field name for list items in Arrow schema                            |
+| `list_nullable`         | `False`  | Whether list fields can be null                                      |
+| `map_nullable`          | `False`  | Whether map fields can be null                                       |
+| `list_value_nullable`   | `False`  | Whether list elements can be null                                    |
+| `map_value_nullable`    | `False`  | Whether map values can be null                                       |
+| `use_large_string`      | `False`  | Use `large_utf8` instead of `utf8` for strings                       |
+| `use_large_binary`      | `False`  | Use `large_binary` instead of `binary` for bytes                     |
+| `use_large_list`        | `False`  | Use `large_list` instead of `list` for repeated fields               |
+| `confluent_wire_policy` | `"raw"`  | Confluent wire format stripping: `"raw"`, `"standard"`, `"protobuf"` |
 
 !!! note
     Map values always use "value" as the field name in Python. The Rust API supports
@@ -279,3 +280,27 @@ record_batch = pool.messages_to_record_batch(messages, MyMessage.DESCRIPTOR)
     unit based on your precision requirements.
 
 See the [API Reference](api.md#ptarsconfig) for full details.
+
+## Confluent Schema Registry Wire Format
+
+When consuming messages from Kafka with the Confluent Schema Registry, messages
+include a prefix before the actual serialized payload. ptars can strip this
+prefix automatically via the `confluent_wire_policy` config option.
+
+The three policies are:
+
+- **`"raw"`** (default) — No stripping. Bytes are treated as raw protobuf wire format.
+- **`"standard"`** — Strips the 5-byte Confluent header (1 magic byte + 4-byte schema ID). Use this with Avro or JSON Schema.
+- **`"protobuf"`** — Strips the 5-byte header plus the varint-encoded message index array. Use this with Protobuf schemas.
+
+```python
+from ptars import HandlerPool, PtarsConfig
+
+# For Kafka messages serialized with Confluent Protobuf serializer
+config = PtarsConfig(confluent_wire_policy="protobuf")
+pool = HandlerPool([MyMessage.DESCRIPTOR.file], config=config)
+handler = pool.get_for_message(MyMessage.DESCRIPTOR)
+
+# payloads from Kafka still have the Confluent prefix — ptars strips it
+record_batch = handler.list_to_record_batch(payloads)
+```
