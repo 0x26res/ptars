@@ -1,7 +1,6 @@
 import importlib.resources
 import pathlib
 import warnings
-from typing import List
 
 import google.type.date_pb2
 import grpc_tools
@@ -15,7 +14,7 @@ _SRC_DIR = _ROOT_DIR / "protos"
 _OUT_DIR = _ROOT_DIR / "ptars_protos"
 
 
-def run_protoc(arguments: List[str]):
+def run_protoc(arguments: list[str]):
     try:
         import grpc_tools.protoc
 
@@ -24,7 +23,7 @@ def run_protoc(arguments: List[str]):
             raise RuntimeError("Could not generate proto")
 
     except ImportError:
-        warnings.warn("Using system version of protoc")
+        warnings.warn("Using system version of protoc", stacklevel=2)
         import subprocess  # nosec B404
 
         subprocess.run(arguments, check=True)  # nosec B603
@@ -36,11 +35,11 @@ def main():
     proto_files = [x.as_posix() for x in _SRC_DIR.glob("**/*.proto")]
     proto_args = [
         "protoc",
-        "--proto_path={}".format(_GOOGLE_COMMON_PROTOS_ROOT_DIR),
-        "--proto_path={}".format(_GRPC_PROTOS_INCLUDE),
-        "--proto_path={}".format(_SRC_DIR),
-        "--python_out={}".format(_ROOT_DIR),
-        "--pyi_out={}".format(_ROOT_DIR),
+        f"--proto_path={_GOOGLE_COMMON_PROTOS_ROOT_DIR}",
+        f"--proto_path={_GRPC_PROTOS_INCLUDE}",
+        f"--proto_path={_SRC_DIR}",
+        f"--python_out={_ROOT_DIR}",
+        f"--pyi_out={_ROOT_DIR}",
     ] + proto_files
     print(" ".join(proto_args))
     run_protoc(proto_args)

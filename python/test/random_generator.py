@@ -85,7 +85,7 @@ MESSAGE_GENERATORS = {
 }
 
 
-def generate_message(message_type: typing.Type[M], repeated_count: int) -> M:
+def generate_message(message_type: type[M], repeated_count: int) -> M:
     message = message_type()
     for one_of in message_type.DESCRIPTOR.oneofs:
         one_of_index = random.randint(0, len(one_of.fields))
@@ -105,8 +105,8 @@ def generate_message(message_type: typing.Type[M], repeated_count: int) -> M:
 
 
 def generate_messages(
-    message_type: typing.Type[M], count: int, repeated_count: int = 10
-) -> typing.List[M]:
+    message_type: type[M], count: int, repeated_count: int = 10
+) -> list[M]:
     return [generate_message(message_type, repeated_count) for _ in range(count)]
 
 

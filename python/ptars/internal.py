@@ -111,7 +111,8 @@ class HandlerPool:
         if isinstance(descriptor, google._upb._message.MessageMeta):
             warnings.warn(
                 f"Received {google._upb._message.MessageMeta.__class__.__name__}"
-                f" instead of {Descriptor.__class__.__name__}"
+                f" instead of {Descriptor.__class__.__name__}",
+                stacklevel=2,
             )
             descriptor = descriptor.DESCRIPTOR  # ty: ignore[unresolved-attribute]
         if not isinstance(
