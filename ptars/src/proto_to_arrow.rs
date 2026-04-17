@@ -95,10 +95,10 @@ fn read_length_delimited(buf: &[u8]) -> Result<(&[u8], usize), prost::DecodeErro
 }
 
 /// Strip the Confluent Schema Registry wire format prefix from a message.
-fn strip_confluent_prefix<'a>(
-    buf: &'a [u8],
+fn strip_confluent_prefix(
+    buf: &[u8],
     policy: ConfluentWirePolicy,
-) -> Result<&'a [u8], prost::DecodeError> {
+) -> Result<&[u8], prost::DecodeError> {
     match policy {
         ConfluentWirePolicy::Raw => Ok(buf),
         ConfluentWirePolicy::Standard => {

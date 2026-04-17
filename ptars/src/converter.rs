@@ -2,10 +2,7 @@
 mod tests {
     use crate::arrow_to_proto::record_batch_to_array;
     use crate::config::PtarsConfig;
-    use crate::proto_to_arrow::{
-        binary_array_to_messages, binary_array_to_record_batch_direct, messages_to_record_batch,
-        messages_to_record_batch_with_config,
-    };
+    use crate::proto_to_arrow::{messages_to_record_batch, messages_to_record_batch_with_config};
     use arrow::array::Array;
     use prost_reflect::prost_types::{
         field_descriptor_proto::{Label, Type},
@@ -540,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_roundtrip_all_primitive_types() {
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
@@ -2769,7 +2767,7 @@ mod tests {
             _ => panic!("Unknown wrapper type"),
         };
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
-            name: Some(format!("google/protobuf/wrappers.proto")),
+            name: Some("google/protobuf/wrappers.proto".to_string()),
             package: Some(package.to_string()),
             syntax: Some("proto3".to_string()),
             message_type: vec![DescriptorProto {
@@ -3022,6 +3020,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_map_with_double_value_roundtrip() {
         use std::collections::HashMap;
         let mut pool = create_wrapper_pool("DoubleValue");
@@ -3442,10 +3441,9 @@ mod tests {
         let result_binary = arrow::array::BinaryArray::from(result_array);
 
         // Decode and compare
-        for i in 0..result_binary.len() {
+        for (i, original) in original_messages.iter().enumerate() {
             let decoded =
                 DynamicMessage::decode(message_descriptor.clone(), result_binary.value(i)).unwrap();
-            let original = &original_messages[i];
             assert_eq!(
                 decoded.get_field_by_name("id").unwrap().as_i32().unwrap(),
                 original.get_field_by_name("id").unwrap().as_i32().unwrap()
