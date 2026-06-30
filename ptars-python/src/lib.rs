@@ -248,7 +248,7 @@ impl MessageHandler {
 }
 
 /// Registry of protobuf descriptors used to create message handlers.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 struct ProtoRegistry {
     pool: Arc<DescriptorPool>,
