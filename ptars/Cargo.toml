@@ -1,7 +1,7 @@
 [dependencies]
 arrow = "58"
 arrow-array = "58"
-arrow-schema = "58"
+arrow-schema = "59"
 chrono = "0.4.42"
 prost = "0.14.1"
 prost-reflect = "0.16.3"
