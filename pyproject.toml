@@ -77,14 +77,14 @@ docs = [
 ]
 
 [tool.maturin]
-bindings = "pyo3"
-exclude = [ "python/test/**", ".**", "sdist/**", ".github/**" ]
-features = [ "pyo3/extension-module" ]
-include = [ "LICENSE", "python/ptars/py.typed" ]
-manifest-path = "ptars-python/Cargo.toml"
 module-name = "ptars._lib"
-python-packages = [ "ptars" ]
+bindings = "pyo3"
 python-source = "python"
+python-packages = [ "ptars" ]
+manifest-path = "ptars-python/Cargo.toml"
+include = [ "LICENSE", "python/ptars/py.typed" ]
+exclude = [ ".**", ".github/**", "python/test/**", "sdist/**" ]
+features = [ "pyo3/extension-module" ]
 
 [tool.ruff]
 target-version = "py310"
@@ -97,10 +97,10 @@ lint.ignore = [
 ]
 
 [tool.isort]
-known_first_party = [ "ptars", "ptars_protos" ]
 profile = "black"
-skip = [ ".gitignore" ]
+known_first_party = [ "ptars", "ptars_protos" ]
 src_paths = [ "ptars", "tests" ]
+skip = [ ".gitignore" ]
 
 [tool.bandit]
 skips = [ "B101" ]

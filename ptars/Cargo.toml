@@ -2,9 +2,9 @@
 arrow = "59"
 arrow-array = "59"
 arrow-schema = "59"
-chrono = "0.4.42"
-prost = "0.14.1"
-prost-reflect = "0.16.3"
+chrono = "0.4.45"
+prost = "0.14.4"
+prost-reflect = "0.16.4"
 
 [lib]
 name = "ptars"

@@ -2,23 +2,23 @@
 #    uv pip compile docs/requirements.txt.in
 babel==2.18.0
     # via mkdocs-material
-backrefs==6.2
+backrefs==7.0
     # via mkdocs-material
-certifi==2026.2.25
+certifi==2026.6.17
     # via requests
-charset-normalizer==3.4.7
+charset-normalizer==3.4.8
     # via requests
-click==8.3.2
+click==8.4.2
     # via mkdocs
 colorama==0.4.6
     # via mkdocs-material
 ghp-import==2.1.0
     # via mkdocs
-googleapis-common-protos==1.74.0
+googleapis-common-protos==1.75.0
     # via ptars
-griffelib==2.0.2
+griffelib==2.1.0
     # via mkdocstrings-python
-idna==3.11
+idna==3.18
     # via requests
 jinja2==3.1.6
     # via
@@ -62,27 +62,27 @@ mkdocstrings==1.0.4
     # via
     #   -r docs/requirements.txt.in
     #   mkdocstrings-python
-mkdocstrings-python==2.0.3
+mkdocstrings-python==2.0.5
     # via mkdocstrings
-packaging==26.1
+packaging==26.2
     # via mkdocs
 paginate==0.5.7
     # via mkdocs-material
-pathspec==1.0.4
+pathspec==1.1.1
     # via mkdocs
-platformdirs==4.9.6
+platformdirs==4.10.0
     # via mkdocs-get-deps
-protobuf==7.34.1
+protobuf==7.35.1
     # via
     #   googleapis-common-protos
     #   ptars
-ptars==0.0.17
+ptars==0.0.18
     # via -r docs/requirements.txt.in
-pyarrow==23.0.1
+pyarrow==24.0.0
     # via ptars
 pygments==2.20.0
     # via mkdocs-material
-pymdown-extensions==10.21.2
+pymdown-extensions==11.0.1
     # via
     #   mkdocs-material
     #   mkdocstrings
@@ -96,11 +96,11 @@ pyyaml==6.0.3
     #   pyyaml-env-tag
 pyyaml-env-tag==1.1
     # via mkdocs
-requests==2.33.1
+requests==2.34.2
     # via mkdocs-material
 six==1.17.0
     # via python-dateutil
-urllib3==2.6.3
+urllib3==2.7.0
     # via requests
 watchdog==6.0.0
     # via mkdocs
