@@ -64,6 +64,8 @@ coverage: develop coverage-env
 
 # Update dependencies
 update:
+    cargo install cargo-edit
+    cargo upgrade
     cargo generate-lockfile
     uv lock --upgrade
     prek autoupdate

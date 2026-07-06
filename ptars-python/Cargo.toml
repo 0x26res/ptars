@@ -1,11 +1,11 @@
 [dependencies]
-arrow = {version = "58", features = ["pyarrow"]}
-arrow-array = "58"
-arrow-schema = "58"
-prost = "0.14.1"
-prost-reflect = "0.16.3"
+arrow = {version = "59", features = ["pyarrow"]}
+arrow-array = "59"
+arrow-schema = "59"
+prost = "0.14.4"
+prost-reflect = "0.16.4"
 ptars = {path = "../ptars"}
-pyo3 = {version = "0.28.0", features = ["abi3-py310"]}
+pyo3 = {version = "0.28.3", features = ["abi3-py310"]}
 
 [features]
 default = ["extension-module"]
