@@ -15,6 +15,7 @@
 [![Ruff][ruff-image]][ruff-url]
 [![snyk][snyk-image]][snyk-url]
 [![Github Stars][stars-image]][stars-url]
+[![GitHub Forks][forks-image]][forks-url]
 [![GitHub issues][github-issues-image]][github-issues-url]
 [![GitHub Release][release-image]][release-url]
 [![Release Date][release-date-image]][release-url]
@@ -160,6 +161,8 @@ protarrow_to_proto    12,534 (31.61)
 [snyk-url]: https://snyk.io/advisor/python/ptars
 [stars-image]: https://img.shields.io/github/stars/0x26res/ptars
 [stars-url]: https://github.com/0x26res/ptars
+[forks-image]: https://img.shields.io/github/forks/0x26res/ptars
+[forks-url]: https://github.com/0x26res/ptars/network/members
 [github-issues-image]: https://img.shields.io/badge/issue_tracking-github-blue.svg
 [github-issues-url]: https://github.com/0x26res/ptars/issues
 [contributing-image]: https://img.shields.io/badge/PR-Welcome-%23FF8300.svg?

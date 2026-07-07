@@ -6,7 +6,7 @@ backrefs==7.0
     # via mkdocs-material
 certifi==2026.6.17
     # via requests
-charset-normalizer==3.4.8
+charset-normalizer==3.4.9
     # via requests
 click==8.4.2
     # via mkdocs
@@ -76,7 +76,7 @@ protobuf==7.35.1
     # via
     #   googleapis-common-protos
     #   ptars
-ptars==0.0.18
+ptars==0.0.19
     # via -r docs/requirements.txt.in
 pyarrow==24.0.0
     # via ptars
