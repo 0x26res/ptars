@@ -6,6 +6,7 @@ default:
 clean:
     cargo clean
     rm -rf target
+    rm -rf tests/arrow-version-independence/target
     find . -name "*.profraw" | xargs rm -f
     rm -f python/ptars/*.so
     rm -rf ptars_protos
@@ -43,6 +44,25 @@ protoc: env
 # Format and lint
 lint:
     cargo fmt && cargo clippy --all-targets -- -D warnings && prek run --all-files
+    cd tests/arrow-version-independence && cargo fmt && cargo clippy --all-targets -- -D warnings
+
+# Safeguard: a consumer pinned to a different arrow major version must be able
+# to exchange data with ptars through the Arrow C Data Interface
+test-arrow-independence:
+    cargo test --manifest-path tests/arrow-version-independence/Cargo.toml
+
+# Safeguard: no arrow/prost types may appear in the ptars public API
+# (requires the nightly toolchain and cargo-public-api)
+check-public-api:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # --simplified omits blanket impls, which imply no version coupling
+    api=$(cargo public-api -p ptars --simplified)
+    if grep -E '\b(arrow|arrow_[a-z]+|prost|prost_[a-z]+)::' <<< "$api"; then
+        echo "ERROR: arrow/prost types leaked into the ptars public API"
+        exit 1
+    fi
+    echo "ptars public API is clean"
 
 # Install coverage tools
 coverage-env:

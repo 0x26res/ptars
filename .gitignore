@@ -1,4 +1,5 @@
 /target
+tests/arrow-version-independence/target
 /env
 venv
 .venv

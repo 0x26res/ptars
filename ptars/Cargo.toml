@@ -1,10 +1,16 @@
 [dependencies]
-arrow = "59"
+# arrow and prost are internal implementation details: they must never appear
+# in this crate's public API. Data is exchanged through the Arrow C Data
+# Interface (see src/ffi.rs), so consumers can use any arrow version.
+arrow = {version = "59", features = ["ffi"]}
 arrow-array = "59"
 arrow-schema = "59"
-chrono = "0.4.45"
 prost = "0.14.4"
 prost-reflect = "0.16.4"
+ptars-core = {path = "../ptars-core", version = "=0.0.0"}
+
+[dev-dependencies]
+prost-types = "0.14.4"
 
 [lib]
 name = "ptars"

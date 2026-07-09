@@ -747,6 +747,19 @@ dependencies = [
  "arrow",
  "arrow-array",
  "arrow-schema",
+ "prost",
+ "prost-reflect",
+ "prost-types",
+ "ptars-core",
+]
+
+[[package]]
+name = "ptars-core"
+version = "0.0.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
  "chrono",
  "prost",
  "prost-reflect",
@@ -761,7 +774,7 @@ dependencies = [
  "arrow-schema",
  "prost",
  "prost-reflect",
- "ptars",
+ "ptars-core",
  "pyo3",
 ]
 

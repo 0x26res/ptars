@@ -2,45 +2,44 @@
 //!
 //! Fast conversion from Protocol Buffers to Apache Arrow and back.
 //!
-//! This crate provides efficient conversion between Protocol Buffer messages
-//! and Apache Arrow record batches, enabling high-performance data processing
-//! pipelines that bridge the protobuf and Arrow ecosystems.
+//! This crate is **arrow-version-independent**: its public API contains no
+//! arrow-rs (or prost) types. Arrow data crosses the API boundary through the
+//! [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
+//! ([`ffi::ArrowArray`]/[`ffi::ArrowSchema`]), whose ABI is frozen by the
+//! Arrow specification. You can therefore depend on `ptars` together with any
+//! arrow version and exchange data zero-copy.
 //!
-//! ## Features
-//!
-//! - Convert protobuf messages to Arrow RecordBatch
-//! - Convert Arrow RecordBatch back to protobuf messages
-//! - Support for nested messages, repeated fields, and maps
-//! - Special handling for well-known types (Timestamp, Date, TimeOfDay, wrapper types)
+//! The implementation lives in the `ptars-core` crate, which exposes a
+//! conventional arrow-rs-typed API if you prefer to pin the same arrow version
+//! as ptars.
 //!
 //! ## Example
 //!
 //! ```ignore
-//! use ptars::{binary_array_to_record_batch_direct, PtarsConfig};
-//! use arrow_array::BinaryArray;
-//! use prost_reflect::DescriptorPool;
+//! use ptars::{Handler, PtarsConfig};
 //!
-//! // Load your protobuf descriptor
-//! let pool = DescriptorPool::decode(descriptor_bytes).unwrap();
-//! let message_descriptor = pool.get_message_by_name("my.Message").unwrap();
+//! // Descriptors are passed as serialized bytes (protoc --descriptor_set_out).
+//! let handler = Handler::try_new(&descriptor_set_bytes, "my.Message", PtarsConfig::default())?;
 //!
-//! // Decode serialized protobuf messages directly to Arrow
-//! let binary_array: BinaryArray = /* your serialized messages */;
-//! let config = PtarsConfig::default();
-//! let record_batch = binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config).unwrap();
+//! // Decode serialized messages without arrow on your side at all:
+//! let (array, schema) = handler.decode_bytes(&[Some(&message_bytes)])?;
+//!
+//! // Import the result with *your* arrow version (any major), zero-copy.
+//! // Both struct definitions implement the same frozen C ABI, so they can be
+//! // transmuted into one another:
+//! let ffi_array: arrow::ffi::FFI_ArrowArray = unsafe { std::mem::transmute(array) };
+//! let ffi_schema: arrow::ffi::FFI_ArrowSchema = unsafe { std::mem::transmute(schema) };
+//! let data = unsafe { arrow::ffi::from_ffi(ffi_array, &ffi_schema)? };
+//! let batch: arrow::record_batch::RecordBatch =
+//!     arrow::array::StructArray::from(data).into();
 //! ```
 
-pub mod arrow_to_proto;
-pub mod config;
-pub mod proto_to_arrow;
+pub mod ffi;
 
-#[cfg(test)]
-mod converter;
+mod error;
+mod handler;
 
-// Re-export commonly used items
-pub use arrow_to_proto::record_batch_to_array;
-pub use config::{ConfluentWirePolicy, EnumRepr, PtarsConfig};
-pub use proto_to_arrow::{
-    binary_array_to_messages, binary_array_to_record_batch_direct, messages_to_record_batch,
-    messages_to_record_batch_with_config,
-};
+pub use error::PtarsError;
+pub use handler::Handler;
+// Plain configuration types, free of arrow/prost types, shared with ptars-core.
+pub use ptars_core::{ConfluentWirePolicy, EnumRepr, PtarsConfig, TimeUnit};
