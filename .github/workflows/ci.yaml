@@ -84,6 +84,40 @@ jobs:
         files: ./lcov.info,./coverage.xml
         fail_ci_if_error: true
 
+  # Safeguard: a consumer pinned to a different arrow major version must be
+  # able to exchange data with ptars through the Arrow C Data Interface.
+  arrow-version-independence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Update Rust
+        run: rustup update
+      - name: Test against a different arrow major version
+        run: cargo test --manifest-path tests/arrow-version-independence/Cargo.toml
+
+  # Safeguard: no arrow or prost types may appear in the public API of the
+  # ptars crate, otherwise consumers get pinned to ptars' internal versions.
+  public-api-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly
+      - name: Install cargo-public-api
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api
+      - name: Check ptars public API for leaked arrow/prost types
+        run: |
+          # --simplified omits blanket impls (e.g. arrow-buffer's `impl<T> Allocation for T`),
+          # which rustdoc attributes to our types but which imply no version coupling.
+          cargo public-api -p ptars --simplified > public-api.txt
+          cat public-api.txt
+          if grep -E '\b(arrow|arrow_array|arrow_schema|arrow_buffer|arrow_data|prost|prost_reflect|prost_types)::' public-api.txt; then
+            echo "::error::arrow/prost types leaked into the public API of the ptars crate"
+            exit 1
+          fi
+
   all-tests-pass:
     if: always()
 
@@ -91,6 +125,8 @@ jobs:
     - lint
     - docs
     - test
+    - arrow-version-independence
+    - public-api-check
 
     runs-on: ubuntu-latest
 

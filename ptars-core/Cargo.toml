@@ -1,0 +1,24 @@
+[dependencies]
+arrow = "59"
+arrow-array = "59"
+arrow-schema = "59"
+chrono = "0.4.45"
+prost = "0.14.4"
+prost-reflect = "0.16.4"
+
+[lib]
+name = "ptars_core"
+path = "src/lib.rs"
+
+[package]
+authors = ["0x26res <0x26res@gmail.net>"]
+categories = ["encoding", "data-structures"]
+description = "Core implementation of ptars, exposing arrow-rs types. Pins a specific arrow major version; for a version-independent API use the ptars crate."
+edition = "2021"
+homepage = "https://github.com/0x26res/ptars"
+keywords = ["protobuf", "arrow", "serialization", "data"]
+license = "Apache-2.0"
+name = "ptars-core"
+readme = "README.md"
+repository = "https://github.com/0x26res/ptars"
+version.workspace = true

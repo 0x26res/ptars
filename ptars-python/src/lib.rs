@@ -1,10 +1,10 @@
 use arrow::pyarrow::{FromPyArrow, ToPyArrow};
 use arrow::record_batch::RecordBatch;
 use arrow_array::{BinaryArray, Float32Array, Int32Array};
-use arrow_schema::TimeUnit;
 use prost::Message;
 use prost_reflect::prost_types::FileDescriptorProto;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor};
+use ptars_core::TimeUnit;
 use pyo3::prelude::{pyfunction, pymodule, PyModule, PyResult, Python};
 use pyo3::types::{PyAnyMethods, PyList, PyListMethods, PyModuleMethods};
 use pyo3::Py;
@@ -29,7 +29,7 @@ fn parse_time_unit(s: &str) -> PyResult<TimeUnit> {
 }
 
 /// Extract a PtarsConfig from a Python object (dataclass).
-fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
+fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars_core::PtarsConfig> {
     let timestamp_tz: Option<String> = config.getattr("timestamp_tz")?.extract()?;
     let timestamp_unit: String = config.getattr("timestamp_unit")?.extract()?;
     let time_unit: String = config.getattr("time_unit")?.extract()?;
@@ -46,9 +46,9 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
     let confluent_wire_policy: String = config.getattr("confluent_wire_policy")?.extract()?;
 
     let enum_repr = match enum_repr.as_str() {
-        "int32" => ptars::EnumRepr::Int32,
-        "string" => ptars::EnumRepr::String,
-        "binary" => ptars::EnumRepr::Binary,
+        "int32" => ptars_core::EnumRepr::Int32,
+        "string" => ptars_core::EnumRepr::String,
+        "binary" => ptars_core::EnumRepr::Binary,
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Invalid enum_repr '{}', expected one of: int32, string, binary",
@@ -58,9 +58,9 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
     };
 
     let confluent_wire_policy = match confluent_wire_policy.as_str() {
-        "raw" => ptars::ConfluentWirePolicy::Raw,
-        "standard" => ptars::ConfluentWirePolicy::Standard,
-        "protobuf" => ptars::ConfluentWirePolicy::Protobuf,
+        "raw" => ptars_core::ConfluentWirePolicy::Raw,
+        "standard" => ptars_core::ConfluentWirePolicy::Standard,
+        "protobuf" => ptars_core::ConfluentWirePolicy::Protobuf,
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "Invalid confluent_wire_policy '{}', expected one of: raw, standard, protobuf",
@@ -69,7 +69,7 @@ fn extract_config(config: &Bound<'_, PyAny>) -> PyResult<ptars::PtarsConfig> {
         }
     };
 
-    Ok(ptars::PtarsConfig::default()
+    Ok(ptars_core::PtarsConfig::default()
         .with_timestamp_tz(timestamp_tz.as_deref())
         .with_timestamp_unit(parse_time_unit(&timestamp_unit)?)
         .with_time_unit(parse_time_unit(&time_unit)?)
@@ -156,7 +156,7 @@ fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<
 #[pyclass]
 struct MessageHandler {
     message_descriptor: MessageDescriptor,
-    config: ptars::PtarsConfig,
+    config: ptars_core::PtarsConfig,
 }
 
 #[pymethods]
@@ -172,7 +172,7 @@ impl MessageHandler {
             builder.append_value(bytes);
         }
         let binary_array = builder.finish();
-        let record_batch = ptars::binary_array_to_record_batch_direct(
+        let record_batch = ptars_core::binary_array_to_record_batch_direct(
             &binary_array,
             &self.message_descriptor,
             &self.config,
@@ -196,7 +196,7 @@ impl MessageHandler {
         let arrow_record_batch: RecordBatch =
             RecordBatch::from_pyarrow_bound(record_batch).unwrap();
         Ok(
-            ptars::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
+            ptars_core::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
                 .to_pyarrow(py)?
                 .unbind(),
         )
@@ -211,7 +211,7 @@ impl MessageHandler {
             pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
         })?;
         let arrow_array = BinaryArray::from(array_data);
-        let record_batch = ptars::binary_array_to_record_batch_direct(
+        let record_batch = ptars_core::binary_array_to_record_batch_direct(
             &arrow_array,
             &self.message_descriptor,
             &self.config,
@@ -237,7 +237,7 @@ impl MessageHandler {
             builder.append_value(bytes);
         }
         let binary_array = builder.finish();
-        let record_batch = ptars::binary_array_to_record_batch_direct(
+        let record_batch = ptars_core::binary_array_to_record_batch_direct(
             &binary_array,
             &self.message_descriptor,
             &self.config,
@@ -295,7 +295,7 @@ impl ProtoRegistry {
 
         let config = match config {
             Some(c) => extract_config(c)?,
-            None => ptars::PtarsConfig::default(),
+            None => ptars_core::PtarsConfig::default(),
         };
 
         Ok(MessageHandler {

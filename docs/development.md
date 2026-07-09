@@ -118,15 +118,38 @@ just generate-ci
 
 ```text
 ptars/
-├── ptars/              # Core Rust library
-├── ptars-python/       # Python bindings (PyO3)
+├── ptars-core/         # Core Rust library (arrow-rs-typed API, pins an arrow major version)
+├── ptars/              # Stable Rust facade over ptars-core (Arrow C Data Interface only,
+│                       # works with any arrow version on the consumer's side)
+├── ptars-python/       # Python bindings (PyO3, depends on ptars-core)
 ├── python/
 │   ├── ptars/          # Python package
 │   └── test/           # Python tests
+├── tests/
+│   └── arrow-version-independence/  # Consumer crate pinned to a different arrow
+│                                    # major version; proves ptars is version-independent
 ├── protos/             # Protobuf definitions for tests
 ├── docs/               # Documentation (MkDocs)
 └── scripts/            # Build scripts
 ```
+
+### Rust crate hierarchy
+
+Two crates are published to crates.io:
+
+- **`ptars-core`** contains the actual implementation. Its API exposes arrow-rs
+  and prost-reflect types, so consumers must use the same major versions as
+  ptars-core does.
+- **`ptars`** is a thin facade over ptars-core (pinned with an exact `=`
+  version). Its public API contains no arrow or prost types: Arrow data is
+  exchanged zero-copy through the Arrow C Data Interface, and protobuf
+  descriptors/messages are passed as serialized bytes. Consumers can therefore
+  combine it with any arrow version.
+
+Two CI safeguards keep the `ptars` API version-independent: the
+`tests/arrow-version-independence` crate is built against a different arrow
+major version, and a `cargo public-api` check fails if any `arrow*::` or
+`prost*::` path appears in the public API.
 
 ## Resources
 

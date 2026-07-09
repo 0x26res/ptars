@@ -1,0 +1,18 @@
+# Safeguard crate: proves that a consumer using a DIFFERENT arrow major
+# version than ptars' internal one can exchange data through the C Data
+# Interface. Deliberately excluded from the root workspace so it can resolve
+# its own arrow version. Keep the arrow version below different from the one
+# in ptars/Cargo.toml.
+[dependencies]
+arrow = {version = "58", features = ["ffi"]}
+prost = "0.14"
+prost-types = "0.14"
+ptars = {path = "../../ptars"}
+
+[package]
+edition = "2021"
+name = "arrow-version-independence"
+publish = false
+version = "0.0.0"
+
+[workspace]

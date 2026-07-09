@@ -1,5 +1,6 @@
 [workspace]
-members = ["ptars", "ptars-python"]
+members = ["ptars", "ptars-core", "ptars-python"]
+exclude = ["tests/arrow-version-independence"]
 resolver = "2"
 
 [workspace.package]

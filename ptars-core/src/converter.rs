@@ -3609,7 +3609,7 @@ mod tests {
 
     #[test]
     fn test_duration_unit_config() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -3654,7 +3654,7 @@ mod tests {
         let dur_col = record_batch_ns.column_by_name("dur").unwrap();
         assert_eq!(
             dur_col.data_type(),
-            &arrow_schema::DataType::Duration(TimeUnit::Nanosecond)
+            &arrow_schema::DataType::Duration(arrow_schema::TimeUnit::Nanosecond)
         );
         let dur_array = dur_col
             .as_any()
@@ -3673,7 +3673,7 @@ mod tests {
         let dur_col_us = record_batch_us.column_by_name("dur").unwrap();
         assert_eq!(
             dur_col_us.data_type(),
-            &arrow_schema::DataType::Duration(TimeUnit::Microsecond)
+            &arrow_schema::DataType::Duration(arrow_schema::TimeUnit::Microsecond)
         );
         let dur_array_us = dur_col_us
             .as_any()
@@ -3692,7 +3692,7 @@ mod tests {
         let dur_col_ms = record_batch_ms.column_by_name("dur").unwrap();
         assert_eq!(
             dur_col_ms.data_type(),
-            &arrow_schema::DataType::Duration(TimeUnit::Millisecond)
+            &arrow_schema::DataType::Duration(arrow_schema::TimeUnit::Millisecond)
         );
         let dur_array_ms = dur_col_ms
             .as_any()
@@ -3711,7 +3711,7 @@ mod tests {
         let dur_col_s = record_batch_s.column_by_name("dur").unwrap();
         assert_eq!(
             dur_col_s.data_type(),
-            &arrow_schema::DataType::Duration(TimeUnit::Second)
+            &arrow_schema::DataType::Duration(arrow_schema::TimeUnit::Second)
         );
         let dur_array_s = dur_col_s
             .as_any()
@@ -3723,7 +3723,7 @@ mod tests {
 
     #[test]
     fn test_duration_microsecond_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -3790,7 +3790,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_microsecond_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_timestamp_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -3856,7 +3856,7 @@ mod tests {
 
     #[test]
     fn test_time_of_day_millisecond_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_time_of_day_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -3934,7 +3934,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_large_value_second_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_timestamp_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4011,7 +4011,7 @@ mod tests {
 
     #[test]
     fn test_timestamp_large_value_millisecond_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_timestamp_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4093,7 +4093,7 @@ mod tests {
 
     #[test]
     fn test_duration_large_value_second_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4171,7 +4171,7 @@ mod tests {
 
     #[test]
     fn test_duration_large_value_millisecond_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4250,7 +4250,7 @@ mod tests {
 
     #[test]
     fn test_repeated_timestamp_large_value_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_timestamp_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4342,7 +4342,7 @@ mod tests {
 
     #[test]
     fn test_repeated_duration_large_value_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
 
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4427,7 +4427,7 @@ mod tests {
 
     #[test]
     fn test_map_with_timestamp_second_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
         use prost_reflect::MapKey;
         use std::collections::HashMap;
 
@@ -4632,7 +4632,7 @@ mod tests {
 
     #[test]
     fn test_map_with_duration_second_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
         use prost_reflect::MapKey;
         use std::collections::HashMap;
 
@@ -4739,7 +4739,7 @@ mod tests {
 
     #[test]
     fn test_map_with_time_of_day_millisecond_unit_roundtrip() {
-        use arrow_schema::TimeUnit;
+        use crate::config::TimeUnit;
         use prost_reflect::MapKey;
         use std::collections::HashMap;
 
@@ -4893,7 +4893,7 @@ mod tests {
         let messages = vec![msg];
         // This should panic because the timestamp cannot be represented in nanoseconds
         let config = PtarsConfig {
-            timestamp_unit: arrow_schema::TimeUnit::Nanosecond,
+            timestamp_unit: crate::config::TimeUnit::Nanosecond,
             ..Default::default()
         };
         let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
@@ -4941,7 +4941,7 @@ mod tests {
         let messages = vec![msg];
         // This should panic because the duration cannot be represented in nanoseconds
         let config = PtarsConfig {
-            duration_unit: arrow_schema::TimeUnit::Nanosecond,
+            duration_unit: crate::config::TimeUnit::Nanosecond,
             ..Default::default()
         };
         let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);

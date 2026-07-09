@@ -1,5 +1,32 @@
-use arrow_schema::TimeUnit;
 use std::sync::Arc;
+
+/// Time unit for timestamp, time of day and duration values.
+///
+/// Mirrors `arrow_schema::TimeUnit` so that the config carries no arrow types
+/// and can be re-exported from arrow-version-independent crates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeUnit {
+    /// Seconds
+    Second,
+    /// Milliseconds
+    Millisecond,
+    /// Microseconds
+    Microsecond,
+    /// Nanoseconds
+    #[default]
+    Nanosecond,
+}
+
+impl From<TimeUnit> for arrow_schema::TimeUnit {
+    fn from(value: TimeUnit) -> Self {
+        match value {
+            TimeUnit::Second => arrow_schema::TimeUnit::Second,
+            TimeUnit::Millisecond => arrow_schema::TimeUnit::Millisecond,
+            TimeUnit::Microsecond => arrow_schema::TimeUnit::Microsecond,
+            TimeUnit::Nanosecond => arrow_schema::TimeUnit::Nanosecond,
+        }
+    }
+}
 
 /// How to represent protobuf enum fields in Arrow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

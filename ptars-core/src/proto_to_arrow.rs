@@ -2608,7 +2608,7 @@ fn build_message_field_decoder(
             nanos: 0,
             has_value: false,
             builder: PrimitiveBuilder::new(),
-            unit: config.timestamp_unit,
+            unit: config.timestamp_unit.into(),
             tz: config.timestamp_tz.clone(),
         }),
         "google.protobuf.Duration" => Some(FieldDecoder::Duration {
@@ -2616,7 +2616,7 @@ fn build_message_field_decoder(
             nanos: 0,
             has_value: false,
             builder: PrimitiveBuilder::new(),
-            unit: config.duration_unit,
+            unit: config.duration_unit.into(),
         }),
         "google.type.Date" => Some(FieldDecoder::Date {
             year: 0,
@@ -2632,7 +2632,7 @@ fn build_message_field_decoder(
             nanos: 0,
             has_value: false,
             builder: PrimitiveBuilder::new(),
-            unit: config.time_unit,
+            unit: config.time_unit.into(),
         }),
         "google.protobuf.DoubleValue" => Some(FieldDecoder::WrapperDouble {
             value: 0.0,
@@ -2777,19 +2777,19 @@ fn build_repeated_message_decoder(
     let inner = match msg_desc.full_name() {
         "google.protobuf.Timestamp" => RepeatedInner::Timestamp {
             values_builder: PrimitiveBuilder::new(),
-            unit: config.timestamp_unit,
+            unit: config.timestamp_unit.into(),
             tz: config.timestamp_tz.clone(),
         },
         "google.protobuf.Duration" => RepeatedInner::Duration {
             values_builder: PrimitiveBuilder::new(),
-            unit: config.duration_unit,
+            unit: config.duration_unit.into(),
         },
         "google.type.Date" => RepeatedInner::Date {
             values_builder: PrimitiveBuilder::new(),
         },
         "google.type.TimeOfDay" => RepeatedInner::TimeOfDay {
             values_builder: PrimitiveBuilder::new(),
-            unit: config.time_unit,
+            unit: config.time_unit.into(),
         },
         "google.protobuf.DoubleValue" => RepeatedInner::WrapperDouble {
             values_builder: PrimitiveBuilder::new(),
