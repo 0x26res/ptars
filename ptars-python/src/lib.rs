@@ -205,7 +205,7 @@ impl MessageHandler {
     /// Convert a binary array of serialized protobuf messages to a record batch.
     ///
     /// Each element in the binary array is expected to be a serialized protobuf message.
-    /// The resulting record batch will have one column per field in the message descriptor.
+    /// Returns a `pyarrow.RecordBatch`.
     fn array_to_record_batch(&self, array: &Bound<PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let array_data = arrow::array::ArrayData::from_pyarrow_bound(array).map_err(|e| {
             pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
@@ -218,6 +218,41 @@ impl MessageHandler {
         )
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
+    }
+
+    /// Convert a chunked binary array of serialized protobuf messages to a table.
+    ///
+    /// Each chunk produces a record batch. Empty chunks are skipped.
+    /// Returns a `pyarrow.Table`.
+    fn chunked_array_to_table(
+        &self,
+        chunked_array: &Bound<PyAny>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        let chunks: Vec<Bound<PyAny>> = chunked_array.getattr("chunks")?.extract()?;
+
+        let mut batches: Vec<Py<PyAny>> = Vec::new();
+        for chunk in &chunks {
+            let array_data = arrow::array::ArrayData::from_pyarrow_bound(chunk).map_err(|e| {
+                pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert chunk: {}", e))
+            })?;
+            if !array_data.is_empty() {
+                let arrow_array = BinaryArray::from(array_data);
+                let record_batch = ptars::binary_array_to_record_batch_direct(
+                    &arrow_array,
+                    &self.message_descriptor,
+                    &self.config,
+                )
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                batches.push(record_batch.to_pyarrow(py)?.unbind());
+            }
+        }
+
+        let pa = py.import("pyarrow")?;
+        let table_class = pa.getattr("Table")?;
+        let batch_list = pyo3::types::PyList::new(py, &batches)?;
+        let table = table_class.call_method1("from_batches", (batch_list,))?;
+        Ok(table.unbind())
     }
 
     /// Read size-delimited protobuf messages from a file and convert to a record batch.

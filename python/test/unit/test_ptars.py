@@ -502,6 +502,55 @@ def test_array_to_record_batch_complex_message(pool):
     assert record_batch["bool_value"].to_pylist() == [True, False]
 
 
+def test_chunked_array_to_table(pool):
+    """Test chunked_array_to_table returns a Table with one batch per chunk."""
+    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+
+    messages = [
+        SearchRequest(query="hello", page_number=1, result_per_page=10),
+        SearchRequest(query="world", page_number=2, result_per_page=20),
+        SearchRequest(query="foo", page_number=3, result_per_page=30),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+
+    # Create a chunked binary array from two separate chunks
+    chunk1 = pa.array(payloads[:2], type=pa.binary())
+    chunk2 = pa.array(payloads[2:], type=pa.binary())
+    chunked_array = pa.chunked_array([chunk1, chunk2])
+
+    table = handler.chunked_array_to_table(chunked_array)
+
+    assert isinstance(table, pa.Table)
+    assert table.num_rows == 3
+    assert table.column("query").to_pylist() == ["hello", "world", "foo"]
+    assert table.column("page_number").to_pylist() == [1, 2, 3]
+    assert table.column("result_per_page").to_pylist() == [10, 20, 30]
+    # Each chunk becomes a separate batch
+    assert len(table.to_batches()) == 2
+
+
+def test_chunked_array_to_table_skips_empty_chunks(pool):
+    """Test that empty chunks are skipped."""
+    handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+
+    messages = [
+        SearchRequest(query="hello", page_number=1, result_per_page=10),
+    ]
+    payloads = [message.SerializeToString() for message in messages]
+
+    chunk1 = pa.array([], type=pa.binary())
+    chunk2 = pa.array(payloads, type=pa.binary())
+    chunk3 = pa.array([], type=pa.binary())
+    chunked_array = pa.chunked_array([chunk1, chunk2, chunk3])
+
+    table = handler.chunked_array_to_table(chunked_array)
+
+    assert isinstance(table, pa.Table)
+    assert table.num_rows == 1
+    assert len(table.to_batches()) == 1
+    assert table.column("query").to_pylist() == ["hello"]
+
+
 def test_nested_primitive():
     data = [
         NestedExampleMessage(example_message=ExampleMessage()),
