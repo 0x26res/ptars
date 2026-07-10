@@ -5,3 +5,10 @@ resolver = "2"
 
 [workspace.package]
 version = "0.0.0"
+
+# The release workflows substitute every line of this file matching
+# `^version = "..."` with the tag version, keeping this requirement in sync
+# with the published ptars-core version.
+[workspace.dependencies.ptars-core]
+path = "ptars-core"
+version = "0.0.0"
