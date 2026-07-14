@@ -17,8 +17,6 @@ jobs:
           # Rewrites both the workspace package version and the ptars-core
           # dependency requirement (see [workspace.dependencies] in Cargo.toml).
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-          # The facade pins its core with an exact version requirement.
-          sed -i "s/version = \"=0.0.0\"/version = \"=$VERSION\"/" ptars/Cargo.toml
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

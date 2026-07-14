@@ -7,6 +7,10 @@ arrow-array = "59"
 arrow-schema = "59"
 prost = "0.14.4"
 prost-reflect = "0.16.4"
+ptars-core.workspace = true
+
+[dev-dependencies]
+prost-types = "0.14.4"
 
 [lib]
 name = "ptars"
