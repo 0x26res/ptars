@@ -749,8 +749,6 @@ dependencies = [
  "arrow-schema",
  "prost",
  "prost-reflect",
- "prost-types",
- "ptars-core",
 ]
 
 [[package]]
