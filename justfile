@@ -29,6 +29,10 @@ develop: env protoc
 test: develop
     cargo test && RUST_BACKTRACE=1 uv run python -m pytest python/test/unit
 
+# Build the Rust crates only (skips ptars-python, which needs maturin to link)
+build-crates:
+    cargo build -p ptars-core -p ptars
+
 # Build the Python package
 build: env
     . .venv/bin/activate && maturin build
