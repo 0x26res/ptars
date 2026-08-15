@@ -3,7 +3,7 @@ arrow = {version = "59", features = ["pyarrow"]}
 arrow-array = "59"
 arrow-schema = "59"
 prost = "0.14.4"
-prost-reflect = "0.16.4"
+prost-reflect = "0.16.5"
 ptars-core = {path = "../ptars-core"}
 pyo3 = {version = "0.28.3", features = ["abi3-py310"]}
 

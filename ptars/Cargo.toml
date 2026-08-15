@@ -6,7 +6,7 @@ arrow = {version = "59", features = ["ffi"]}
 arrow-array = "59"
 arrow-schema = "59"
 prost = "0.14.4"
-prost-reflect = "0.16.4"
+prost-reflect = "0.16.5"
 ptars-core.workspace = true
 
 [dev-dependencies]
