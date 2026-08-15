@@ -4,7 +4,7 @@ arrow-array = "59"
 arrow-schema = "59"
 chrono = "0.4.45"
 prost = "0.14.4"
-prost-reflect = "0.16.4"
+prost-reflect = "0.16.5"
 
 [lib]
 name = "ptars_core"
