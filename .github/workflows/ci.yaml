@@ -11,7 +11,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Update Rust
         run: |
           rustup update
@@ -27,15 +27,15 @@ jobs:
     env:
       PYTHON_VERSION: "3.12"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10
         with:
-          version: "0.11.1"
+          version: "0.12.5"
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Build docs
@@ -53,15 +53,15 @@ jobs:
           - "3.14"
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python }}
 
-    - uses: astral-sh/setup-uv@v7
+    - uses: astral-sh/setup-uv@v10
       with:
-        version: "0.11.1"
+        version: "0.12.5"
         python-version: ${{ matrix.python }}
 
 
@@ -78,7 +78,7 @@ jobs:
       run: just coverage
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v6
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./lcov.info,./coverage.xml
@@ -89,7 +89,7 @@ jobs:
   arrow-version-independence:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Update Rust
         run: rustup update
       - name: Test against a different arrow major version
@@ -100,7 +100,7 @@ jobs:
   public-api-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install nightly toolchain
         run: rustup toolchain install nightly
       - name: Install cargo-public-api

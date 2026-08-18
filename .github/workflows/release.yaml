@@ -36,14 +36,14 @@ jobs:
           - runner: ubuntu-22.04
             target: ppc64le
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set version from tag
         shell: bash
         if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
       - name: Build wheels
@@ -61,7 +61,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
@@ -80,14 +80,14 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set version from tag
         shell: bash
         if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
       - name: Build wheels
@@ -105,7 +105,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
@@ -120,14 +120,14 @@ jobs:
           - runner: windows-latest
             target: x86
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set version from tag
         shell: bash
         if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
@@ -138,7 +138,7 @@ jobs:
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
@@ -153,14 +153,14 @@ jobs:
           - runner: macos-15
             target: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set version from tag
         shell: bash
         if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
       - name: Build wheels
@@ -176,7 +176,7 @@ jobs:
           args: --release --out dist -i python3.14t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
@@ -184,7 +184,7 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set version from tag
         shell: bash
         if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
@@ -197,7 +197,7 @@ jobs:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
           path: dist
@@ -216,13 +216,13 @@ jobs:
       # Used to generate artifact attestation
       attestations: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
       - name: Merge wheels into dist directory
         run: |
           mkdir -p dist
           mv wheels-*/* dist/
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'dist/*'
       - name: Publish to PyPI
