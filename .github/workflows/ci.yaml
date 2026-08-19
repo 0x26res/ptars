@@ -11,7 +11,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Update Rust
         run: |
           rustup update
@@ -27,7 +27,7 @@ jobs:
     env:
       PYTHON_VERSION: "3.12"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -53,7 +53,7 @@ jobs:
           - "3.14"
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - uses: actions/setup-python@v5
       with:
@@ -89,7 +89,7 @@ jobs:
   arrow-version-independence:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Update Rust
         run: rustup update
       - name: Test against a different arrow major version
@@ -100,7 +100,7 @@ jobs:
   public-api-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install nightly toolchain
         run: rustup toolchain install nightly
       - name: Install cargo-public-api
