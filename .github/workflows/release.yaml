@@ -43,7 +43,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
       - name: Build wheels
@@ -87,7 +87,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
       - name: Build wheels
@@ -127,7 +127,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
@@ -160,7 +160,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: 3.x
       - name: Build wheels
