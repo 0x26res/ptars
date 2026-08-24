@@ -11,12 +11,36 @@
         - record_batch_to_messages
         - read_size_delimited_file
 
+## get_schema
+
+::: ptars.get_schema
+
 ## MessageHandler
 
 The `MessageHandler` class is returned by `HandlerPool.get_for_message()`
 and provides low-level conversion methods.
 
 ### Methods
+
+#### `schema() -> pyarrow.Schema`
+
+Get the Arrow schema of the record batches produced by this handler.
+
+The schema reflects the handler's `PtarsConfig`, so it matches exactly what
+`list_to_record_batch` and `array_to_record_batch` return.
+
+__Returns:__
+
+- A `pyarrow.Schema` with one field per field in the protobuf message.
+
+__Example:__
+
+```python
+handler = pool.get_for_message(SearchRequest.DESCRIPTOR)
+schema = handler.schema()
+```
+
+---
 
 #### `list_to_record_batch(payloads: list[bytes]) -> pyarrow.RecordBatch`
 

@@ -161,6 +161,18 @@ struct MessageHandler {
 
 #[pymethods]
 impl MessageHandler {
+    /// The Arrow schema of the record batches produced by this handler.
+    fn schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let empty = BinaryArray::from(Vec::<Option<&[u8]>>::new());
+        let batch = ptars_core::binary_array_to_record_batch_direct(
+            &empty,
+            &self.message_descriptor,
+            &self.config,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(batch.schema().to_pyarrow(py)?.unbind())
+    }
+
     fn list_to_record_batch(
         &self,
         values: &Bound<'_, PyList>,

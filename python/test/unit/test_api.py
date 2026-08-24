@@ -3,7 +3,7 @@ import pytest
 from google.protobuf.descriptor import FileDescriptor
 from ptars._lib import MessageHandler  # ty:ignore[unresolved-import]
 
-from ptars import HandlerPool
+from ptars import HandlerPool, PtarsConfig, get_schema
 from ptars_protos.bench_pb2 import DESCRIPTOR, ExampleMessage
 
 
@@ -47,6 +47,32 @@ def test_messages_to_record_batch():
     assert batch["int32_value"].to_pylist() == [0, 1]
 
     pool.record_batch_to_messages(batch, ExampleMessage.DESCRIPTOR)
+
+
+def test_get_schema():
+    schema = get_schema(ExampleMessage.DESCRIPTOR)
+    assert isinstance(schema, pa.Schema)
+    assert schema.field("double_value").type == pa.float64()
+    assert schema.field("int32_value").type == pa.int32()
+
+    pool = HandlerPool([DESCRIPTOR])
+    batch = pool.messages_to_record_batch(
+        [ExampleMessage(double_value=1.0)], ExampleMessage.DESCRIPTOR
+    )
+    assert batch.schema == schema
+
+
+def test_get_schema_with_config():
+    schema = get_schema(ExampleMessage.DESCRIPTOR, PtarsConfig(use_large_string=True))
+    assert schema.field("string_value").type == pa.large_string()
+
+
+def test_handler_schema():
+    pool = HandlerPool([DESCRIPTOR])
+    handler = pool.get_for_message(ExampleMessage.DESCRIPTOR)
+    schema = handler.schema()
+    assert isinstance(schema, pa.Schema)
+    assert schema.field("double_value").type == pa.float64()
 
 
 def test_version():

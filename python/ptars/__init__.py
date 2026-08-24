@@ -16,6 +16,12 @@ Example:
 
 from ptars._lib import __version__  # ty:ignore[unresolved-import]
 from ptars.config import ConfluentWirePolicyLiteral, PtarsConfig
-from ptars.internal import HandlerPool
+from ptars.internal import HandlerPool, get_schema
 
-__all__ = ["ConfluentWirePolicyLiteral", "HandlerPool", "PtarsConfig", "__version__"]
+__all__ = [
+    "ConfluentWirePolicyLiteral",
+    "HandlerPool",
+    "PtarsConfig",
+    "__version__",
+    "get_schema",
+]

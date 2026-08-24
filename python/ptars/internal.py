@@ -46,6 +46,31 @@ def _get_dependencies(
     return results
 
 
+def get_schema(
+    descriptor: Descriptor, config: PtarsConfig | None = None
+) -> pa.Schema:
+    """Get the Arrow schema for a protobuf message type.
+
+    Args:
+        descriptor: A protobuf message Descriptor.
+        config: Optional configuration for Arrow type mappings.
+
+    Returns:
+        The pyarrow.Schema of the RecordBatches produced when converting
+        messages of this type, with one field per protobuf field.
+
+    Example:
+        ```python
+        from ptars import PtarsConfig, get_schema
+
+        schema = get_schema(MyMessage.DESCRIPTOR)
+        schema = get_schema(MyMessage.DESCRIPTOR, PtarsConfig(enum_repr="string"))
+        ```
+    """
+    pool = HandlerPool([descriptor.file], config=config)
+    return pool.get_for_message(descriptor).schema()
+
+
 class HandlerPool:
     """A pool for managing protobuf message handlers.
 
