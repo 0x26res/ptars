@@ -181,6 +181,28 @@ fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit) -> i6
 
 static CE_OFFSET: i32 = 719163;
 
+/// `google.type.Date` → days since 1970-01-01 (Arrow `Date32`).
+///
+/// The type deliberately allows partial dates: year 0 means "no year", month 0 "no month and
+/// day", day 0 "whole month". Unspecified month/day are normalised to 1, so "2026, month
+/// unspecified" becomes 2026-01-01. A triple that still is not a calendar date (no year,
+/// 2026-02-30, month 13) falls back to 0 — the epoch — where the all-zero date already went.
+/// The previous `from_ymd_opt(...).unwrap()` panicked on every one of these and took the batch
+/// down with it.
+fn date_to_days_from_epoch(year: i32, month: i32, day: i32) -> i32 {
+    if year == 0 {
+        return 0;
+    }
+    let month = if month == 0 { 1 } else { month };
+    let day = if day == 0 { 1 } else { day };
+    match (u32::try_from(month), u32::try_from(day)) {
+        (Ok(m), Ok(d)) => chrono::NaiveDate::from_ymd_opt(year, m, d)
+            .map(|date| date.num_days_from_ce() - CE_OFFSET)
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
 fn enum_name(enum_descriptor: &EnumDescriptor, number: i32) -> String {
     match enum_descriptor.get_value(number) {
         Some(v) => v.name().to_string(),
@@ -633,12 +655,7 @@ impl RepeatedInner {
                 if y == 0 && m == 0 && d == 0 {
                     values_builder.append_value(0);
                 } else {
-                    values_builder.append_value(
-                        chrono::NaiveDate::from_ymd_opt(y, m as u32, d as u32)
-                            .unwrap()
-                            .num_days_from_ce()
-                            - CE_OFFSET,
-                    );
+                    values_builder.append_value(date_to_days_from_epoch(y, m, d));
                 }
                 Ok(total)
             }
@@ -1938,12 +1955,7 @@ impl FieldDecoder {
                     if *year == 0 && *month == 0 && *day == 0 {
                         builder.append_value(0);
                     } else {
-                        builder.append_value(
-                            chrono::NaiveDate::from_ymd_opt(*year, *month as u32, *day as u32)
-                                .unwrap()
-                                .num_days_from_ce()
-                                - CE_OFFSET,
-                        );
+                        builder.append_value(date_to_days_from_epoch(*year, *month, *day));
                     }
                 } else {
                     builder.append_null();
@@ -3190,5 +3202,28 @@ mod tests {
             convert_seconds_nanos_to_unit(-5, -500_000_000, TimeUnit::Millisecond),
             -5_500
         );
+    }
+
+    #[test]
+    fn test_partial_dates_normalise_instead_of_panicking() {
+        let days = |y: i32, m: u32, d: u32| {
+            chrono::NaiveDate::from_ymd_opt(y, m, d)
+                .unwrap()
+                .num_days_from_ce()
+                - CE_OFFSET
+        };
+        assert_eq!(date_to_days_from_epoch(1970, 1, 1), 0);
+        assert_eq!(date_to_days_from_epoch(2026, 3, 15), days(2026, 3, 15));
+        // month/day "not significant" → first of the period
+        assert_eq!(date_to_days_from_epoch(2026, 0, 0), days(2026, 1, 1));
+        assert_eq!(date_to_days_from_epoch(2026, 3, 0), days(2026, 3, 1));
+        // no year, or not a calendar date → epoch (never a panic)
+        assert_eq!(date_to_days_from_epoch(0, 3, 15), 0);
+        assert_eq!(date_to_days_from_epoch(0, 0, 0), 0);
+        assert_eq!(date_to_days_from_epoch(2026, 2, 30), 0);
+        assert_eq!(date_to_days_from_epoch(2026, 13, 1), 0);
+        assert_eq!(date_to_days_from_epoch(2026, -1, 1), 0);
+        assert_eq!(date_to_days_from_epoch(9999, 12, 31), days(9999, 12, 31));
+        assert_eq!(date_to_days_from_epoch(1, 1, 1), days(1, 1, 1));
     }
 }
