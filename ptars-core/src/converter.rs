@@ -5465,4 +5465,114 @@ mod tests {
             Some(1)
         );
     }
+
+    fn wire_varint(mut v: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let byte = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                out.push(byte);
+                return out;
+            }
+            out.push(byte | 0x80);
+        }
+    }
+
+    fn wire_tag(field: u32, wire_type: u8) -> Vec<u8> {
+        wire_varint(((field as u64) << 3) | wire_type as u64)
+    }
+
+    fn one_int32_field_descriptor() -> MessageDescriptor {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Simple".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("a".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Int32.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        create_pool_with_message(file_descriptor)
+            .get_message_by_name("test.Simple")
+            .unwrap()
+    }
+
+    /// An unknown group (wire types 3/4) anywhere in a payload must be skipped like any other
+    /// unknown field — including a group nested in a group — and the known fields around it
+    /// must still decode.
+    #[test]
+    fn test_unknown_groups_are_skipped() {
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let descriptor = one_int32_field_descriptor();
+        let mut payload = Vec::new();
+        payload.extend(wire_tag(1, 0));
+        payload.extend(wire_varint(42));
+        payload.extend(wire_tag(300, 3)); // start group 300 (a two-byte tag)
+        payload.extend(wire_tag(1, 0)); // a field inside the group, same number as ours
+        payload.extend(wire_varint(300)); // a two-byte varint
+        payload.extend(wire_tag(8, 3)); // nested start group 8
+        payload.extend(wire_tag(2, 2));
+        payload.extend(wire_varint(1));
+        payload.push(b'x');
+        payload.extend(wire_tag(8, 4)); // nested end group 8
+        payload.extend(wire_tag(300, 4)); // end group 300
+        payload.extend(wire_tag(3, 5)); // unknown fixed32 after the group
+        payload.extend(7u32.to_le_bytes());
+
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let batch = binary_array_to_record_batch_direct(
+            &binary_array,
+            &descriptor,
+            &PtarsConfig::default(),
+        )
+        .expect("unknown groups must be skipped");
+        let a = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(a.value(0), 42);
+    }
+
+    /// A group that the payload ends inside of (no matching end-group tag) is a malformed
+    /// record: an error, not a panic or an infinite loop.
+    #[test]
+    fn test_truncated_group_is_an_error_not_a_panic() {
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let descriptor = one_int32_field_descriptor();
+        let mut payload = Vec::new();
+        payload.extend(wire_tag(9, 3)); // start group 9 …
+        payload.extend(wire_tag(1, 0));
+        payload.extend(wire_varint(7)); // … and the payload ends here
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let result = binary_array_to_record_batch_direct(
+            &binary_array,
+            &descriptor,
+            &PtarsConfig::default(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stray_end_group_is_an_error_not_a_panic() {
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let descriptor = one_int32_field_descriptor();
+        let payload = wire_tag(9, 4);
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let result = binary_array_to_record_batch_direct(
+            &binary_array,
+            &descriptor,
+            &PtarsConfig::default(),
+        );
+        assert!(result.is_err());
+    }
 }
