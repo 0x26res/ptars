@@ -5369,10 +5369,9 @@ mod tests {
         assert_eq!(list[1].as_enum_number(), Some(2));
     }
 
-    #[test]
-    fn test_map_with_enum_value_string_repr_roundtrip() {
-        use crate::config::EnumRepr;
-
+    /// A map whose values are enums goes through the enum-name cache in the map value
+    /// decoder — for both name representations.
+    fn assert_map_with_enum_value_roundtrip(enum_repr: crate::config::EnumRepr) {
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
             package: Some("test".to_string()),
@@ -5452,7 +5451,7 @@ mod tests {
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("priorities", Value::Map(map));
 
-        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let config = PtarsConfig::default().with_enum_repr(enum_repr);
         let record_batch =
             messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
         let array_data = record_batch_to_array(&record_batch, &message_descriptor);
@@ -5804,5 +5803,77 @@ mod tests {
         );
         let back_edge = other.fields().iter().find(|f| f.name() == "other").unwrap();
         assert_eq!(*back_edge.data_type(), arrow::datatypes::DataType::Binary);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_string_repr_roundtrip() {
+        assert_map_with_enum_value_roundtrip(crate::config::EnumRepr::String);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_binary_repr_roundtrip() {
+        assert_map_with_enum_value_roundtrip(crate::config::EnumRepr::Binary);
+    }
+
+    /// proto2 producers (and proto3 with `[packed = false]`) send a repeated enum as one
+    /// tag per element (wire type 0) instead of a packed length-delimited run; both paths
+    /// resolve names through the cache.
+    fn unpacked_statuses_payload() -> Vec<u8> {
+        // field 2 (statuses) wire type 0 → tag 0x10; UNKNOWN, ACTIVE, INACTIVE
+        vec![0x10, 0x00, 0x10, 0x01, 0x10, 0x02]
+    }
+
+    #[test]
+    fn test_repeated_enum_string_repr_unpacked() {
+        use crate::config::EnumRepr;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+        let payload = unpacked_statuses_payload();
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let batch =
+            binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config)
+                .unwrap();
+        let list_array = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let strings = values
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings.value(0), "UNKNOWN");
+        assert_eq!(strings.value(1), "ACTIVE");
+        assert_eq!(strings.value(2), "INACTIVE");
+    }
+
+    #[test]
+    fn test_repeated_enum_binary_repr_unpacked() {
+        use crate::config::EnumRepr;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+        let payload = unpacked_statuses_payload();
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let batch =
+            binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config)
+                .unwrap();
+        let list_array = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let names = values
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert_eq!(names.len(), 3);
+        assert_eq!(names.value(0), b"UNKNOWN");
+        assert_eq!(names.value(1), b"ACTIVE");
+        assert_eq!(names.value(2), b"INACTIVE");
     }
 }
