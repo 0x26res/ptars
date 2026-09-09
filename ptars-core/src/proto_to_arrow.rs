@@ -1676,6 +1676,29 @@ impl FieldDecoder {
         }
     }
 
+    /// Number of values this singular decoder has appended to its builder. Used by the
+    /// map decoder to compute entry offsets from its key decoder; covers exactly the
+    /// kinds protobuf allows as map keys (integers, bool, string), `None` otherwise.
+    fn appended_len(&self) -> Option<usize> {
+        Some(match self {
+            Self::Int32 { builder, .. }
+            | Self::Sint32 { builder, .. }
+            | Self::Sfixed32 { builder, .. } => ArrayBuilder::len(builder),
+            Self::Int64 { builder, .. }
+            | Self::Sint64 { builder, .. }
+            | Self::Sfixed64 { builder, .. } => ArrayBuilder::len(builder),
+            Self::UInt32 { builder, .. } | Self::Fixed32 { builder, .. } => {
+                ArrayBuilder::len(builder)
+            }
+            Self::UInt64 { builder, .. } | Self::Fixed64 { builder, .. } => {
+                ArrayBuilder::len(builder)
+            }
+            Self::Bool { builder, .. } => ArrayBuilder::len(builder),
+            Self::String { builder, .. } => builder.len(),
+            _ => return None,
+        })
+    }
+
     fn flush(&mut self) {
         match self {
             Self::Int32 {
@@ -2089,17 +2112,12 @@ impl FieldDecoder {
                 offsets,
                 ..
             } => {
-                let count = match key_decoder.as_ref() {
-                    FieldDecoder::Int32 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Int64 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::UInt32 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::UInt64 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Sint32 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Sint64 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Bool { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::String { builder, .. } => builder.len(),
-                    _ => *offsets.last().unwrap() as usize,
-                };
+                // Every key kind protobuf allows must be covered here: a kind that falls
+                // through leaves the offsets where they were and silently drops every
+                // entry of the map (fixed32/fixed64/sfixed32/sfixed64 keys used to).
+                let count = key_decoder
+                    .appended_len()
+                    .unwrap_or(*offsets.last().unwrap() as usize);
                 offsets.push(count as i32);
             }
         }
