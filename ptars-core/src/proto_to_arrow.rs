@@ -2360,17 +2360,33 @@ pub struct MessageDecoder {
 
 impl MessageDecoder {
     pub fn new(descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
+        Self::new_inner(descriptor, config, &mut Vec::new())
+    }
+
+    /// `ancestors` is the chain of message types currently being built, root first. A field
+    /// whose message type is already in the chain is a back-edge of a recursive proto (a
+    /// message containing itself, directly or through a cycle — `Tree.children`,
+    /// `google.protobuf.Struct` → `Value` → `Struct`). Recursing into it would never terminate
+    /// and overflowed the stack; such a field decodes as the raw protobuf bytes of the nested
+    /// message instead (`Binary`, or `List<Binary>` when repeated).
+    fn new_inner(
+        descriptor: &MessageDescriptor,
+        config: &PtarsConfig,
+        ancestors: &mut Vec<String>,
+    ) -> Self {
+        ancestors.push(descriptor.full_name().to_string());
         let mut decoders = Vec::new();
         let mut max_field_number: u32 = 0;
 
         for field in descriptor.fields() {
-            if let Some(decoder) = build_field_decoder(&field, config) {
+            if let Some(decoder) = build_field_decoder(&field, config, ancestors) {
                 if field.number() > max_field_number {
                     max_field_number = field.number();
                 }
                 decoders.push((decoder, field));
             }
         }
+        ancestors.pop();
 
         let mut tag_map = vec![
             None;
@@ -2513,12 +2529,16 @@ impl MessageDecoder {
 // build_field_decoder
 // ---------------------------------------------------------------------------
 
-fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_field_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     if field.is_map() {
-        return build_map_decoder(field, config);
+        return build_map_decoder(field, config, ancestors);
     }
     if field.is_list() {
-        return build_repeated_decoder(field, config);
+        return build_repeated_decoder(field, config, ancestors);
     }
 
     let has_presence = field.supports_presence();
@@ -2635,13 +2655,14 @@ fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<
                 enum_descriptor: enum_desc,
             }),
         },
-        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config, ancestors),
     }
 }
 
 fn build_message_field_decoder(
     msg_desc: MessageDescriptor,
     config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     match msg_desc.full_name() {
         "google.protobuf.Timestamp" => Some(FieldDecoder::Timestamp {
@@ -2721,7 +2742,17 @@ fn build_message_field_decoder(
             builder: BinaryBuilderInner::new(config.use_large_binary),
         }),
         _ => {
-            let sub_decoder = MessageDecoder::new(&msg_desc, config);
+            // Recursion guard: a message type already being built higher in the chain
+            // decodes as its raw bytes (see MessageDecoder::new_inner).
+            if ancestors.iter().any(|a| a == msg_desc.full_name()) {
+                return Some(FieldDecoder::Bytes {
+                    value: Vec::new(),
+                    has_value: false,
+                    has_presence: true,
+                    builder: BinaryBuilderInner::new(config.use_large_binary),
+                });
+            }
+            let sub_decoder = MessageDecoder::new_inner(&msg_desc, config, ancestors);
             Some(FieldDecoder::Message {
                 sub_decoder,
                 has_value: false,
@@ -2731,7 +2762,11 @@ fn build_message_field_decoder(
     }
 }
 
-fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_repeated_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     let ln = config.list_value_name.clone();
     let lnb = config.list_value_nullable;
     let offsets = || ListOffsets::new(config.use_large_list);
@@ -2796,7 +2831,14 @@ fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Opti
             },
         },
         Kind::Message(msg_desc) => {
-            return build_repeated_message_decoder(&msg_desc, config, offsets(), ln, lnb);
+            return build_repeated_message_decoder(
+                &msg_desc,
+                config,
+                offsets(),
+                ln,
+                lnb,
+                ancestors,
+            );
         }
     };
 
@@ -2814,6 +2856,7 @@ fn build_repeated_message_decoder(
     offsets: ListOffsets,
     ln: Arc<str>,
     lnb: bool,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     let inner = match msg_desc.full_name() {
         "google.protobuf.Timestamp" => RepeatedInner::Timestamp {
@@ -2860,8 +2903,16 @@ fn build_repeated_message_decoder(
             values_builder: BinaryBuilderInner::new(config.use_large_binary),
         },
         _ => {
-            let sub_decoder = MessageDecoder::new(msg_desc, config);
-            RepeatedInner::Message { sub_decoder }
+            // Recursion guard (see MessageDecoder::new_inner): a recursive `repeated Foo`
+            // becomes a list of the elements' raw bytes.
+            if ancestors.iter().any(|a| a == msg_desc.full_name()) {
+                RepeatedInner::Bytes {
+                    values_builder: BinaryBuilderInner::new(config.use_large_binary),
+                }
+            } else {
+                let sub_decoder = MessageDecoder::new_inner(msg_desc, config, ancestors);
+                RepeatedInner::Message { sub_decoder }
+            }
         }
     };
 
@@ -2873,7 +2924,11 @@ fn build_repeated_message_decoder(
     })
 }
 
-fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_map_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     let map_entry = match field.kind() {
         Kind::Message(desc) => desc,
         _ => return None,
@@ -2882,8 +2937,8 @@ fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<Fi
     let value_field = map_entry.get_field_by_name("value")?;
 
     // Build singular decoders for key and value (they buffer per-entry, not per-row)
-    let key_decoder = build_singular_decoder_for_map(&key_field, config)?;
-    let value_decoder = build_singular_decoder_for_map(&value_field, config)?;
+    let key_decoder = build_singular_decoder_for_map(&key_field, config, ancestors)?;
+    let value_decoder = build_singular_decoder_for_map(&value_field, config, ancestors)?;
 
     Some(FieldDecoder::Map {
         key_decoder: Box::new(key_decoder),
@@ -2898,6 +2953,7 @@ fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<Fi
 fn build_singular_decoder_for_map(
     field: &FieldDescriptor,
     config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     // Map keys/values are never "optional" in protobuf sense — they use proto3 defaults
     match field.kind() {
@@ -3013,7 +3069,7 @@ fn build_singular_decoder_for_map(
                 enum_descriptor: enum_desc,
             }),
         },
-        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config, ancestors),
     }
 }
 

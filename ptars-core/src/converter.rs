@@ -5652,4 +5652,157 @@ mod tests {
     fn test_map_sint64_key_roundtrip() {
         assert_map_key_kind_roundtrip(Type::Sint64, prost_reflect::MapKey::I64(-1));
     }
+
+    fn recursive_tree_descriptor() -> MessageDescriptor {
+        // message Tree { string name = 1; repeated Tree children = 2; Tree parent = 3; }
+        let file_descriptor = FileDescriptorProto {
+            name: Some("tree.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Tree".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("name".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::String.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("children".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Tree".to_string()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("parent".to_string()),
+                        number: Some(3),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Tree".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        create_pool_with_message(file_descriptor)
+            .get_message_by_name("test.Tree")
+            .unwrap()
+    }
+
+    /// A self-referential message used to recurse forever while building the decoder and
+    /// overflow the stack. The back-edge fields now decode as the nested message's raw bytes.
+    #[test]
+    fn test_recursive_message_decodes_back_edges_as_bytes() {
+        let descriptor = recursive_tree_descriptor();
+
+        let mut leaf = DynamicMessage::new(descriptor.clone());
+        leaf.set_field_by_name("name", Value::String("leaf".to_string()));
+        let mut parent = DynamicMessage::new(descriptor.clone());
+        parent.set_field_by_name("name", Value::String("parent".to_string()));
+        let mut root = DynamicMessage::new(descriptor.clone());
+        root.set_field_by_name("name", Value::String("root".to_string()));
+        root.set_field_by_name(
+            "children",
+            Value::List(vec![
+                Value::Message(leaf.clone()),
+                Value::Message(leaf.clone()),
+            ]),
+        );
+        root.set_field_by_name("parent", Value::Message(parent.clone()));
+
+        let batch = messages_to_record_batch(&[root], &descriptor);
+        let schema = batch.schema();
+        assert!(matches!(
+            schema.field_with_name("parent").unwrap().data_type(),
+            arrow::datatypes::DataType::Binary
+        ));
+        assert!(matches!(
+            schema.field_with_name("children").unwrap().data_type(),
+            arrow::datatypes::DataType::List(inner)
+                if *inner.data_type() == arrow::datatypes::DataType::Binary
+        ));
+
+        // The bytes are the encoded nested message, decodable with the same descriptor.
+        let parent_col = batch
+            .column_by_name("parent")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::BinaryArray>()
+            .unwrap();
+        let decoded = DynamicMessage::decode(descriptor.clone(), parent_col.value(0)).unwrap();
+        assert_eq!(
+            decoded.get_field_by_name("name").unwrap().as_str(),
+            Some("parent")
+        );
+        let children = batch
+            .column_by_name("children")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::ListArray>()
+            .unwrap();
+        assert_eq!(children.value_length(0), 2);
+    }
+
+    /// Mutual recursion (A → B → A) is the same cycle one level deeper.
+    #[test]
+    fn test_mutually_recursive_messages_decode() {
+        let msg = |name: &str, other: &str| DescriptorProto {
+            name: Some(name.to_string()),
+            field: vec![
+                FieldDescriptorProto {
+                    name: Some("label".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::String.into()),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("other".to_string()),
+                    number: Some(2),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(format!(".test.{other}")),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let file_descriptor = FileDescriptorProto {
+            name: Some("pingpong.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![msg("Ping", "Pong"), msg("Pong", "Ping")],
+            ..Default::default()
+        };
+        let pool = create_pool_with_message(file_descriptor);
+        let ping = pool.get_message_by_name("test.Ping").unwrap();
+        let pong = pool.get_message_by_name("test.Pong").unwrap();
+
+        let mut inner = DynamicMessage::new(pong.clone());
+        inner.set_field_by_name("label", Value::String("pong".to_string()));
+        let mut outer = DynamicMessage::new(ping.clone());
+        outer.set_field_by_name("label", Value::String("ping".to_string()));
+        outer.set_field_by_name("other", Value::Message(inner));
+
+        let batch = messages_to_record_batch(&[outer], &ping);
+        // Ping.other is a Pong struct; Pong.other (back to Ping) is the bytes column.
+        use arrow::array::AsArray;
+        let other = batch.column_by_name("other").unwrap().as_struct();
+        assert_eq!(
+            other
+                .column_by_name("label")
+                .unwrap()
+                .as_string::<i32>()
+                .value(0),
+            "pong"
+        );
+        let back_edge = other.fields().iter().find(|f| f.name() == "other").unwrap();
+        assert_eq!(*back_edge.data_type(), arrow::datatypes::DataType::Binary);
+    }
 }
