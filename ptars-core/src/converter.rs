@@ -4852,8 +4852,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Timestamp overflow")]
-    fn test_timestamp_overflow_to_nanoseconds_panics() {
+    fn test_timestamp_overflow_to_nanoseconds_saturates() {
         // Year 2500 timestamp that overflows when converted to nanoseconds
         let mut pool = create_timestamp_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4891,17 +4890,23 @@ mod tests {
         msg.set_field_by_name("ts", Value::Message(ts));
 
         let messages = vec![msg];
-        // This should panic because the timestamp cannot be represented in nanoseconds
         let config = PtarsConfig {
             timestamp_unit: crate::config::TimeUnit::Nanosecond,
             ..Default::default()
         };
-        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        // Out of the i64 nanosecond range: the value saturates instead of panicking, so one
+        // such record can no longer abort the decode of a whole batch.
+        let batch = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        let column = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::TimestampNanosecondArray>()
+            .unwrap();
+        assert_eq!(column.value(0), i64::MAX);
     }
 
     #[test]
-    #[should_panic(expected = "Duration overflow")]
-    fn test_duration_overflow_to_nanoseconds_panics() {
+    fn test_duration_overflow_to_nanoseconds_saturates() {
         // 500-year duration that overflows when converted to nanoseconds
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4939,12 +4944,19 @@ mod tests {
         msg.set_field_by_name("dur", Value::Message(dur));
 
         let messages = vec![msg];
-        // This should panic because the duration cannot be represented in nanoseconds
         let config = PtarsConfig {
             duration_unit: crate::config::TimeUnit::Nanosecond,
             ..Default::default()
         };
-        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        // Out of the i64 nanosecond range: the value saturates instead of panicking, so one
+        // such record can no longer abort the decode of a whole batch.
+        let batch = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        let column = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::DurationNanosecondArray>()
+            .unwrap();
+        assert_eq!(column.value(0), i64::MAX);
     }
 
     #[test]

@@ -139,22 +139,23 @@ fn decode_zigzag64(v: u64) -> i64 {
     ((v >> 1) as i64) ^ (-((v & 1) as i64))
 }
 
-fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit, type_name: &str) -> i64 {
-    match unit {
-        TimeUnit::Second => seconds,
-        TimeUnit::Millisecond => seconds
-            .checked_mul(1_000)
-            .and_then(|s| s.checked_add(i64::from(nanos) / 1_000_000))
-            .unwrap_or_else(|| panic!("{type_name} overflow")),
-        TimeUnit::Microsecond => seconds
-            .checked_mul(1_000_000)
-            .and_then(|s| s.checked_add(i64::from(nanos) / 1_000))
-            .unwrap_or_else(|| panic!("{type_name} overflow")),
-        TimeUnit::Nanosecond => seconds
-            .checked_mul(1_000_000_000)
-            .and_then(|s| s.checked_add(i64::from(nanos)))
-            .unwrap_or_else(|| panic!("{type_name} overflow")),
-    }
+/// Convert a `(seconds, nanos)` pair into a single `i64` in `unit`.
+///
+/// Saturates instead of panicking when the value does not fit. `google.protobuf.Timestamp`
+/// spans years 0001..=9999 but Arrow `Timestamp(Nanosecond)` only 1677..=2262, and both ends
+/// occur in real feeds: a far-future "never expires" sentinel (9999-12-31) and the far-past
+/// null-date sentinel some producers emit (0001-01-01). The old `panic!("… overflow")` aborted
+/// the decode of a whole batch over one such record. Clamping keeps the sentinel's ordering
+/// (a clamped 9999-12-31 still sorts after every real timestamp), which a null would not.
+fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit) -> i64 {
+    let (mul, div): (i128, i128) = match unit {
+        TimeUnit::Second => (1, 1_000_000_000),
+        TimeUnit::Millisecond => (1_000, 1_000_000),
+        TimeUnit::Microsecond => (1_000_000, 1_000),
+        TimeUnit::Nanosecond => (1_000_000_000, 1),
+    };
+    let v = i128::from(seconds) * mul + i128::from(nanos) / div;
+    v.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 static CE_OFFSET: i32 = 719163;
@@ -581,7 +582,6 @@ impl RepeatedInner {
                     vals[0],
                     vals[1] as i32,
                     *unit,
-                    "Timestamp",
                 ));
                 Ok(total)
             }
@@ -599,7 +599,6 @@ impl RepeatedInner {
                     vals[0],
                     vals[1] as i32,
                     *unit,
-                    "Duration",
                 ));
                 Ok(total)
             }
@@ -637,7 +636,6 @@ impl RepeatedInner {
                     total_seconds,
                     vals[3] as i32,
                     *unit,
-                    "TimeOfDay",
                 ));
                 Ok(total)
             }
@@ -1860,12 +1858,7 @@ impl FieldDecoder {
                 ..
             } => {
                 if *has_value {
-                    builder.append_value(convert_seconds_nanos_to_unit(
-                        *seconds,
-                        *nanos,
-                        *unit,
-                        "Timestamp",
-                    ));
+                    builder.append_value(convert_seconds_nanos_to_unit(*seconds, *nanos, *unit));
                 } else {
                     builder.append_null();
                 }
@@ -1882,9 +1875,7 @@ impl FieldDecoder {
                 ..
             } => {
                 if *has_value {
-                    builder.append_value(convert_seconds_nanos_to_unit(
-                        *seconds, *nanos, *unit, "Duration",
-                    ));
+                    builder.append_value(convert_seconds_nanos_to_unit(*seconds, *nanos, *unit));
                 } else {
                     builder.append_null();
                 }
@@ -1935,7 +1926,6 @@ impl FieldDecoder {
                         total_seconds,
                         *nanos,
                         *unit,
-                        "TimeOfDay",
                     ));
                 } else {
                     builder.append_null();
@@ -3109,5 +3099,57 @@ mod tests {
         let buf = b"\x00\x01";
         let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Protobuf);
         assert!(result.is_err());
+    }
+
+    /// Seconds for 9999-12-31T23:59:59Z — the "never" sentinel inventory feeds use for
+    /// open-ended lifecycle dates; it used to panic the decoder mid-batch.
+    const YEAR_9999: i64 = 253_402_300_799;
+    /// Seconds for 0001-01-01T00:00:00Z — the far-past null-date sentinel.
+    const YEAR_0001: i64 = -62_135_596_800;
+
+    #[test]
+    fn test_nanosecond_overflow_saturates_instead_of_panicking() {
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_9999, 0, TimeUnit::Nanosecond),
+            i64::MAX
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_0001, 0, TimeUnit::Nanosecond),
+            i64::MIN
+        );
+    }
+
+    #[test]
+    fn test_coarser_units_represent_the_sentinels_exactly() {
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_9999, 0, TimeUnit::Microsecond),
+            YEAR_9999 * 1_000_000
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_0001, 0, TimeUnit::Millisecond),
+            YEAR_0001 * 1_000
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_9999, 0, TimeUnit::Second),
+            YEAR_9999
+        );
+    }
+
+    #[test]
+    fn test_ordinary_values_unchanged_by_the_saturating_path() {
+        let secs = 1_786_608_000_i64; // 2026-08-13T00:00:00Z
+        assert_eq!(
+            convert_seconds_nanos_to_unit(secs, 123_456_789, TimeUnit::Nanosecond),
+            secs * 1_000_000_000 + 123_456_789
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(secs, 123_456_789, TimeUnit::Microsecond),
+            secs * 1_000_000 + 123_456
+        );
+        // Negative durations carry negative nanos; truncation stays toward zero.
+        assert_eq!(
+            convert_seconds_nanos_to_unit(-5, -500_000_000, TimeUnit::Millisecond),
+            -5_500
+        );
     }
 }
