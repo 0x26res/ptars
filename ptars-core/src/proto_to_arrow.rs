@@ -79,7 +79,28 @@ fn skip_field(wire_type: u8, buf: &[u8]) -> Result<usize, prost::DecodeError> {
             }
             Ok(4)
         }
+        3 => skip_group(buf),
+        4 => Err(decode_error("unexpected end-group tag")),
         _ => Err(decode_error("unsupported wire type")),
+    }
+}
+
+/// Skip a group (wire type 3) whose start tag has already been consumed: read fields until
+/// the matching end-group tag (wire type 4), recursing into nested groups. Groups are legal
+/// on the wire (proto2 `group`, or any proto2 producer) and an unknown one must be skipped
+/// like any other unknown field instead of failing the record.
+fn skip_group(buf: &[u8]) -> Result<usize, prost::DecodeError> {
+    let mut pos = 0;
+    loop {
+        if pos >= buf.len() {
+            return Err(decode_error("unexpected EOF inside group"));
+        }
+        let (_, wire_type, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if wire_type == 4 {
+            return Ok(pos);
+        }
+        pos += skip_field(wire_type, &buf[pos..])?;
     }
 }
 
