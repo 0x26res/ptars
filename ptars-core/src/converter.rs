@@ -5477,4 +5477,69 @@ mod tests {
             Some(1)
         );
     }
+
+    /// One map entry must survive decode → encode for every integer key encoding. A key
+    /// kind the map decoder does not account for makes the map decode as empty.
+    fn assert_map_key_kind_roundtrip(key_type: Type, key: prost_reflect::MapKey) {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(key_type, Type::Int32);
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(key.clone(), Value::I32(7));
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let record_batch = messages_to_record_batch(&[msg], &message_descriptor);
+        let map_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::MapArray>()
+            .unwrap();
+        assert_eq!(
+            map_array.value_length(0),
+            1,
+            "{key_type:?} key: the entry was lost"
+        );
+
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(
+            map.get(&key).and_then(|v| v.as_i32()),
+            Some(7),
+            "{key_type:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_fixed64_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Fixed64, prost_reflect::MapKey::U64(u64::MAX));
+    }
+
+    #[test]
+    fn test_map_fixed32_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Fixed32, prost_reflect::MapKey::U32(u32::MAX));
+    }
+
+    #[test]
+    fn test_map_sfixed32_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sfixed32, prost_reflect::MapKey::I32(-3));
+    }
+
+    #[test]
+    fn test_map_sfixed64_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sfixed64, prost_reflect::MapKey::I64(i64::MIN));
+    }
+
+    #[test]
+    fn test_map_sint32_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sint32, prost_reflect::MapKey::I32(-1));
+    }
+
+    #[test]
+    fn test_map_sint64_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sint64, prost_reflect::MapKey::I64(-1));
+    }
 }
