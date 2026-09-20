@@ -5586,6 +5586,8 @@ mod tests {
             &PtarsConfig::default(),
         );
         assert!(result.is_err());
+    }
+
     /// One map entry must survive decode → encode for every integer key encoding. A key
     /// kind the map decoder does not account for makes the map decode as empty.
     fn assert_map_key_kind_roundtrip(key_type: Type, key: prost_reflect::MapKey) {
