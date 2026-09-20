@@ -5369,10 +5369,9 @@ mod tests {
         assert_eq!(list[1].as_enum_number(), Some(2));
     }
 
-    #[test]
-    fn test_map_with_enum_value_string_repr_roundtrip() {
-        use crate::config::EnumRepr;
-
+    /// A map whose values are enums goes through the enum-name cache in the map value
+    /// decoder — for both name representations.
+    fn assert_map_with_enum_value_roundtrip(enum_repr: crate::config::EnumRepr) {
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
             package: Some("test".to_string()),
@@ -5452,7 +5451,7 @@ mod tests {
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("priorities", Value::Map(map));
 
-        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let config = PtarsConfig::default().with_enum_repr(enum_repr);
         let record_batch =
             messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
         let array_data = record_batch_to_array(&record_batch, &message_descriptor);
@@ -5651,5 +5650,230 @@ mod tests {
     #[test]
     fn test_map_sint64_key_roundtrip() {
         assert_map_key_kind_roundtrip(Type::Sint64, prost_reflect::MapKey::I64(-1));
+    }
+
+    fn recursive_tree_descriptor() -> MessageDescriptor {
+        // message Tree { string name = 1; repeated Tree children = 2; Tree parent = 3; }
+        let file_descriptor = FileDescriptorProto {
+            name: Some("tree.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Tree".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("name".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::String.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("children".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Tree".to_string()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("parent".to_string()),
+                        number: Some(3),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Tree".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        create_pool_with_message(file_descriptor)
+            .get_message_by_name("test.Tree")
+            .unwrap()
+    }
+
+    /// A self-referential message used to recurse forever while building the decoder and
+    /// overflow the stack. The back-edge fields now decode as the nested message's raw bytes.
+    #[test]
+    fn test_recursive_message_decodes_back_edges_as_bytes() {
+        let descriptor = recursive_tree_descriptor();
+
+        let mut leaf = DynamicMessage::new(descriptor.clone());
+        leaf.set_field_by_name("name", Value::String("leaf".to_string()));
+        let mut parent = DynamicMessage::new(descriptor.clone());
+        parent.set_field_by_name("name", Value::String("parent".to_string()));
+        let mut root = DynamicMessage::new(descriptor.clone());
+        root.set_field_by_name("name", Value::String("root".to_string()));
+        root.set_field_by_name(
+            "children",
+            Value::List(vec![
+                Value::Message(leaf.clone()),
+                Value::Message(leaf.clone()),
+            ]),
+        );
+        root.set_field_by_name("parent", Value::Message(parent.clone()));
+
+        let batch = messages_to_record_batch(&[root], &descriptor);
+        let schema = batch.schema();
+        assert!(matches!(
+            schema.field_with_name("parent").unwrap().data_type(),
+            arrow::datatypes::DataType::Binary
+        ));
+        assert!(matches!(
+            schema.field_with_name("children").unwrap().data_type(),
+            arrow::datatypes::DataType::List(inner)
+                if *inner.data_type() == arrow::datatypes::DataType::Binary
+        ));
+
+        // The bytes are the encoded nested message, decodable with the same descriptor.
+        let parent_col = batch
+            .column_by_name("parent")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::BinaryArray>()
+            .unwrap();
+        let decoded = DynamicMessage::decode(descriptor.clone(), parent_col.value(0)).unwrap();
+        assert_eq!(
+            decoded.get_field_by_name("name").unwrap().as_str(),
+            Some("parent")
+        );
+        let children = batch
+            .column_by_name("children")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::ListArray>()
+            .unwrap();
+        assert_eq!(children.value_length(0), 2);
+    }
+
+    /// Mutual recursion (A → B → A) is the same cycle one level deeper.
+    #[test]
+    fn test_mutually_recursive_messages_decode() {
+        let msg = |name: &str, other: &str| DescriptorProto {
+            name: Some(name.to_string()),
+            field: vec![
+                FieldDescriptorProto {
+                    name: Some("label".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::String.into()),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("other".to_string()),
+                    number: Some(2),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(format!(".test.{other}")),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let file_descriptor = FileDescriptorProto {
+            name: Some("pingpong.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![msg("Ping", "Pong"), msg("Pong", "Ping")],
+            ..Default::default()
+        };
+        let pool = create_pool_with_message(file_descriptor);
+        let ping = pool.get_message_by_name("test.Ping").unwrap();
+        let pong = pool.get_message_by_name("test.Pong").unwrap();
+
+        let mut inner = DynamicMessage::new(pong.clone());
+        inner.set_field_by_name("label", Value::String("pong".to_string()));
+        let mut outer = DynamicMessage::new(ping.clone());
+        outer.set_field_by_name("label", Value::String("ping".to_string()));
+        outer.set_field_by_name("other", Value::Message(inner));
+
+        let batch = messages_to_record_batch(&[outer], &ping);
+        // Ping.other is a Pong struct; Pong.other (back to Ping) is the bytes column.
+        use arrow::array::AsArray;
+        let other = batch.column_by_name("other").unwrap().as_struct();
+        assert_eq!(
+            other
+                .column_by_name("label")
+                .unwrap()
+                .as_string::<i32>()
+                .value(0),
+            "pong"
+        );
+        let back_edge = other.fields().iter().find(|f| f.name() == "other").unwrap();
+        assert_eq!(*back_edge.data_type(), arrow::datatypes::DataType::Binary);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_string_repr_roundtrip() {
+        assert_map_with_enum_value_roundtrip(crate::config::EnumRepr::String);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_binary_repr_roundtrip() {
+        assert_map_with_enum_value_roundtrip(crate::config::EnumRepr::Binary);
+    }
+
+    /// proto2 producers (and proto3 with `[packed = false]`) send a repeated enum as one
+    /// tag per element (wire type 0) instead of a packed length-delimited run; both paths
+    /// resolve names through the cache.
+    fn unpacked_statuses_payload() -> Vec<u8> {
+        // field 2 (statuses) wire type 0 → tag 0x10; UNKNOWN, ACTIVE, INACTIVE
+        vec![0x10, 0x00, 0x10, 0x01, 0x10, 0x02]
+    }
+
+    #[test]
+    fn test_repeated_enum_string_repr_unpacked() {
+        use crate::config::EnumRepr;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+        let payload = unpacked_statuses_payload();
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let batch =
+            binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config)
+                .unwrap();
+        let list_array = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let strings = values
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings.value(0), "UNKNOWN");
+        assert_eq!(strings.value(1), "ACTIVE");
+        assert_eq!(strings.value(2), "INACTIVE");
+    }
+
+    #[test]
+    fn test_repeated_enum_binary_repr_unpacked() {
+        use crate::config::EnumRepr;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+        let payload = unpacked_statuses_payload();
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let batch =
+            binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config)
+                .unwrap();
+        let list_array = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let names = values
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert_eq!(names.len(), 3);
+        assert_eq!(names.value(0), b"UNKNOWN");
+        assert_eq!(names.value(1), b"ACTIVE");
+        assert_eq!(names.value(2), b"INACTIVE");
     }
 }

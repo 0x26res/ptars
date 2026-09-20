@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::ArrayData;
@@ -203,10 +205,31 @@ fn date_to_days_from_epoch(year: i32, month: i32, day: i32) -> i32 {
     }
 }
 
-fn enum_name(enum_descriptor: &EnumDescriptor, number: i32) -> String {
-    match enum_descriptor.get_value(number) {
-        Some(v) => v.name().to_string(),
-        None => number.to_string(),
+/// Precomputed number → name table for one enum, built once when the field decoder is
+/// constructed.
+///
+/// Looking the name up through `EnumDescriptor::get_value` and allocating a fresh `String` for
+/// every decoded value was the hot path of string-represented enums on busy topics. The table
+/// returns a borrowed `&str` for declared values; numbers outside the declared set — which
+/// protobuf permits — are formatted on the fly, as before.
+struct EnumNames {
+    by_number: HashMap<i32, String>,
+}
+
+impl EnumNames {
+    fn new(descriptor: &EnumDescriptor) -> Self {
+        let by_number = descriptor
+            .values()
+            .map(|v| (v.number(), v.name().to_string()))
+            .collect();
+        Self { by_number }
+    }
+
+    fn name(&self, number: i32) -> Cow<'_, str> {
+        match self.by_number.get(&number) {
+            Some(name) => Cow::Borrowed(name.as_str()),
+            None => Cow::Owned(number.to_string()),
+        }
     }
 }
 
@@ -403,11 +426,11 @@ enum RepeatedInner {
     },
     EnumString {
         values_builder: StringBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
     EnumBinary {
         values_builder: BinaryBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
     Message {
         sub_decoder: MessageDecoder,
@@ -560,7 +583,7 @@ impl RepeatedInner {
             }
             Self::EnumString {
                 values_builder,
-                enum_descriptor,
+                enum_names,
                 ..
             } => {
                 if wire_type == 2 {
@@ -568,13 +591,13 @@ impl RepeatedInner {
                     let mut p = 0;
                     while p < data.len() {
                         let (v, n) = decode_varint(&data[p..])?;
-                        values_builder.append_value(&enum_name(enum_descriptor, v as i32));
+                        values_builder.append_value(enum_names.name(v as i32).as_ref());
                         p += n;
                     }
                     Ok(total)
                 } else if wire_type == 0 {
                     let (v, n) = decode_varint(buf)?;
-                    values_builder.append_value(&enum_name(enum_descriptor, v as i32));
+                    values_builder.append_value(enum_names.name(v as i32).as_ref());
                     Ok(n)
                 } else {
                     skip_field(wire_type, buf)
@@ -582,7 +605,7 @@ impl RepeatedInner {
             }
             Self::EnumBinary {
                 values_builder,
-                enum_descriptor,
+                enum_names,
                 ..
             } => {
                 if wire_type == 2 {
@@ -590,14 +613,13 @@ impl RepeatedInner {
                     let mut p = 0;
                     while p < data.len() {
                         let (v, n) = decode_varint(&data[p..])?;
-                        values_builder
-                            .append_value(enum_name(enum_descriptor, v as i32).as_bytes());
+                        values_builder.append_value(enum_names.name(v as i32).as_bytes());
                         p += n;
                     }
                     Ok(total)
                 } else if wire_type == 0 {
                     let (v, n) = decode_varint(buf)?;
-                    values_builder.append_value(enum_name(enum_descriptor, v as i32).as_bytes());
+                    values_builder.append_value(enum_names.name(v as i32).as_bytes());
                     Ok(n)
                 } else {
                     skip_field(wire_type, buf)
@@ -940,14 +962,14 @@ enum FieldDecoder {
         has_value: bool,
         has_presence: bool,
         builder: StringBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
     EnumBinary {
         value: i32,
         has_value: bool,
         has_presence: bool,
         builder: BinaryBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
 
     // --- Well-known types (singular, buffered) ---
@@ -1832,14 +1854,14 @@ impl FieldDecoder {
                 has_value,
                 has_presence,
                 builder,
-                enum_descriptor,
+                enum_names,
             } => {
                 if *has_value {
-                    builder.append_value(&enum_name(enum_descriptor, *value));
+                    builder.append_value(enum_names.name(*value).as_ref());
                 } else if *has_presence {
                     builder.append_null();
                 } else {
-                    builder.append_value(&enum_name(enum_descriptor, 0));
+                    builder.append_value(enum_names.name(0).as_ref());
                 }
                 *has_value = false;
                 *value = 0;
@@ -1849,14 +1871,14 @@ impl FieldDecoder {
                 has_value,
                 has_presence,
                 builder,
-                enum_descriptor,
+                enum_names,
             } => {
                 if *has_value {
-                    builder.append_value(enum_name(enum_descriptor, *value).as_bytes());
+                    builder.append_value(enum_names.name(*value).as_bytes());
                 } else if *has_presence {
                     builder.append_null();
                 } else {
-                    builder.append_value(enum_name(enum_descriptor, 0).as_bytes());
+                    builder.append_value(enum_names.name(0).as_bytes());
                 }
                 *has_value = false;
                 *value = 0;
@@ -2360,17 +2382,33 @@ pub struct MessageDecoder {
 
 impl MessageDecoder {
     pub fn new(descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
+        Self::new_inner(descriptor, config, &mut Vec::new())
+    }
+
+    /// `ancestors` is the chain of message types currently being built, root first. A field
+    /// whose message type is already in the chain is a back-edge of a recursive proto (a
+    /// message containing itself, directly or through a cycle — `Tree.children`,
+    /// `google.protobuf.Struct` → `Value` → `Struct`). Recursing into it would never terminate
+    /// and overflowed the stack; such a field decodes as the raw protobuf bytes of the nested
+    /// message instead (`Binary`, or `List<Binary>` when repeated).
+    fn new_inner(
+        descriptor: &MessageDescriptor,
+        config: &PtarsConfig,
+        ancestors: &mut Vec<String>,
+    ) -> Self {
+        ancestors.push(descriptor.full_name().to_string());
         let mut decoders = Vec::new();
         let mut max_field_number: u32 = 0;
 
         for field in descriptor.fields() {
-            if let Some(decoder) = build_field_decoder(&field, config) {
+            if let Some(decoder) = build_field_decoder(&field, config, ancestors) {
                 if field.number() > max_field_number {
                     max_field_number = field.number();
                 }
                 decoders.push((decoder, field));
             }
         }
+        ancestors.pop();
 
         let mut tag_map = vec![
             None;
@@ -2513,12 +2551,16 @@ impl MessageDecoder {
 // build_field_decoder
 // ---------------------------------------------------------------------------
 
-fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_field_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     if field.is_map() {
-        return build_map_decoder(field, config);
+        return build_map_decoder(field, config, ancestors);
     }
     if field.is_list() {
-        return build_repeated_decoder(field, config);
+        return build_repeated_decoder(field, config, ancestors);
     }
 
     let has_presence = field.supports_presence();
@@ -2625,23 +2667,24 @@ fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<
                 has_value: false,
                 has_presence,
                 builder: StringBuilderInner::new(config.use_large_string),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
             EnumRepr::Binary => Some(FieldDecoder::EnumBinary {
                 value: 0,
                 has_value: false,
                 has_presence,
                 builder: BinaryBuilderInner::new(config.use_large_binary),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
         },
-        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config, ancestors),
     }
 }
 
 fn build_message_field_decoder(
     msg_desc: MessageDescriptor,
     config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     match msg_desc.full_name() {
         "google.protobuf.Timestamp" => Some(FieldDecoder::Timestamp {
@@ -2721,7 +2764,17 @@ fn build_message_field_decoder(
             builder: BinaryBuilderInner::new(config.use_large_binary),
         }),
         _ => {
-            let sub_decoder = MessageDecoder::new(&msg_desc, config);
+            // Recursion guard: a message type already being built higher in the chain
+            // decodes as its raw bytes (see MessageDecoder::new_inner).
+            if ancestors.iter().any(|a| a == msg_desc.full_name()) {
+                return Some(FieldDecoder::Bytes {
+                    value: Vec::new(),
+                    has_value: false,
+                    has_presence: true,
+                    builder: BinaryBuilderInner::new(config.use_large_binary),
+                });
+            }
+            let sub_decoder = MessageDecoder::new_inner(&msg_desc, config, ancestors);
             Some(FieldDecoder::Message {
                 sub_decoder,
                 has_value: false,
@@ -2731,7 +2784,11 @@ fn build_message_field_decoder(
     }
 }
 
-fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_repeated_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     let ln = config.list_value_name.clone();
     let lnb = config.list_value_nullable;
     let offsets = || ListOffsets::new(config.use_large_list);
@@ -2788,15 +2845,22 @@ fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Opti
             },
             EnumRepr::String => RepeatedInner::EnumString {
                 values_builder: StringBuilderInner::new(config.use_large_string),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             },
             EnumRepr::Binary => RepeatedInner::EnumBinary {
                 values_builder: BinaryBuilderInner::new(config.use_large_binary),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             },
         },
         Kind::Message(msg_desc) => {
-            return build_repeated_message_decoder(&msg_desc, config, offsets(), ln, lnb);
+            return build_repeated_message_decoder(
+                &msg_desc,
+                config,
+                offsets(),
+                ln,
+                lnb,
+                ancestors,
+            );
         }
     };
 
@@ -2814,6 +2878,7 @@ fn build_repeated_message_decoder(
     offsets: ListOffsets,
     ln: Arc<str>,
     lnb: bool,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     let inner = match msg_desc.full_name() {
         "google.protobuf.Timestamp" => RepeatedInner::Timestamp {
@@ -2860,8 +2925,16 @@ fn build_repeated_message_decoder(
             values_builder: BinaryBuilderInner::new(config.use_large_binary),
         },
         _ => {
-            let sub_decoder = MessageDecoder::new(msg_desc, config);
-            RepeatedInner::Message { sub_decoder }
+            // Recursion guard (see MessageDecoder::new_inner): a recursive `repeated Foo`
+            // becomes a list of the elements' raw bytes.
+            if ancestors.iter().any(|a| a == msg_desc.full_name()) {
+                RepeatedInner::Bytes {
+                    values_builder: BinaryBuilderInner::new(config.use_large_binary),
+                }
+            } else {
+                let sub_decoder = MessageDecoder::new_inner(msg_desc, config, ancestors);
+                RepeatedInner::Message { sub_decoder }
+            }
         }
     };
 
@@ -2873,7 +2946,11 @@ fn build_repeated_message_decoder(
     })
 }
 
-fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_map_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     let map_entry = match field.kind() {
         Kind::Message(desc) => desc,
         _ => return None,
@@ -2882,8 +2959,8 @@ fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<Fi
     let value_field = map_entry.get_field_by_name("value")?;
 
     // Build singular decoders for key and value (they buffer per-entry, not per-row)
-    let key_decoder = build_singular_decoder_for_map(&key_field, config)?;
-    let value_decoder = build_singular_decoder_for_map(&value_field, config)?;
+    let key_decoder = build_singular_decoder_for_map(&key_field, config, ancestors)?;
+    let value_decoder = build_singular_decoder_for_map(&value_field, config, ancestors)?;
 
     Some(FieldDecoder::Map {
         key_decoder: Box::new(key_decoder),
@@ -2898,6 +2975,7 @@ fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<Fi
 fn build_singular_decoder_for_map(
     field: &FieldDescriptor,
     config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     // Map keys/values are never "optional" in protobuf sense — they use proto3 defaults
     match field.kind() {
@@ -3003,17 +3081,17 @@ fn build_singular_decoder_for_map(
                 has_value: false,
                 has_presence: false,
                 builder: StringBuilderInner::new(config.use_large_string),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
             EnumRepr::Binary => Some(FieldDecoder::EnumBinary {
                 value: 0,
                 has_value: false,
                 has_presence: false,
                 builder: BinaryBuilderInner::new(config.use_large_binary),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
         },
-        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config, ancestors),
     }
 }
 
@@ -3225,5 +3303,45 @@ mod tests {
         assert_eq!(date_to_days_from_epoch(2026, -1, 1), 0);
         assert_eq!(date_to_days_from_epoch(9999, 12, 31), days(9999, 12, 31));
         assert_eq!(date_to_days_from_epoch(1, 1, 1), days(1, 1, 1));
+    }
+
+    #[test]
+    fn test_enum_names_borrow_declared_and_format_unknown() {
+        use prost_reflect::prost_types::{
+            EnumDescriptorProto, EnumValueDescriptorProto, FileDescriptorProto,
+        };
+        let file = FileDescriptorProto {
+            name: Some("e.proto".to_string()),
+            package: Some("t".to_string()),
+            enum_type: vec![EnumDescriptorProto {
+                name: Some("Color".to_string()),
+                value: vec![
+                    EnumValueDescriptorProto {
+                        name: Some("UNSPECIFIED".to_string()),
+                        number: Some(0),
+                        ..Default::default()
+                    },
+                    EnumValueDescriptorProto {
+                        name: Some("RED".to_string()),
+                        number: Some(1),
+                        ..Default::default()
+                    },
+                    EnumValueDescriptorProto {
+                        name: Some("NEGATIVE".to_string()),
+                        number: Some(-1),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut pool = prost_reflect::DescriptorPool::new();
+        pool.add_file_descriptor_proto(file).unwrap();
+        let names = EnumNames::new(&pool.get_enum_by_name("t.Color").unwrap());
+        assert!(matches!(names.name(1), Cow::Borrowed("RED")));
+        assert_eq!(names.name(-1), "NEGATIVE");
+        assert_eq!(names.name(0), "UNSPECIFIED");
+        assert!(matches!(names.name(999), Cow::Owned(ref s) if s == "999"));
     }
 }
