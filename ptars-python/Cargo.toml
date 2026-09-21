@@ -1,7 +1,7 @@
 [dependencies]
 arrow = {version = "59", features = ["pyarrow"]}
 arrow-array = "59"
-arrow-schema = "59"
+arrow-schema = "60"
 prost = "0.14.4"
 prost-reflect = "0.16.5"
 ptars-core = {path = "../ptars-core"}
