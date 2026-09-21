@@ -1,6 +1,6 @@
 [dependencies]
 arrow = "59"
-arrow-array = "59"
+arrow-array = "60"
 arrow-schema = "59"
 chrono = "0.4.45"
 prost = "0.14.4"

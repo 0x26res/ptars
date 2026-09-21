@@ -3,7 +3,7 @@
 # in this crate's public API. Data is exchanged through the Arrow C Data
 # Interface (see src/ffi.rs), so consumers can use any arrow version.
 arrow = {version = "59", features = ["ffi"]}
-arrow-array = "59"
+arrow-array = "60"
 arrow-schema = "59"
 prost = "0.14.4"
 prost-reflect = "0.16.5"
