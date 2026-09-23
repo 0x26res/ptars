@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::ArrayData;
@@ -79,7 +81,28 @@ fn skip_field(wire_type: u8, buf: &[u8]) -> Result<usize, prost::DecodeError> {
             }
             Ok(4)
         }
+        3 => skip_group(buf),
+        4 => Err(decode_error("unexpected end-group tag")),
         _ => Err(decode_error("unsupported wire type")),
+    }
+}
+
+/// Skip a group (wire type 3) whose start tag has already been consumed: read fields until
+/// the matching end-group tag (wire type 4), recursing into nested groups. Groups are legal
+/// on the wire (proto2 `group`, or any proto2 producer) and an unknown one must be skipped
+/// like any other unknown field instead of failing the record.
+fn skip_group(buf: &[u8]) -> Result<usize, prost::DecodeError> {
+    let mut pos = 0;
+    loop {
+        if pos >= buf.len() {
+            return Err(decode_error("unexpected EOF inside group"));
+        }
+        let (_, wire_type, n) = decode_tag(&buf[pos..])?;
+        pos += n;
+        if wire_type == 4 {
+            return Ok(pos);
+        }
+        pos += skip_field(wire_type, &buf[pos..])?;
     }
 }
 
@@ -139,30 +162,74 @@ fn decode_zigzag64(v: u64) -> i64 {
     ((v >> 1) as i64) ^ (-((v & 1) as i64))
 }
 
-fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit, type_name: &str) -> i64 {
-    match unit {
-        TimeUnit::Second => seconds,
-        TimeUnit::Millisecond => seconds
-            .checked_mul(1_000)
-            .and_then(|s| s.checked_add(i64::from(nanos) / 1_000_000))
-            .unwrap_or_else(|| panic!("{type_name} overflow")),
-        TimeUnit::Microsecond => seconds
-            .checked_mul(1_000_000)
-            .and_then(|s| s.checked_add(i64::from(nanos) / 1_000))
-            .unwrap_or_else(|| panic!("{type_name} overflow")),
-        TimeUnit::Nanosecond => seconds
-            .checked_mul(1_000_000_000)
-            .and_then(|s| s.checked_add(i64::from(nanos)))
-            .unwrap_or_else(|| panic!("{type_name} overflow")),
-    }
+/// Convert a `(seconds, nanos)` pair into a single `i64` in `unit`.
+///
+/// Saturates instead of panicking when the value does not fit. `google.protobuf.Timestamp`
+/// spans years 0001..=9999 but Arrow `Timestamp(Nanosecond)` only 1677..=2262, and both ends
+/// occur in real feeds: a far-future "never expires" sentinel (9999-12-31) and the far-past
+/// null-date sentinel some producers emit (0001-01-01). The old `panic!("… overflow")` aborted
+/// the decode of a whole batch over one such record. Clamping keeps the sentinel's ordering
+/// (a clamped 9999-12-31 still sorts after every real timestamp), which a null would not.
+fn convert_seconds_nanos_to_unit(seconds: i64, nanos: i32, unit: TimeUnit) -> i64 {
+    let (mul, div): (i128, i128) = match unit {
+        TimeUnit::Second => (1, 1_000_000_000),
+        TimeUnit::Millisecond => (1_000, 1_000_000),
+        TimeUnit::Microsecond => (1_000_000, 1_000),
+        TimeUnit::Nanosecond => (1_000_000_000, 1),
+    };
+    let v = i128::from(seconds) * mul + i128::from(nanos) / div;
+    v.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 static CE_OFFSET: i32 = 719163;
 
-fn enum_name(enum_descriptor: &EnumDescriptor, number: i32) -> String {
-    match enum_descriptor.get_value(number) {
-        Some(v) => v.name().to_string(),
-        None => number.to_string(),
+/// `google.type.Date` → days since 1970-01-01 (Arrow `Date32`).
+///
+/// The type deliberately allows partial dates: year 0 means "no year", month 0 "no month and
+/// day", day 0 "whole month". Unspecified month/day are normalised to 1, so "2026, month
+/// unspecified" becomes 2026-01-01. A triple that still is not a calendar date (no year,
+/// 2026-02-30, month 13) falls back to 0 — the epoch — where the all-zero date already went.
+/// The previous `from_ymd_opt(...).unwrap()` panicked on every one of these and took the batch
+/// down with it.
+fn date_to_days_from_epoch(year: i32, month: i32, day: i32) -> i32 {
+    if year == 0 {
+        return 0;
+    }
+    let month = if month == 0 { 1 } else { month };
+    let day = if day == 0 { 1 } else { day };
+    match (u32::try_from(month), u32::try_from(day)) {
+        (Ok(m), Ok(d)) => chrono::NaiveDate::from_ymd_opt(year, m, d)
+            .map(|date| date.num_days_from_ce() - CE_OFFSET)
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Precomputed number → name table for one enum, built once when the field decoder is
+/// constructed.
+///
+/// Looking the name up through `EnumDescriptor::get_value` and allocating a fresh `String` for
+/// every decoded value was the hot path of string-represented enums on busy topics. The table
+/// returns a borrowed `&str` for declared values; numbers outside the declared set — which
+/// protobuf permits — are formatted on the fly, as before.
+struct EnumNames {
+    by_number: HashMap<i32, String>,
+}
+
+impl EnumNames {
+    fn new(descriptor: &EnumDescriptor) -> Self {
+        let by_number = descriptor
+            .values()
+            .map(|v| (v.number(), v.name().to_string()))
+            .collect();
+        Self { by_number }
+    }
+
+    fn name(&self, number: i32) -> Cow<'_, str> {
+        match self.by_number.get(&number) {
+            Some(name) => Cow::Borrowed(name.as_str()),
+            None => Cow::Owned(number.to_string()),
+        }
     }
 }
 
@@ -359,11 +426,11 @@ enum RepeatedInner {
     },
     EnumString {
         values_builder: StringBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
     EnumBinary {
         values_builder: BinaryBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
     Message {
         sub_decoder: MessageDecoder,
@@ -516,7 +583,7 @@ impl RepeatedInner {
             }
             Self::EnumString {
                 values_builder,
-                enum_descriptor,
+                enum_names,
                 ..
             } => {
                 if wire_type == 2 {
@@ -524,13 +591,13 @@ impl RepeatedInner {
                     let mut p = 0;
                     while p < data.len() {
                         let (v, n) = decode_varint(&data[p..])?;
-                        values_builder.append_value(&enum_name(enum_descriptor, v as i32));
+                        values_builder.append_value(enum_names.name(v as i32).as_ref());
                         p += n;
                     }
                     Ok(total)
                 } else if wire_type == 0 {
                     let (v, n) = decode_varint(buf)?;
-                    values_builder.append_value(&enum_name(enum_descriptor, v as i32));
+                    values_builder.append_value(enum_names.name(v as i32).as_ref());
                     Ok(n)
                 } else {
                     skip_field(wire_type, buf)
@@ -538,7 +605,7 @@ impl RepeatedInner {
             }
             Self::EnumBinary {
                 values_builder,
-                enum_descriptor,
+                enum_names,
                 ..
             } => {
                 if wire_type == 2 {
@@ -546,14 +613,13 @@ impl RepeatedInner {
                     let mut p = 0;
                     while p < data.len() {
                         let (v, n) = decode_varint(&data[p..])?;
-                        values_builder
-                            .append_value(enum_name(enum_descriptor, v as i32).as_bytes());
+                        values_builder.append_value(enum_names.name(v as i32).as_bytes());
                         p += n;
                     }
                     Ok(total)
                 } else if wire_type == 0 {
                     let (v, n) = decode_varint(buf)?;
-                    values_builder.append_value(enum_name(enum_descriptor, v as i32).as_bytes());
+                    values_builder.append_value(enum_names.name(v as i32).as_bytes());
                     Ok(n)
                 } else {
                     skip_field(wire_type, buf)
@@ -581,7 +647,6 @@ impl RepeatedInner {
                     vals[0],
                     vals[1] as i32,
                     *unit,
-                    "Timestamp",
                 ));
                 Ok(total)
             }
@@ -599,7 +664,6 @@ impl RepeatedInner {
                     vals[0],
                     vals[1] as i32,
                     *unit,
-                    "Duration",
                 ));
                 Ok(total)
             }
@@ -613,12 +677,7 @@ impl RepeatedInner {
                 if y == 0 && m == 0 && d == 0 {
                     values_builder.append_value(0);
                 } else {
-                    values_builder.append_value(
-                        chrono::NaiveDate::from_ymd_opt(y, m as u32, d as u32)
-                            .unwrap()
-                            .num_days_from_ce()
-                            - CE_OFFSET,
-                    );
+                    values_builder.append_value(date_to_days_from_epoch(y, m, d));
                 }
                 Ok(total)
             }
@@ -637,7 +696,6 @@ impl RepeatedInner {
                     total_seconds,
                     vals[3] as i32,
                     *unit,
-                    "TimeOfDay",
                 ));
                 Ok(total)
             }
@@ -904,14 +962,14 @@ enum FieldDecoder {
         has_value: bool,
         has_presence: bool,
         builder: StringBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
     EnumBinary {
         value: i32,
         has_value: bool,
         has_presence: bool,
         builder: BinaryBuilderInner,
-        enum_descriptor: EnumDescriptor,
+        enum_names: EnumNames,
     },
 
     // --- Well-known types (singular, buffered) ---
@@ -1676,6 +1734,29 @@ impl FieldDecoder {
         }
     }
 
+    /// Number of values this singular decoder has appended to its builder. Used by the
+    /// map decoder to compute entry offsets from its key decoder; covers exactly the
+    /// kinds protobuf allows as map keys (integers, bool, string), `None` otherwise.
+    fn appended_len(&self) -> Option<usize> {
+        Some(match self {
+            Self::Int32 { builder, .. }
+            | Self::Sint32 { builder, .. }
+            | Self::Sfixed32 { builder, .. } => ArrayBuilder::len(builder),
+            Self::Int64 { builder, .. }
+            | Self::Sint64 { builder, .. }
+            | Self::Sfixed64 { builder, .. } => ArrayBuilder::len(builder),
+            Self::UInt32 { builder, .. } | Self::Fixed32 { builder, .. } => {
+                ArrayBuilder::len(builder)
+            }
+            Self::UInt64 { builder, .. } | Self::Fixed64 { builder, .. } => {
+                ArrayBuilder::len(builder)
+            }
+            Self::Bool { builder, .. } => ArrayBuilder::len(builder),
+            Self::String { builder, .. } => builder.len(),
+            _ => return None,
+        })
+    }
+
     fn flush(&mut self) {
         match self {
             Self::Int32 {
@@ -1773,14 +1854,14 @@ impl FieldDecoder {
                 has_value,
                 has_presence,
                 builder,
-                enum_descriptor,
+                enum_names,
             } => {
                 if *has_value {
-                    builder.append_value(&enum_name(enum_descriptor, *value));
+                    builder.append_value(enum_names.name(*value).as_ref());
                 } else if *has_presence {
                     builder.append_null();
                 } else {
-                    builder.append_value(&enum_name(enum_descriptor, 0));
+                    builder.append_value(enum_names.name(0).as_ref());
                 }
                 *has_value = false;
                 *value = 0;
@@ -1790,14 +1871,14 @@ impl FieldDecoder {
                 has_value,
                 has_presence,
                 builder,
-                enum_descriptor,
+                enum_names,
             } => {
                 if *has_value {
-                    builder.append_value(enum_name(enum_descriptor, *value).as_bytes());
+                    builder.append_value(enum_names.name(*value).as_bytes());
                 } else if *has_presence {
                     builder.append_null();
                 } else {
-                    builder.append_value(enum_name(enum_descriptor, 0).as_bytes());
+                    builder.append_value(enum_names.name(0).as_bytes());
                 }
                 *has_value = false;
                 *value = 0;
@@ -1860,12 +1941,7 @@ impl FieldDecoder {
                 ..
             } => {
                 if *has_value {
-                    builder.append_value(convert_seconds_nanos_to_unit(
-                        *seconds,
-                        *nanos,
-                        *unit,
-                        "Timestamp",
-                    ));
+                    builder.append_value(convert_seconds_nanos_to_unit(*seconds, *nanos, *unit));
                 } else {
                     builder.append_null();
                 }
@@ -1882,9 +1958,7 @@ impl FieldDecoder {
                 ..
             } => {
                 if *has_value {
-                    builder.append_value(convert_seconds_nanos_to_unit(
-                        *seconds, *nanos, *unit, "Duration",
-                    ));
+                    builder.append_value(convert_seconds_nanos_to_unit(*seconds, *nanos, *unit));
                 } else {
                     builder.append_null();
                 }
@@ -1903,12 +1977,7 @@ impl FieldDecoder {
                     if *year == 0 && *month == 0 && *day == 0 {
                         builder.append_value(0);
                     } else {
-                        builder.append_value(
-                            chrono::NaiveDate::from_ymd_opt(*year, *month as u32, *day as u32)
-                                .unwrap()
-                                .num_days_from_ce()
-                                - CE_OFFSET,
-                        );
+                        builder.append_value(date_to_days_from_epoch(*year, *month, *day));
                     }
                 } else {
                     builder.append_null();
@@ -1935,7 +2004,6 @@ impl FieldDecoder {
                         total_seconds,
                         *nanos,
                         *unit,
-                        "TimeOfDay",
                     ));
                 } else {
                     builder.append_null();
@@ -2089,17 +2157,12 @@ impl FieldDecoder {
                 offsets,
                 ..
             } => {
-                let count = match key_decoder.as_ref() {
-                    FieldDecoder::Int32 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Int64 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::UInt32 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::UInt64 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Sint32 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Sint64 { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::Bool { builder, .. } => ArrayBuilder::len(builder),
-                    FieldDecoder::String { builder, .. } => builder.len(),
-                    _ => *offsets.last().unwrap() as usize,
-                };
+                // Every key kind protobuf allows must be covered here: a kind that falls
+                // through leaves the offsets where they were and silently drops every
+                // entry of the map (fixed32/fixed64/sfixed32/sfixed64 keys used to).
+                let count = key_decoder
+                    .appended_len()
+                    .unwrap_or(*offsets.last().unwrap() as usize);
                 offsets.push(count as i32);
             }
         }
@@ -2319,17 +2382,33 @@ pub struct MessageDecoder {
 
 impl MessageDecoder {
     pub fn new(descriptor: &MessageDescriptor, config: &PtarsConfig) -> Self {
+        Self::new_inner(descriptor, config, &mut Vec::new())
+    }
+
+    /// `ancestors` is the chain of message types currently being built, root first. A field
+    /// whose message type is already in the chain is a back-edge of a recursive proto (a
+    /// message containing itself, directly or through a cycle — `Tree.children`,
+    /// `google.protobuf.Struct` → `Value` → `Struct`). Recursing into it would never terminate
+    /// and overflowed the stack; such a field decodes as the raw protobuf bytes of the nested
+    /// message instead (`Binary`, or `List<Binary>` when repeated).
+    fn new_inner(
+        descriptor: &MessageDescriptor,
+        config: &PtarsConfig,
+        ancestors: &mut Vec<String>,
+    ) -> Self {
+        ancestors.push(descriptor.full_name().to_string());
         let mut decoders = Vec::new();
         let mut max_field_number: u32 = 0;
 
         for field in descriptor.fields() {
-            if let Some(decoder) = build_field_decoder(&field, config) {
+            if let Some(decoder) = build_field_decoder(&field, config, ancestors) {
                 if field.number() > max_field_number {
                     max_field_number = field.number();
                 }
                 decoders.push((decoder, field));
             }
         }
+        ancestors.pop();
 
         let mut tag_map = vec![
             None;
@@ -2472,12 +2551,16 @@ impl MessageDecoder {
 // build_field_decoder
 // ---------------------------------------------------------------------------
 
-fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_field_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     if field.is_map() {
-        return build_map_decoder(field, config);
+        return build_map_decoder(field, config, ancestors);
     }
     if field.is_list() {
-        return build_repeated_decoder(field, config);
+        return build_repeated_decoder(field, config, ancestors);
     }
 
     let has_presence = field.supports_presence();
@@ -2584,23 +2667,24 @@ fn build_field_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<
                 has_value: false,
                 has_presence,
                 builder: StringBuilderInner::new(config.use_large_string),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
             EnumRepr::Binary => Some(FieldDecoder::EnumBinary {
                 value: 0,
                 has_value: false,
                 has_presence,
                 builder: BinaryBuilderInner::new(config.use_large_binary),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
         },
-        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config, ancestors),
     }
 }
 
 fn build_message_field_decoder(
     msg_desc: MessageDescriptor,
     config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     match msg_desc.full_name() {
         "google.protobuf.Timestamp" => Some(FieldDecoder::Timestamp {
@@ -2680,7 +2764,17 @@ fn build_message_field_decoder(
             builder: BinaryBuilderInner::new(config.use_large_binary),
         }),
         _ => {
-            let sub_decoder = MessageDecoder::new(&msg_desc, config);
+            // Recursion guard: a message type already being built higher in the chain
+            // decodes as its raw bytes (see MessageDecoder::new_inner).
+            if ancestors.iter().any(|a| a == msg_desc.full_name()) {
+                return Some(FieldDecoder::Bytes {
+                    value: Vec::new(),
+                    has_value: false,
+                    has_presence: true,
+                    builder: BinaryBuilderInner::new(config.use_large_binary),
+                });
+            }
+            let sub_decoder = MessageDecoder::new_inner(&msg_desc, config, ancestors);
             Some(FieldDecoder::Message {
                 sub_decoder,
                 has_value: false,
@@ -2690,7 +2784,11 @@ fn build_message_field_decoder(
     }
 }
 
-fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_repeated_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     let ln = config.list_value_name.clone();
     let lnb = config.list_value_nullable;
     let offsets = || ListOffsets::new(config.use_large_list);
@@ -2747,15 +2845,22 @@ fn build_repeated_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Opti
             },
             EnumRepr::String => RepeatedInner::EnumString {
                 values_builder: StringBuilderInner::new(config.use_large_string),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             },
             EnumRepr::Binary => RepeatedInner::EnumBinary {
                 values_builder: BinaryBuilderInner::new(config.use_large_binary),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             },
         },
         Kind::Message(msg_desc) => {
-            return build_repeated_message_decoder(&msg_desc, config, offsets(), ln, lnb);
+            return build_repeated_message_decoder(
+                &msg_desc,
+                config,
+                offsets(),
+                ln,
+                lnb,
+                ancestors,
+            );
         }
     };
 
@@ -2773,6 +2878,7 @@ fn build_repeated_message_decoder(
     offsets: ListOffsets,
     ln: Arc<str>,
     lnb: bool,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     let inner = match msg_desc.full_name() {
         "google.protobuf.Timestamp" => RepeatedInner::Timestamp {
@@ -2819,8 +2925,16 @@ fn build_repeated_message_decoder(
             values_builder: BinaryBuilderInner::new(config.use_large_binary),
         },
         _ => {
-            let sub_decoder = MessageDecoder::new(msg_desc, config);
-            RepeatedInner::Message { sub_decoder }
+            // Recursion guard (see MessageDecoder::new_inner): a recursive `repeated Foo`
+            // becomes a list of the elements' raw bytes.
+            if ancestors.iter().any(|a| a == msg_desc.full_name()) {
+                RepeatedInner::Bytes {
+                    values_builder: BinaryBuilderInner::new(config.use_large_binary),
+                }
+            } else {
+                let sub_decoder = MessageDecoder::new_inner(msg_desc, config, ancestors);
+                RepeatedInner::Message { sub_decoder }
+            }
         }
     };
 
@@ -2832,7 +2946,11 @@ fn build_repeated_message_decoder(
     })
 }
 
-fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<FieldDecoder> {
+fn build_map_decoder(
+    field: &FieldDescriptor,
+    config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
+) -> Option<FieldDecoder> {
     let map_entry = match field.kind() {
         Kind::Message(desc) => desc,
         _ => return None,
@@ -2841,8 +2959,8 @@ fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<Fi
     let value_field = map_entry.get_field_by_name("value")?;
 
     // Build singular decoders for key and value (they buffer per-entry, not per-row)
-    let key_decoder = build_singular_decoder_for_map(&key_field, config)?;
-    let value_decoder = build_singular_decoder_for_map(&value_field, config)?;
+    let key_decoder = build_singular_decoder_for_map(&key_field, config, ancestors)?;
+    let value_decoder = build_singular_decoder_for_map(&value_field, config, ancestors)?;
 
     Some(FieldDecoder::Map {
         key_decoder: Box::new(key_decoder),
@@ -2857,6 +2975,7 @@ fn build_map_decoder(field: &FieldDescriptor, config: &PtarsConfig) -> Option<Fi
 fn build_singular_decoder_for_map(
     field: &FieldDescriptor,
     config: &PtarsConfig,
+    ancestors: &mut Vec<String>,
 ) -> Option<FieldDecoder> {
     // Map keys/values are never "optional" in protobuf sense — they use proto3 defaults
     match field.kind() {
@@ -2962,17 +3081,17 @@ fn build_singular_decoder_for_map(
                 has_value: false,
                 has_presence: false,
                 builder: StringBuilderInner::new(config.use_large_string),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
             EnumRepr::Binary => Some(FieldDecoder::EnumBinary {
                 value: 0,
                 has_value: false,
                 has_presence: false,
                 builder: BinaryBuilderInner::new(config.use_large_binary),
-                enum_descriptor: enum_desc,
+                enum_names: EnumNames::new(&enum_desc),
             }),
         },
-        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config),
+        Kind::Message(msg_desc) => build_message_field_decoder(msg_desc, config, ancestors),
     }
 }
 
@@ -3109,5 +3228,120 @@ mod tests {
         let buf = b"\x00\x01";
         let result = strip_confluent_prefix(buf, ConfluentWirePolicy::Protobuf);
         assert!(result.is_err());
+    }
+
+    /// Seconds for 9999-12-31T23:59:59Z — the "never" sentinel inventory feeds use for
+    /// open-ended lifecycle dates; it used to panic the decoder mid-batch.
+    const YEAR_9999: i64 = 253_402_300_799;
+    /// Seconds for 0001-01-01T00:00:00Z — the far-past null-date sentinel.
+    const YEAR_0001: i64 = -62_135_596_800;
+
+    #[test]
+    fn test_nanosecond_overflow_saturates_instead_of_panicking() {
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_9999, 0, TimeUnit::Nanosecond),
+            i64::MAX
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_0001, 0, TimeUnit::Nanosecond),
+            i64::MIN
+        );
+    }
+
+    #[test]
+    fn test_coarser_units_represent_the_sentinels_exactly() {
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_9999, 0, TimeUnit::Microsecond),
+            YEAR_9999 * 1_000_000
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_0001, 0, TimeUnit::Millisecond),
+            YEAR_0001 * 1_000
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(YEAR_9999, 0, TimeUnit::Second),
+            YEAR_9999
+        );
+    }
+
+    #[test]
+    fn test_ordinary_values_unchanged_by_the_saturating_path() {
+        let secs = 1_786_608_000_i64; // 2026-08-13T00:00:00Z
+        assert_eq!(
+            convert_seconds_nanos_to_unit(secs, 123_456_789, TimeUnit::Nanosecond),
+            secs * 1_000_000_000 + 123_456_789
+        );
+        assert_eq!(
+            convert_seconds_nanos_to_unit(secs, 123_456_789, TimeUnit::Microsecond),
+            secs * 1_000_000 + 123_456
+        );
+        // Negative durations carry negative nanos; truncation stays toward zero.
+        assert_eq!(
+            convert_seconds_nanos_to_unit(-5, -500_000_000, TimeUnit::Millisecond),
+            -5_500
+        );
+    }
+
+    #[test]
+    fn test_partial_dates_normalise_instead_of_panicking() {
+        let days = |y: i32, m: u32, d: u32| {
+            chrono::NaiveDate::from_ymd_opt(y, m, d)
+                .unwrap()
+                .num_days_from_ce()
+                - CE_OFFSET
+        };
+        assert_eq!(date_to_days_from_epoch(1970, 1, 1), 0);
+        assert_eq!(date_to_days_from_epoch(2026, 3, 15), days(2026, 3, 15));
+        // month/day "not significant" → first of the period
+        assert_eq!(date_to_days_from_epoch(2026, 0, 0), days(2026, 1, 1));
+        assert_eq!(date_to_days_from_epoch(2026, 3, 0), days(2026, 3, 1));
+        // no year, or not a calendar date → epoch (never a panic)
+        assert_eq!(date_to_days_from_epoch(0, 3, 15), 0);
+        assert_eq!(date_to_days_from_epoch(0, 0, 0), 0);
+        assert_eq!(date_to_days_from_epoch(2026, 2, 30), 0);
+        assert_eq!(date_to_days_from_epoch(2026, 13, 1), 0);
+        assert_eq!(date_to_days_from_epoch(2026, -1, 1), 0);
+        assert_eq!(date_to_days_from_epoch(9999, 12, 31), days(9999, 12, 31));
+        assert_eq!(date_to_days_from_epoch(1, 1, 1), days(1, 1, 1));
+    }
+
+    #[test]
+    fn test_enum_names_borrow_declared_and_format_unknown() {
+        use prost_reflect::prost_types::{
+            EnumDescriptorProto, EnumValueDescriptorProto, FileDescriptorProto,
+        };
+        let file = FileDescriptorProto {
+            name: Some("e.proto".to_string()),
+            package: Some("t".to_string()),
+            enum_type: vec![EnumDescriptorProto {
+                name: Some("Color".to_string()),
+                value: vec![
+                    EnumValueDescriptorProto {
+                        name: Some("UNSPECIFIED".to_string()),
+                        number: Some(0),
+                        ..Default::default()
+                    },
+                    EnumValueDescriptorProto {
+                        name: Some("RED".to_string()),
+                        number: Some(1),
+                        ..Default::default()
+                    },
+                    EnumValueDescriptorProto {
+                        name: Some("NEGATIVE".to_string()),
+                        number: Some(-1),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut pool = prost_reflect::DescriptorPool::new();
+        pool.add_file_descriptor_proto(file).unwrap();
+        let names = EnumNames::new(&pool.get_enum_by_name("t.Color").unwrap());
+        assert!(matches!(names.name(1), Cow::Borrowed("RED")));
+        assert_eq!(names.name(-1), "NEGATIVE");
+        assert_eq!(names.name(0), "UNSPECIFIED");
+        assert!(matches!(names.name(999), Cow::Owned(ref s) if s == "999"));
     }
 }

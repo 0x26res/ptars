@@ -4852,8 +4852,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Timestamp overflow")]
-    fn test_timestamp_overflow_to_nanoseconds_panics() {
+    fn test_timestamp_overflow_to_nanoseconds_saturates() {
         // Year 2500 timestamp that overflows when converted to nanoseconds
         let mut pool = create_timestamp_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4891,17 +4890,23 @@ mod tests {
         msg.set_field_by_name("ts", Value::Message(ts));
 
         let messages = vec![msg];
-        // This should panic because the timestamp cannot be represented in nanoseconds
         let config = PtarsConfig {
             timestamp_unit: crate::config::TimeUnit::Nanosecond,
             ..Default::default()
         };
-        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        // Out of the i64 nanosecond range: the value saturates instead of panicking, so one
+        // such record can no longer abort the decode of a whole batch.
+        let batch = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        let column = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::TimestampNanosecondArray>()
+            .unwrap();
+        assert_eq!(column.value(0), i64::MAX);
     }
 
     #[test]
-    #[should_panic(expected = "Duration overflow")]
-    fn test_duration_overflow_to_nanoseconds_panics() {
+    fn test_duration_overflow_to_nanoseconds_saturates() {
         // 500-year duration that overflows when converted to nanoseconds
         let mut pool = create_duration_pool();
         pool.add_file_descriptor_proto(prost_reflect::prost_types::FileDescriptorProto {
@@ -4939,12 +4944,19 @@ mod tests {
         msg.set_field_by_name("dur", Value::Message(dur));
 
         let messages = vec![msg];
-        // This should panic because the duration cannot be represented in nanoseconds
         let config = PtarsConfig {
             duration_unit: crate::config::TimeUnit::Nanosecond,
             ..Default::default()
         };
-        let _ = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        // Out of the i64 nanosecond range: the value saturates instead of panicking, so one
+        // such record can no longer abort the decode of a whole batch.
+        let batch = messages_to_record_batch_with_config(&messages, &message_descriptor, &config);
+        let column = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::DurationNanosecondArray>()
+            .unwrap();
+        assert_eq!(column.value(0), i64::MAX);
     }
 
     #[test]
@@ -5357,10 +5369,9 @@ mod tests {
         assert_eq!(list[1].as_enum_number(), Some(2));
     }
 
-    #[test]
-    fn test_map_with_enum_value_string_repr_roundtrip() {
-        use crate::config::EnumRepr;
-
+    /// A map whose values are enums goes through the enum-name cache in the map value
+    /// decoder — for both name representations.
+    fn assert_map_with_enum_value_roundtrip(enum_repr: crate::config::EnumRepr) {
         let file_descriptor = FileDescriptorProto {
             name: Some("test.proto".to_string()),
             package: Some("test".to_string()),
@@ -5440,7 +5451,7 @@ mod tests {
         let mut msg = DynamicMessage::new(message_descriptor.clone());
         msg.set_field_by_name("priorities", Value::Map(map));
 
-        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let config = PtarsConfig::default().with_enum_repr(enum_repr);
         let record_batch =
             messages_to_record_batch_with_config(&[msg], &message_descriptor, &config);
         let array_data = record_batch_to_array(&record_batch, &message_descriptor);
@@ -5464,5 +5475,405 @@ mod tests {
                 .as_enum_number(),
             Some(1)
         );
+    }
+
+    fn wire_varint(mut v: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let byte = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                out.push(byte);
+                return out;
+            }
+            out.push(byte | 0x80);
+        }
+    }
+
+    fn wire_tag(field: u32, wire_type: u8) -> Vec<u8> {
+        wire_varint(((field as u64) << 3) | wire_type as u64)
+    }
+
+    fn one_int32_field_descriptor() -> MessageDescriptor {
+        let file_descriptor = FileDescriptorProto {
+            name: Some("test.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Simple".to_string()),
+                field: vec![FieldDescriptorProto {
+                    name: Some("a".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Int32.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        create_pool_with_message(file_descriptor)
+            .get_message_by_name("test.Simple")
+            .unwrap()
+    }
+
+    /// An unknown group (wire types 3/4) anywhere in a payload must be skipped like any other
+    /// unknown field — including a group nested in a group — and the known fields around it
+    /// must still decode.
+    #[test]
+    fn test_unknown_groups_are_skipped() {
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let descriptor = one_int32_field_descriptor();
+        let mut payload = Vec::new();
+        payload.extend(wire_tag(1, 0));
+        payload.extend(wire_varint(42));
+        payload.extend(wire_tag(300, 3)); // start group 300 (a two-byte tag)
+        payload.extend(wire_tag(1, 0)); // a field inside the group, same number as ours
+        payload.extend(wire_varint(300)); // a two-byte varint
+        payload.extend(wire_tag(8, 3)); // nested start group 8
+        payload.extend(wire_tag(2, 2));
+        payload.extend(wire_varint(1));
+        payload.push(b'x');
+        payload.extend(wire_tag(8, 4)); // nested end group 8
+        payload.extend(wire_tag(300, 4)); // end group 300
+        payload.extend(wire_tag(3, 5)); // unknown fixed32 after the group
+        payload.extend(7u32.to_le_bytes());
+
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let batch = binary_array_to_record_batch_direct(
+            &binary_array,
+            &descriptor,
+            &PtarsConfig::default(),
+        )
+        .expect("unknown groups must be skipped");
+        let a = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int32Array>()
+            .unwrap();
+        assert_eq!(a.value(0), 42);
+    }
+
+    /// A group that the payload ends inside of (no matching end-group tag) is a malformed
+    /// record: an error, not a panic or an infinite loop.
+    #[test]
+    fn test_truncated_group_is_an_error_not_a_panic() {
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let descriptor = one_int32_field_descriptor();
+        let mut payload = Vec::new();
+        payload.extend(wire_tag(9, 3)); // start group 9 …
+        payload.extend(wire_tag(1, 0));
+        payload.extend(wire_varint(7)); // … and the payload ends here
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let result = binary_array_to_record_batch_direct(
+            &binary_array,
+            &descriptor,
+            &PtarsConfig::default(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stray_end_group_is_an_error_not_a_panic() {
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let descriptor = one_int32_field_descriptor();
+        let payload = wire_tag(9, 4);
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let result = binary_array_to_record_batch_direct(
+            &binary_array,
+            &descriptor,
+            &PtarsConfig::default(),
+        );
+        assert!(result.is_err());
+    }
+
+    /// One map entry must survive decode → encode for every integer key encoding. A key
+    /// kind the map decoder does not account for makes the map decode as empty.
+    fn assert_map_key_kind_roundtrip(key_type: Type, key: prost_reflect::MapKey) {
+        use std::collections::HashMap;
+        let (_pool, message_descriptor) = create_map_descriptor(key_type, Type::Int32);
+        let mut map: HashMap<prost_reflect::MapKey, Value> = HashMap::new();
+        map.insert(key.clone(), Value::I32(7));
+        let mut msg = DynamicMessage::new(message_descriptor.clone());
+        msg.set_field_by_name("my_map", Value::Map(map));
+
+        let record_batch = messages_to_record_batch(&[msg], &message_descriptor);
+        let map_array = record_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::MapArray>()
+            .unwrap();
+        assert_eq!(
+            map_array.value_length(0),
+            1,
+            "{key_type:?} key: the entry was lost"
+        );
+
+        let array_data = record_batch_to_array(&record_batch, &message_descriptor);
+        let binary_array = arrow::array::BinaryArray::from(array_data);
+        let decoded =
+            DynamicMessage::decode(message_descriptor.clone(), binary_array.value(0)).unwrap();
+        let map_value = decoded.get_field_by_name("my_map").unwrap();
+        let map = map_value.as_map().unwrap();
+        assert_eq!(
+            map.get(&key).and_then(|v| v.as_i32()),
+            Some(7),
+            "{key_type:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_fixed64_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Fixed64, prost_reflect::MapKey::U64(u64::MAX));
+    }
+
+    #[test]
+    fn test_map_fixed32_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Fixed32, prost_reflect::MapKey::U32(u32::MAX));
+    }
+
+    #[test]
+    fn test_map_sfixed32_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sfixed32, prost_reflect::MapKey::I32(-3));
+    }
+
+    #[test]
+    fn test_map_sfixed64_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sfixed64, prost_reflect::MapKey::I64(i64::MIN));
+    }
+
+    #[test]
+    fn test_map_sint32_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sint32, prost_reflect::MapKey::I32(-1));
+    }
+
+    #[test]
+    fn test_map_sint64_key_roundtrip() {
+        assert_map_key_kind_roundtrip(Type::Sint64, prost_reflect::MapKey::I64(-1));
+    }
+
+    fn recursive_tree_descriptor() -> MessageDescriptor {
+        // message Tree { string name = 1; repeated Tree children = 2; Tree parent = 3; }
+        let file_descriptor = FileDescriptorProto {
+            name: Some("tree.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![DescriptorProto {
+                name: Some("Tree".to_string()),
+                field: vec![
+                    FieldDescriptorProto {
+                        name: Some("name".to_string()),
+                        number: Some(1),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::String.into()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("children".to_string()),
+                        number: Some(2),
+                        label: Some(Label::Repeated.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Tree".to_string()),
+                        ..Default::default()
+                    },
+                    FieldDescriptorProto {
+                        name: Some("parent".to_string()),
+                        number: Some(3),
+                        label: Some(Label::Optional.into()),
+                        r#type: Some(Type::Message.into()),
+                        type_name: Some(".test.Tree".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        create_pool_with_message(file_descriptor)
+            .get_message_by_name("test.Tree")
+            .unwrap()
+    }
+
+    /// A self-referential message used to recurse forever while building the decoder and
+    /// overflow the stack. The back-edge fields now decode as the nested message's raw bytes.
+    #[test]
+    fn test_recursive_message_decodes_back_edges_as_bytes() {
+        let descriptor = recursive_tree_descriptor();
+
+        let mut leaf = DynamicMessage::new(descriptor.clone());
+        leaf.set_field_by_name("name", Value::String("leaf".to_string()));
+        let mut parent = DynamicMessage::new(descriptor.clone());
+        parent.set_field_by_name("name", Value::String("parent".to_string()));
+        let mut root = DynamicMessage::new(descriptor.clone());
+        root.set_field_by_name("name", Value::String("root".to_string()));
+        root.set_field_by_name(
+            "children",
+            Value::List(vec![
+                Value::Message(leaf.clone()),
+                Value::Message(leaf.clone()),
+            ]),
+        );
+        root.set_field_by_name("parent", Value::Message(parent.clone()));
+
+        let batch = messages_to_record_batch(&[root], &descriptor);
+        let schema = batch.schema();
+        assert!(matches!(
+            schema.field_with_name("parent").unwrap().data_type(),
+            arrow::datatypes::DataType::Binary
+        ));
+        assert!(matches!(
+            schema.field_with_name("children").unwrap().data_type(),
+            arrow::datatypes::DataType::List(inner)
+                if *inner.data_type() == arrow::datatypes::DataType::Binary
+        ));
+
+        // The bytes are the encoded nested message, decodable with the same descriptor.
+        let parent_col = batch
+            .column_by_name("parent")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::BinaryArray>()
+            .unwrap();
+        let decoded = DynamicMessage::decode(descriptor.clone(), parent_col.value(0)).unwrap();
+        assert_eq!(
+            decoded.get_field_by_name("name").unwrap().as_str(),
+            Some("parent")
+        );
+        let children = batch
+            .column_by_name("children")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::ListArray>()
+            .unwrap();
+        assert_eq!(children.value_length(0), 2);
+    }
+
+    /// Mutual recursion (A → B → A) is the same cycle one level deeper.
+    #[test]
+    fn test_mutually_recursive_messages_decode() {
+        let msg = |name: &str, other: &str| DescriptorProto {
+            name: Some(name.to_string()),
+            field: vec![
+                FieldDescriptorProto {
+                    name: Some("label".to_string()),
+                    number: Some(1),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::String.into()),
+                    ..Default::default()
+                },
+                FieldDescriptorProto {
+                    name: Some("other".to_string()),
+                    number: Some(2),
+                    label: Some(Label::Optional.into()),
+                    r#type: Some(Type::Message.into()),
+                    type_name: Some(format!(".test.{other}")),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let file_descriptor = FileDescriptorProto {
+            name: Some("pingpong.proto".to_string()),
+            package: Some("test".to_string()),
+            syntax: Some("proto3".to_string()),
+            message_type: vec![msg("Ping", "Pong"), msg("Pong", "Ping")],
+            ..Default::default()
+        };
+        let pool = create_pool_with_message(file_descriptor);
+        let ping = pool.get_message_by_name("test.Ping").unwrap();
+        let pong = pool.get_message_by_name("test.Pong").unwrap();
+
+        let mut inner = DynamicMessage::new(pong.clone());
+        inner.set_field_by_name("label", Value::String("pong".to_string()));
+        let mut outer = DynamicMessage::new(ping.clone());
+        outer.set_field_by_name("label", Value::String("ping".to_string()));
+        outer.set_field_by_name("other", Value::Message(inner));
+
+        let batch = messages_to_record_batch(&[outer], &ping);
+        // Ping.other is a Pong struct; Pong.other (back to Ping) is the bytes column.
+        use arrow::array::AsArray;
+        let other = batch.column_by_name("other").unwrap().as_struct();
+        assert_eq!(
+            other
+                .column_by_name("label")
+                .unwrap()
+                .as_string::<i32>()
+                .value(0),
+            "pong"
+        );
+        let back_edge = other.fields().iter().find(|f| f.name() == "other").unwrap();
+        assert_eq!(*back_edge.data_type(), arrow::datatypes::DataType::Binary);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_string_repr_roundtrip() {
+        assert_map_with_enum_value_roundtrip(crate::config::EnumRepr::String);
+    }
+
+    #[test]
+    fn test_map_with_enum_value_binary_repr_roundtrip() {
+        assert_map_with_enum_value_roundtrip(crate::config::EnumRepr::Binary);
+    }
+
+    /// proto2 producers (and proto3 with `[packed = false]`) send a repeated enum as one
+    /// tag per element (wire type 0) instead of a packed length-delimited run; both paths
+    /// resolve names through the cache.
+    fn unpacked_statuses_payload() -> Vec<u8> {
+        // field 2 (statuses) wire type 0 → tag 0x10; UNKNOWN, ACTIVE, INACTIVE
+        vec![0x10, 0x00, 0x10, 0x01, 0x10, 0x02]
+    }
+
+    #[test]
+    fn test_repeated_enum_string_repr_unpacked() {
+        use crate::config::EnumRepr;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+        let payload = unpacked_statuses_payload();
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::String);
+        let batch =
+            binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config)
+                .unwrap();
+        let list_array = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let strings = values
+            .as_any()
+            .downcast_ref::<arrow_array::StringArray>()
+            .unwrap();
+        assert_eq!(strings.len(), 3);
+        assert_eq!(strings.value(0), "UNKNOWN");
+        assert_eq!(strings.value(1), "ACTIVE");
+        assert_eq!(strings.value(2), "INACTIVE");
+    }
+
+    #[test]
+    fn test_repeated_enum_binary_repr_unpacked() {
+        use crate::config::EnumRepr;
+        use crate::proto_to_arrow::binary_array_to_record_batch_direct;
+        let (_pool, message_descriptor) = create_enum_message_descriptor();
+        let payload = unpacked_statuses_payload();
+        let binary_array = arrow::array::BinaryArray::from(vec![payload.as_slice()]);
+        let config = PtarsConfig::default().with_enum_repr(EnumRepr::Binary);
+        let batch =
+            binary_array_to_record_batch_direct(&binary_array, &message_descriptor, &config)
+                .unwrap();
+        let list_array = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let values = list_array.value(0);
+        let names = values
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert_eq!(names.len(), 3);
+        assert_eq!(names.value(0), b"UNKNOWN");
+        assert_eq!(names.value(1), b"ACTIVE");
+        assert_eq!(names.value(2), b"INACTIVE");
     }
 }
