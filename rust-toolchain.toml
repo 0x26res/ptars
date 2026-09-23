@@ -1,0 +1,7 @@
+# Pins the Rust toolchain for local development and CI alike.
+# rustup reads this file automatically for any cargo/rustc invocation under
+# this directory, so `cargo fmt` locally uses the same rustfmt as GitHub
+# Actions. Bump the channel deliberately, not implicitly.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

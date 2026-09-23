@@ -5,10 +5,19 @@ This guide covers how to set up a development environment and contribute to ptar
 ## Prerequisites
 
 - Python 3.10+
-- Rust (latest stable)
+- Rust, installed through [rustup](https://rustup.rs/)
 - [just](https://github.com/casey/just) as a command runner
 - [uv](https://github.com/astral-sh/uv) for Python dependency management
 - [maturin](https://github.com/PyO3/maturin) for building the Rust/Python package
+
+## Rust Toolchain
+
+The Rust version is pinned in `rust-toolchain.toml`. rustup applies it to every
+`cargo` invocation under the repository, so a local checkout and CI use the
+same `rustfmt` and `clippy`.
+
+It is not updated automatically. Bump the `channel` by hand, then run
+`just lint`, since a newer toolchain may reformat code or raise new warnings.
 
 ## Setting Up the Development Environment
 
