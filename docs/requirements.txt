@@ -8,17 +8,17 @@ certifi==2026.7.22
     # via requests
 charset-normalizer==3.5.1
     # via requests
-click==8.4.2
+click==8.5.0
     # via mkdocs
 colorama==0.4.6
     # via mkdocs-material
 ghp-import==2.1.0
     # via mkdocs
-googleapis-common-protos==1.75.1
+googleapis-common-protos==1.75.3
     # via ptars
-griffelib==2.1.0
+griffelib==2.3.0
     # via mkdocstrings-python
-idna==3.18
+idna==3.20
     # via requests
 jinja2==3.1.6
     # via
@@ -62,7 +62,7 @@ mkdocstrings==1.0.6
     # via
     #   -r docs/requirements.txt.in
     #   mkdocstrings-python
-mkdocstrings-python==2.0.5
+mkdocstrings-python==2.0.9
     # via mkdocstrings
 packaging==26.3
     # via mkdocs
@@ -70,19 +70,19 @@ paginate==0.5.7
     # via mkdocs-material
 pathspec==1.1.1
     # via mkdocs
-platformdirs==4.11.3
+platformdirs==4.11.12
     # via mkdocs-get-deps
-protobuf==7.35.1
+protobuf==7.36.2
     # via
     #   googleapis-common-protos
     #   ptars
-ptars==0.0.21
+ptars==0.0.24
     # via -r docs/requirements.txt.in
 pyarrow==25.0.1
     # via ptars
-pygments==2.20.0
+pygments==2.21.0
     # via mkdocs-material
-pymdown-extensions==11.0.1
+pymdown-extensions==12.1
     # via
     #   mkdocs-material
     #   mkdocstrings
@@ -100,7 +100,7 @@ requests==2.34.2
     # via mkdocs-material
 six==1.17.0
     # via python-dateutil
-urllib3==2.7.0
+urllib3==2.8.0
     # via requests
 watchdog==6.0.0
     # via mkdocs
