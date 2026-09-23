@@ -13,6 +13,15 @@ make develop
 This will create a virtual environment and install all necessary
 dependencies.
 
+## Rust Toolchain
+
+The Rust version is pinned in `rust-toolchain.toml`. rustup applies it to every
+`cargo` invocation, so local checkouts and CI use the same `rustfmt` and
+`clippy`.
+
+It is not updated automatically. Bump the `channel` by hand, then re-run the
+linters, since a newer toolchain may reformat code or raise new warnings.
+
 ## Running Linters
 
 This project uses `prek` to run a suite of linters.
