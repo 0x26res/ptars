@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import google._upb._message
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from ptars import PtarsConfig
 
 Descriptor = google.protobuf.descriptor.Descriptor | google._upb._message.Descriptor
+AnyFileDescriptor = FileDescriptor | google._upb._message.FileDescriptor
 
 
 def _file_descriptor_to_bytes(fd: FileDescriptor) -> bytes:
@@ -46,9 +48,7 @@ def _get_dependencies(
     return results
 
 
-def get_schema(
-    descriptor: Descriptor, config: PtarsConfig | None = None
-) -> pa.Schema:
+def get_schema(descriptor: Descriptor, config: PtarsConfig | None = None) -> pa.Schema:
     """Get the Arrow schema for a protobuf message type.
 
     Args:
@@ -100,7 +100,7 @@ class HandlerPool:
 
     def __init__(
         self,
-        file_descriptors: list[FileDescriptor],
+        file_descriptors: Sequence[AnyFileDescriptor],
         config: PtarsConfig | None = None,
     ):
         all_descriptors = []
