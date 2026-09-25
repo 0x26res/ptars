@@ -285,3 +285,48 @@ These are useful for representing nullable scalars in proto3.
 | `google.protobuf.BoolValue`   | `bool` (nullable)                     |
 | `google.protobuf.StringValue` | `utf8` or `large_utf8` (nullable)     |
 | `google.protobuf.BytesValue`  | `binary` or `large_binary` (nullable) |
+
+## Decoding Edge Cases
+
+Partial, out-of-range and unrecognised input produces a defined value rather than failing the
+batch it appears in. The decoder rejects a payload only when it cannot frame it.
+
+### Out-of-range timestamps and durations
+
+`google.protobuf.Timestamp` spans years 1 to 9999 and `google.protobuf.Duration` spans 10000
+years, but Arrow stores both as an `int64` count of the configured unit, which in nanoseconds
+reaches only from 1677 to 2262. Values outside that range saturate to the `int64` limit instead
+of overflowing, so a far-future sentinel still sorts after every real value. Set a coarser
+`timestamp_unit` or `duration_unit` to represent the full protobuf range exactly.
+
+### Partial dates
+
+`google.type.Date` allows a date to be partial: year 0 means "no year", month 0 means "no month
+or day", day 0 means "the whole month". An unspecified month or day becomes 1. A triple that is
+still not a calendar date, including any with no year, becomes the epoch.
+
+| `google.type.Date`         | `date32`     |
+|----------------------------|--------------|
+| `2026-03-15`               | `2026-03-15` |
+| year `2026`, month `0`     | `2026-01-01` |
+| `2026-03`, day `0`         | `2026-03-01` |
+| year `0`                   | `1970-01-01` |
+| `2026-02-30`, month `13`   | `1970-01-01` |
+
+### Unknown fields and groups
+
+Fields the schema does not declare are skipped, including proto2 groups (wire types 3 and 4)
+and groups nested inside them. A group that never ends, or an end-group tag with no matching
+start, is rejected, since neither can be framed.
+
+### Recursive message types
+
+A message type that contains itself, directly or through a cycle, has no finite Arrow schema.
+The recursive field decodes as `binary` holding the nested message's serialized bytes, or
+`list<binary>` when repeated. Parse those bytes with the generated class to go a level deeper.
+
+### Unknown enum values
+
+proto3 enums are open, so a producer may send a number the schema does not declare. With
+`enum_repr="string"` such a value renders as the number formatted as a string rather than
+being dropped or replaced by the default.

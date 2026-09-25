@@ -186,3 +186,19 @@ message WithDuration {
 message NestedMap {
   map <int32, WithMap> map_of_map = 1;
 }
+
+// Maps keyed by the fixed-width scalar types. Entries used to decode as empty.
+message WithFixedWidthKeyMaps {
+  map<fixed32, string> fixed32_key_map = 1;
+  map<fixed64, string> fixed64_key_map = 2;
+  map<sfixed32, string> sfixed32_key_map = 3;
+  map<sfixed64, string> sfixed64_key_map = 4;
+}
+
+// Self-referential message. The recursive fields decode as raw protobuf bytes
+// rather than being expanded, which would not terminate.
+message RecursiveMessage {
+  string name = 1;
+  RecursiveMessage child = 2;
+  repeated RecursiveMessage children = 3;
+}
