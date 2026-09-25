@@ -89,7 +89,9 @@ coverage: develop coverage-env
 # Update dependencies
 update:
     cargo install cargo-edit
-    cargo upgrade
+    # --incompatible also bumps major versions (e.g. arrow 59 -> 60); without it
+    # cargo upgrade only moves within the existing requirement.
+    cargo upgrade --incompatible
     cargo generate-lockfile
     uv lock --upgrade
     prek autoupdate

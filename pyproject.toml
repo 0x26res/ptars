@@ -14,7 +14,7 @@ maintainers = [
 authors = [
   { name = "0x26res", email = "0x26res@gmail.com.co" },
 ]
-requires-python = "<4.0,>=3.10"
+requires-python = "<3.15,>=3.10"
 classifiers = [
   "Development Status :: 4 - Beta",
   "License :: OSI Approved :: Apache Software License",
