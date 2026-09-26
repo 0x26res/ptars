@@ -153,6 +153,24 @@ fn read_size_delimited_messages<R: Read>(reader: &mut R) -> std::io::Result<Vec<
     Ok(messages)
 }
 
+/// Failure of the detached part of `read_size_delimited_file`. The GIL is released
+/// there, so the Python exception is built only once the closure has returned.
+enum ReadError {
+    Io(std::io::Error),
+    Decode(prost::DecodeError),
+}
+
+impl From<ReadError> for pyo3::PyErr {
+    fn from(err: ReadError) -> Self {
+        match err {
+            ReadError::Io(e) => {
+                pyo3::exceptions::PyIOError::new_err(format!("Failed to read file: {}", e))
+            }
+            ReadError::Decode(e) => pyo3::exceptions::PyValueError::new_err(e.to_string()),
+        }
+    }
+}
+
 #[pyclass]
 struct MessageHandler {
     message_descriptor: MessageDescriptor,
@@ -163,13 +181,18 @@ struct MessageHandler {
 impl MessageHandler {
     /// The Arrow schema of the record batches produced by this handler.
     fn schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let empty = BinaryArray::from(Vec::<Option<&[u8]>>::new());
-        let batch = ptars_core::binary_array_to_record_batch_direct(
-            &empty,
-            &self.message_descriptor,
-            &self.config,
-        )
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        // Building the decoder walks the whole descriptor and touches no Python
+        // objects, so it runs with the GIL released.
+        let batch = py
+            .detach(|| {
+                let empty = BinaryArray::from(Vec::<Option<&[u8]>>::new());
+                ptars_core::binary_array_to_record_batch_direct(
+                    &empty,
+                    &self.message_descriptor,
+                    &self.config,
+                )
+            })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(batch.schema().to_pyarrow(py)?.unbind())
     }
 
@@ -178,18 +201,23 @@ impl MessageHandler {
         values: &Bound<'_, PyList>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
+        // Copying the payloads out of the Python list needs the GIL. Decoding them
+        // does not, and that is where nearly all of the time goes.
         let mut builder = arrow_array::builder::BinaryBuilder::new();
         for value in values.iter() {
             let bytes: &[u8] = value.extract()?;
             builder.append_value(bytes);
         }
         let binary_array = builder.finish();
-        let record_batch = ptars_core::binary_array_to_record_batch_direct(
-            &binary_array,
-            &self.message_descriptor,
-            &self.config,
-        )
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let record_batch = py
+            .detach(|| {
+                ptars_core::binary_array_to_record_batch_direct(
+                    &binary_array,
+                    &self.message_descriptor,
+                    &self.config,
+                )
+            })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 
@@ -207,11 +235,12 @@ impl MessageHandler {
     ) -> PyResult<Py<PyAny>> {
         let arrow_record_batch: RecordBatch =
             RecordBatch::from_pyarrow_bound(record_batch).unwrap();
-        Ok(
+        // `arrow_record_batch` outlives the closure, so no imported buffer is
+        // released, and no release callback runs, while the GIL is down.
+        let array = py.detach(|| {
             ptars_core::record_batch_to_array(&arrow_record_batch, &self.message_descriptor)
-                .to_pyarrow(py)?
-                .unbind(),
-        )
+        });
+        Ok(array.to_pyarrow(py)?.unbind())
     }
 
     /// Convert a binary array of serialized protobuf messages to a record batch.
@@ -223,12 +252,17 @@ impl MessageHandler {
             pyo3::exceptions::PyTypeError::new_err(format!("Failed to convert array: {}", e))
         })?;
         let arrow_array = BinaryArray::from(array_data);
-        let record_batch = ptars_core::binary_array_to_record_batch_direct(
-            &arrow_array,
-            &self.message_descriptor,
-            &self.config,
-        )
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        // `arrow_array` outlives the closure, so its release callback cannot run
+        // while the GIL is down.
+        let record_batch = py
+            .detach(|| {
+                ptars_core::binary_array_to_record_batch_direct(
+                    &arrow_array,
+                    &self.message_descriptor,
+                    &self.config,
+                )
+            })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 
@@ -239,22 +273,24 @@ impl MessageHandler {
         let file = File::open(&path).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to open file: {}", e))
         })?;
-        let mut reader = BufReader::new(file);
-        let message_bytes = read_size_delimited_messages(&mut reader).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to read file: {}", e))
-        })?;
+        // Reading the file and decoding it touch no Python objects, so the whole
+        // body runs with the GIL released, the blocking I/O included.
+        let record_batch = py.detach(|| -> Result<RecordBatch, ReadError> {
+            let mut reader = BufReader::new(file);
+            let message_bytes = read_size_delimited_messages(&mut reader).map_err(ReadError::Io)?;
 
-        let mut builder = arrow_array::builder::BinaryBuilder::new();
-        for bytes in &message_bytes {
-            builder.append_value(bytes);
-        }
-        let binary_array = builder.finish();
-        let record_batch = ptars_core::binary_array_to_record_batch_direct(
-            &binary_array,
-            &self.message_descriptor,
-            &self.config,
-        )
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+            let mut builder = arrow_array::builder::BinaryBuilder::new();
+            for bytes in &message_bytes {
+                builder.append_value(bytes);
+            }
+            let binary_array = builder.finish();
+            ptars_core::binary_array_to_record_batch_direct(
+                &binary_array,
+                &self.message_descriptor,
+                &self.config,
+            )
+            .map_err(ReadError::Decode)
+        })?;
         Ok(record_batch.to_pyarrow(py)?.unbind())
     }
 }
