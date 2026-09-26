@@ -44,6 +44,17 @@ Add this to your `.bashrc` or `.zshrc`:
 export CARGO_BUILD_TARGET=aarch64-apple-darwin
 ```
 
+## Python Bindings
+
+Every `#[pymethods]` function holds the GIL for its whole body. When adding one, wrap
+the pure-Rust work in `py.detach(|| ...)` so other Python threads keep running. Only
+the parts that touch Python objects need the GIL: reading arguments, and converting
+the result with `to_pyarrow`. Anything owned by Rust in between should be detached.
+
+Keep the values the closure borrows alive past it, so no Arrow release callback runs
+while the GIL is down. `python/test/unit/test_gil.py` asserts each entry point lets a
+background thread run at close to its unblocked rate.
+
 ## Running Tests
 
 Run both Python and Rust tests:
