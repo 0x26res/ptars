@@ -18,12 +18,11 @@ clean:
 
 # Create virtual environment and install dependencies
 env:
-    test -d .venv || uv venv
-    . .venv/bin/activate && uv sync --group=test --no-dev
+    uv sync --group=test --no-dev
 
 # Build the Python extension in development mode
 develop: env protoc
-    . .venv/bin/activate && uv run maturin develop
+    uv run maturin develop
 
 # Run all tests
 test: develop
@@ -35,19 +34,19 @@ build-crates:
 
 # Build the Python package
 build: env
-    . .venv/bin/activate && maturin build
+    uv run maturin build
 
 # Build distributable wheels via Docker
 dist: env
-    . .venv/bin/activate && docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --out dist
+    docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release --strip --out dist
 
 # Generate protobuf Python bindings
 protoc: env
-    . .venv/bin/activate && python scripts/protoc.py
+    uv run python scripts/protoc.py
 
 # Format and lint
 lint:
-    cargo fmt && cargo clippy --all-targets -- -D warnings && prek run --all-files
+    cargo fmt && cargo clippy --all-targets -- -D warnings && uvx prek run --all-files
     cd tests/arrow-version-independence && cargo fmt && cargo clippy --all-targets -- -D warnings
 
 # Safeguard: a consumer pinned to a different arrow major version must be able
@@ -94,9 +93,9 @@ update:
     cargo upgrade --incompatible
     cargo generate-lockfile
     uv lock --upgrade
-    prek autoupdate
-    -prek run --all-files
-    prek run --all-files
+    uvx prek autoupdate
+    -uvx prek run --all-files
+    uvx prek run --all-files
     uv pip compile docs/requirements.txt.in > docs/requirements.txt
 
 # Update dependencies and create a PR branch
@@ -125,7 +124,7 @@ update-e2e:
 
 # Run benchmarks
 benchmark: develop
-    maturin develop --release && \
+    uv run maturin develop --release && \
         uv run pytest python/test/benchmark \
             --benchmark-name=short \
             --benchmark-columns=mean \
@@ -133,7 +132,7 @@ benchmark: develop
 
 # Generate CI release workflow
 generate-ci: develop
-    maturin generate-ci github --output=.github/workflows/release.yaml
+    uv run maturin generate-ci github --output=.github/workflows/release.yaml
 
 # Serve documentation locally
 docs:
