@@ -14,7 +14,7 @@ colorama==0.4.6
     # via mkdocs-material
 ghp-import==2.1.0
     # via mkdocs
-googleapis-common-protos==1.75.3
+googleapis-common-protos==1.75.4
     # via ptars
 griffelib==2.3.0
     # via mkdocstrings-python
@@ -25,7 +25,7 @@ jinja2==3.1.6
     #   mkdocs
     #   mkdocs-material
     #   mkdocstrings
-markdown==3.10.3
+markdown==3.11
     # via
     #   mkdocs
     #   mkdocs-autorefs
@@ -70,13 +70,13 @@ paginate==0.5.7
     # via mkdocs-material
 pathspec==1.1.1
     # via mkdocs
-platformdirs==4.11.12
+platformdirs==4.11.14
     # via mkdocs-get-deps
 protobuf==7.36.2
     # via
     #   googleapis-common-protos
     #   ptars
-ptars==0.0.24
+ptars==0.0.25
     # via -r docs/requirements.txt.in
 pyarrow==25.0.1
     # via ptars
