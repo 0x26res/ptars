@@ -37,6 +37,13 @@ To run the Rust linter (`clippy`) specifically, use the following command:
 make lint
 ```
 
+## Python Bindings
+
+Every `#[pymethods]` function holds the GIL for its whole body. When adding one, wrap
+the pure-Rust work in `py.detach(|| ...)` so other Python threads keep running. Only
+argument reading and result conversion need the GIL. Keep borrowed values alive past
+the closure, so no Arrow release callback runs while the GIL is down.
+
 ## Running Tests
 
 To run the Python and Rust tests, use the following command:
