@@ -90,7 +90,7 @@ update:
     cargo install cargo-edit
     # --incompatible also bumps major versions (e.g. arrow 59 -> 60); without it
     # cargo upgrade only moves within the existing requirement.
-    cargo upgrade --incompatible
+    cargo upgrade
     cargo generate-lockfile
     uv lock --upgrade
     uvx prek autoupdate
