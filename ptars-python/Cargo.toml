@@ -4,7 +4,7 @@ arrow-array = "60"
 prost = "0.14.4"
 prost-reflect = "0.16.5"
 ptars-core = {path = "../ptars-core"}
-pyo3 = {version = "0.29.3", features = ["abi3-py310"]}
+pyo3 = {version = "0.29.3", features = ["abi3-py310", "abi3t-py315"]}
 
 [features]
 default = ["extension-module"]
