@@ -3,7 +3,7 @@ arrow = "60"
 arrow-array = "60"
 arrow-schema = "60"
 chrono = "0.4.45"
-prost = "0.14.4"
+prost = "0.14.6"
 prost-reflect = "0.16.5"
 
 [lib]

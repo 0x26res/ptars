@@ -5,12 +5,12 @@
 arrow = {version = "60", features = ["ffi"]}
 arrow-array = "60"
 arrow-schema = "60"
-prost = "0.14.4"
+prost = "0.14.6"
 prost-reflect = "0.16.5"
 ptars-core.workspace = true
 
 [dev-dependencies]
-prost-types = "0.14.4"
+prost-types = "0.14.6"
 
 [lib]
 name = "ptars"
