@@ -14,7 +14,7 @@ Example:
     ```
 """
 
-from ptars._lib import __version__  # ty:ignore[unresolved-import]
+from ptars._lib import __version__  # ty:ignore[import-not-found]
 from ptars.config import ConfluentWirePolicyLiteral, PtarsConfig
 from ptars.internal import HandlerPool, get_schema
 

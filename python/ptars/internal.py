@@ -13,7 +13,7 @@ import pyarrow as pa
 from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 from google.protobuf.message import Message
-from ptars._lib import (  # ty:ignore[unresolved-import]
+from ptars._lib import (  # ty:ignore[import-not-found]
     MessageHandler,
     ProtoRegistry,
 )

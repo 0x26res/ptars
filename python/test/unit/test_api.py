@@ -1,7 +1,7 @@
 import pyarrow as pa
 import pytest
 from google.protobuf.descriptor import FileDescriptor
-from ptars._lib import MessageHandler  # ty:ignore[unresolved-import]
+from ptars._lib import MessageHandler  # ty:ignore[import-not-found]
 
 from ptars import HandlerPool, PtarsConfig, get_schema
 from ptars_protos.bench_pb2 import DESCRIPTOR, ExampleMessage
