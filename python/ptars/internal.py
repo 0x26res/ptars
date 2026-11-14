@@ -139,7 +139,7 @@ class HandlerPool:
                 f" instead of {Descriptor.__class__.__name__}",
                 stacklevel=2,
             )
-            descriptor = descriptor.DESCRIPTOR  # ty: ignore[unresolved-attribute]
+            descriptor = descriptor.DESCRIPTOR  # ty: ignore[missing-attribute]
         if not isinstance(
             descriptor,
             (google.protobuf.descriptor.Descriptor, google._upb._message.Descriptor),
@@ -206,7 +206,7 @@ class HandlerPool:
         """
         handler = self.get_for_message(descriptor)
         array = handler.record_batch_to_array(record_batch)
-        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]  # ty:ignore[unresolved-attribute]
+        return [descriptor._concrete_class.FromString(s.as_py()) for s in array]  # ty:ignore[missing-attribute]
 
     def read_size_delimited_file(
         self, path: str | os.PathLike, descriptor: Descriptor
