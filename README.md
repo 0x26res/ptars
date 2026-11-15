@@ -27,7 +27,6 @@
 [![Open PRs][open-prs-image]][prs-url]
 [![Contributors][contributors-image]][contributors-url]
 [![Contributing][contributing-image]][contributing-url]
-[![FOSSA Status][fossa-image]][fossa-url]
 [![Repo Size][repo-size-image]][repo-size-url]
 [![Rust][rust-image]][rust-url]
 [![Apache Arrow][apache-arrow-image]][apache-arrow-url]
@@ -173,8 +172,6 @@ protarrow_to_proto    12,534 (31.61)
 [github-issues-url]: https://github.com/0x26res/ptars/issues
 [contributing-image]: https://img.shields.io/badge/PR-Welcome-%23FF8300.svg?
 [contributing-url]: https://github.com/0x26res/ptars/blob/main/DEVELOPMENT.md
-[fossa-image]: https://app.fossa.com/api/projects/git%2Bgithub.com%2F0x26res%2Fptars.svg?type=shield
-[fossa-url]: https://app.fossa.com/projects/git%2Bgithub.com%2F0x26res%2Fptars?ref=badge_shield
 [repo-size-image]: https://img.shields.io/github/repo-size/0x26res/ptars
 [repo-size-url]: https://img.shields.io/github/repo-size/0x26res/ptars
 [crates-image]: https://img.shields.io/crates/v/ptars
