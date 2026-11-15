@@ -4,6 +4,7 @@ exclude = ["tests/arrow-version-independence"]
 resolver = "2"
 
 [workspace.package]
+rust-version = "1.88"
 version = "0.0.0"
 
 # The release workflows substitute every line of this file matching

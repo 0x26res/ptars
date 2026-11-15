@@ -11,7 +11,7 @@ Install ptars using pip:
 pip install ptars
 ```
 
-You'll need Python 3.10 or higher and a protobuf schema (`.proto` file)
+You'll need Python 3.11 or higher and a protobuf schema (`.proto` file)
 compiled to Python. The `protobuf` and `pyarrow` packages are installed
 automatically with ptars.
 

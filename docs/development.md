@@ -4,7 +4,7 @@ This guide covers how to set up a development environment and contribute to ptar
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - Rust, installed through [rustup](https://rustup.rs/)
 - [just](https://github.com/casey/just) as a command runner
 - [uv](https://github.com/astral-sh/uv) for Python dependency management

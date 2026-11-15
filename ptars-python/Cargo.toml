@@ -4,7 +4,7 @@ arrow-array = "60"
 prost = "0.14.6"
 prost-reflect = "0.16.5"
 ptars-core = {path = "../ptars-core"}
-pyo3 = {version = "0.29.3", features = ["abi3-py310", "abi3t-py315"]}
+pyo3 = {version = "0.29.3", features = ["abi3-py311", "abi3t-py315"]}
 
 [features]
 default = ["extension-module"]
@@ -22,6 +22,7 @@ edition = "2021"
 license = "Apache-2.0"
 name = "ptars-python"
 publish = false  # This crate is only for Python bindings, not published to crates.io
+rust-version.workspace = true
 version.workspace = true
 
 [package.metadata.maturin]

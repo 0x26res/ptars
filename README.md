@@ -9,7 +9,10 @@
 [![Crates.io][crates-image]][crates-url]
 [![Crates.io Downloads][crates-downloads-image]][crates-url]
 [![docs.rs][docsrs-image]][docsrs-url]
+[![MSRV][msrv-image]][crates-url]
+[![Dependency Status][deps-rs-image]][deps-rs-url]
 [![Build Status][build-image]][build-url]
+[![Wheels][wheels-image]][wheels-url]
 [![codecov][codecov-image]][codecov-url]
 [![License][license-image]][license-url]
 [![Ruff][ruff-image]][ruff-url]
@@ -29,6 +32,7 @@
 [![Rust][rust-image]][rust-url]
 [![Apache Arrow][apache-arrow-image]][apache-arrow-url]
 [![prek][prek-image]][prek-url]
+[![Claude Code][claude-code-image]][claude-code-url]
 
 [Repository](https://github.com/0x26res/ptars) |
 [Python Documentation](https://ptars.readthedocs.io/) |
@@ -151,6 +155,8 @@ protarrow_to_proto    12,534 (31.61)
 [downloads-month-url]: https://static.pepy.tech/badge/ptars/month
 [build-image]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml/badge.svg
 [build-url]: https://github.com/0x26res/ptars/actions/workflows/ci.yaml
+[wheels-image]: https://img.shields.io/github/actions/workflow/status/0x26res/ptars/release.yaml?branch=main&label=wheels
+[wheels-url]: https://github.com/0x26res/ptars/actions/workflows/release.yaml
 [codecov-image]: https://codecov.io/gh/0x26res/ptars/branch/main/graph/badge.svg?token=XMFH27IL70
 [codecov-url]: https://codecov.io/gh/0x26res/ptars
 [license-image]: http://img.shields.io/:license-Apache%202-blue.svg
@@ -176,6 +182,9 @@ protarrow_to_proto    12,534 (31.61)
 [crates-downloads-image]: https://img.shields.io/crates/d/ptars
 [docsrs-image]: https://docs.rs/ptars/badge.svg
 [docsrs-url]: https://docs.rs/ptars
+[msrv-image]: https://img.shields.io/crates/msrv/ptars
+[deps-rs-image]: https://img.shields.io/deps-rs/ptars/latest
+[deps-rs-url]: https://deps.rs/crate/ptars
 [last-commit-image]: https://img.shields.io/github/last-commit/0x26res/ptars
 [commits-url]: https://github.com/0x26res/ptars/commits/main
 [commit-activity-image]: https://img.shields.io/github/commit-activity/m/0x26res/ptars
@@ -192,3 +201,5 @@ protarrow_to_proto    12,534 (31.61)
 [apache-arrow-url]: https://arrow.apache.org/
 [prek-image]: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/j178/prek/master/docs/assets/badge-v0.json
 [prek-url]: https://github.com/j178/prek
+[claude-code-image]: https://img.shields.io/badge/Claude_Code-D97757?logo=claude&logoColor=white
+[claude-code-url]: https://claude.com/claude-code
