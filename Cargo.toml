@@ -1,5 +1,5 @@
 [workspace]
-members = ["ptars", "ptars-core", "ptars-python"]
+members = ["crates/ptars", "crates/ptars-core", "crates/ptars-python"]
 exclude = ["tests/arrow-version-independence"]
 resolver = "2"
 
@@ -11,5 +11,5 @@ version = "0.0.0"
 # `^version = "..."` with the tag version, keeping this requirement in sync
 # with the published ptars-core version.
 [workspace.dependencies.ptars-core]
-path = "ptars-core"
+path = "crates/ptars-core"
 version = "0.0.0"
