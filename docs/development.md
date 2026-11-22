@@ -138,10 +138,11 @@ just generate-ci
 
 ```text
 ptars/
-├── ptars-core/         # Core Rust library (arrow-rs-typed API, pins an arrow major version)
-├── ptars/              # Stable Rust facade over ptars-core (Arrow C Data Interface only,
-│                       # works with any arrow version on the consumer's side)
-├── ptars-python/       # Python bindings (PyO3, depends on ptars-core)
+├── crates/
+│   ├── ptars-core/     # Core Rust library (arrow-rs-typed API, pins an arrow major version)
+│   ├── ptars/          # Stable Rust facade over ptars-core (Arrow C Data Interface only,
+│   │                   # works with any arrow version on the consumer's side)
+│   └── ptars-python/   # Python bindings (PyO3, depends on ptars-core)
 ├── python/
 │   ├── ptars/          # Python package
 │   └── test/           # Python tests
